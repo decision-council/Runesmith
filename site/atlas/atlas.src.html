@@ -1,0 +1,858 @@
+<meta charset="utf-8">
+<title>@@TITLE@@</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="@@META@@">
+<meta name="theme-color" content="#080b12">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Unbounded:wght@500;700&display=swap" rel="stylesheet">
+<!-- For AI readers: a schema.org summary here, the full story as JSON in #runesmith-story, and a plain-text
+     version in #plain. They are generated from the same file that draws this page. Nothing is hidden. -->
+<script type="application/ld+json">
+@@JSONLD@@
+</script>
+<script type="application/json" id="runesmith-story">
+@@STORY@@
+</script>
+<style>
+:root {
+  color-scheme: dark;
+  --ground: #080b12; --ground-2: #0b101a; --panel: #111723; --panel-2: #161e2d; --line: #1f2839; --line-2: #2a3550;
+  --ink: #eceff6; --ink-2: #b7bfd0; --muted: #8b95ad;
+  --ember: #ff7a30; --gold: #ffb547; --rune: #22d3c5; --violet: #9b82ff; --slate: #8d97ad; --red: #ff4d5e;
+  --display: 'Unbounded', 'Segoe UI', system-ui, sans-serif;
+  --body: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --bar: 58px;
+}
+html { background: var(--ground); scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+#app { --fs: 16px; font: 400 var(--fs)/1.6 var(--body); overflow-x: clip; min-height: 100vh;
+  background: radial-gradient(1200px 700px at 50% -10%, rgba(139, 108, 255, .10), transparent 60%), var(--ground); }
+#app[data-level="simply"] { --fs: 18px; }
+#app[data-big="true"] { font-size: calc(var(--fs) * 1.18); }
+#app[data-level="simply"] .lv:not(.lv-simply),
+#app[data-level="fully"] .lv:not(.lv-fully),
+#app[data-level="machines"] .lv:not(.lv-machines) { display: none; }
+a { color: var(--rune); }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---- the bar ---- */
+.bar { position: sticky; top: 0; z-index: 30; height: var(--bar); display: flex; align-items: center; gap: 12px;
+  padding: 0 max(16px, env(safe-area-inset-left)); background: rgba(8, 11, 18, .82); border-bottom: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); font: 600 15px var(--display); letter-spacing: .01em; margin-right: auto; min-width: 0; }
+.brand svg { width: 30px; height: 30px; flex: none; }
+.brand b { color: var(--gold); font-weight: 500; }
+.levels { display: flex; padding: 3px; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; }
+.levels button { border: 0; background: none; padding: 7px 13px; border-radius: 999px; font-size: 13.5px; font-weight: 500; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+.levels button[aria-pressed="true"] { background: linear-gradient(135deg, var(--gold), var(--ember)); color: #1a0f05; }
+.aa { width: 38px; height: 38px; flex: none; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel); cursor: pointer; font: 600 14px var(--display); }
+.aa[aria-pressed="true"] { border-color: var(--gold); color: var(--gold); }
+@media (max-width: 560px) {
+  .hero { padding: 26px 16px 8px; }
+  .kicker { font-size: 11px; letter-spacing: .1em; }
+  .lead { font-size: 1em; margin-bottom: 18px; }
+  .btn { min-height: 44px; padding: 0 18px; }
+  .cta .hide-sm { display: none; }
+  .tally { margin-top: 12px; }
+  .brand span { display: none; }
+  .levels button { padding: 7px 10px; font-size: 13px; }
+  .levels .long { display: none; }
+}
+
+/* ---- hero ---- */
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+.hero { text-align: center; padding: 44px 16px 18px; max-width: 860px; margin: 0 auto; }
+.kicker { font: 500 12.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--rune); margin: 0 0 12px; }
+h1 { font: 700 clamp(44px, 11vw, 96px)/1 var(--display); letter-spacing: -.02em; margin: 0 0 18px;
+  background: linear-gradient(180deg, #fff 10%, #ffd9a8 55%, var(--ember)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lead { font-size: 1.14em; color: var(--ink-2); margin: 0 auto 24px; max-width: 700px; }
+.cta { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 22px; border-radius: 999px; border: 1px solid var(--line-2);
+  background: var(--panel); color: var(--ink); text-decoration: none; font-weight: 600; cursor: pointer; }
+.btn.primary { border: 0; background: linear-gradient(135deg, var(--gold), var(--ember)); color: #1a0f05; box-shadow: 0 8px 30px rgba(255, 122, 48, .25); }
+.tally { margin: 18px 0 0; font: 500 13px var(--mono); color: var(--muted); }
+
+/* ---- the atlas ---- */
+.atlas-wrap { position: relative; margin: 18px auto 0; max-width: 1400px; height: min(84vh, 900px); scroll-margin-top: calc(var(--bar) + 6px);
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: radial-gradient(closest-side, #0e1422, var(--ground)); }
+#atlas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+#atlas.dragging { cursor: grabbing; }
+.hud { position: absolute; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 3; }
+.hud button { width: 42px; height: 42px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(17, 23, 35, .88); cursor: pointer; font-size: 20px; line-height: 1; }
+.hud button:hover { border-color: var(--gold); }
+.legend { position: absolute; right: 12px; top: 12px; z-index: 2; display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 12px; border-radius: 12px; background: rgba(8, 11, 18, .78); border: 1px solid var(--line); font: 12px var(--mono); color: var(--ink-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.hint { position: absolute; right: 14px; bottom: 14px; z-index: 2; margin: 0; font: 12px var(--mono); color: var(--muted); background: rgba(8, 11, 18, .7); padding: 6px 10px; border-radius: 10px; pointer-events: none; transition: opacity .6s; }
+.hint.gone { opacity: 0; }
+
+/* svg world */
+.stars circle { fill: #dfe6ff; }
+.stars .tw { animation: tw 4s ease-in-out infinite; }
+@keyframes tw { 50% { opacity: .15; } }
+.kring { animation: spin 300s linear infinite; transform-origin: 0 0; }
+.kring2 { animation: spin 200s linear infinite reverse; transform-origin: 0 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.flow { animation: flow 3.2s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -46; } }
+.breathe { animation: breathe 5s ease-in-out infinite; transform-origin: 0 0; }
+@keyframes breathe { 50% { opacity: .55; transform: scale(1.06); } }
+.node { cursor: pointer; outline: none; }
+.node .nz { transition: transform .25s cubic-bezier(.2, .8, .2, 1); transform-box: fill-box; transform-origin: center; }
+.node:hover .nz, .node:focus-visible .nz { transform: scale(1.1); }
+.node .hit { fill: transparent; }
+.node .sel { fill: none; stroke: var(--ink); stroke-width: 2.5; stroke-dasharray: 5 7; opacity: 0; }
+.node.on .sel, .node:focus-visible .sel { opacity: 1; animation: spin 14s linear infinite; transform-origin: 0 0; }
+.node:focus-visible .sel { stroke: var(--gold); }
+.lbl text { paint-order: stroke; stroke: #080b12; stroke-width: 7px; stroke-linejoin: round; }
+.lbl .t1 { font: 700 26px var(--display); fill: var(--ink); }
+.lbl .t2 { font: 500 17px var(--mono); }
+.note { font: italic 400 17px var(--body); fill: var(--muted); paint-order: stroke; stroke: #080b12; stroke-width: 6px; }
+.pulse { animation: pulse 2.6s ease-out infinite; transform-origin: 0 0; }
+@keyframes pulse { from { transform: scale(.8); opacity: .9; } to { transform: scale(1.9); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .stars .tw, .kring, .kring2, .flow, .breathe, .pulse, .node.on .sel { animation: none; }
+  .node .nz { transition: none; }
+}
+
+/* ---- story card ---- */
+.card { position: absolute; z-index: 5; top: 14px; right: 14px; bottom: 14px; width: 400px; display: flex; flex-direction: column;
+  background: rgba(13, 18, 29, .96); border: 1px solid var(--line-2); border-radius: 20px; box-shadow: 0 24px 60px rgba(0, 0, 0, .55); overflow: hidden; }
+.card[hidden] { display: none; }
+.card-grip { display: none; }
+.card-x { position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel); cursor: pointer; font-size: 22px; line-height: 1; z-index: 1; }
+.card-head { display: flex; gap: 14px; align-items: center; padding: 18px 56px 12px 18px; border-bottom: 1px solid var(--line); }
+.card-head .rune { width: 66px; height: 66px; flex: none; border-radius: 16px; background: var(--ground); border: 1px solid var(--line); }
+.card-kicker { margin: 0 0 2px; font: 12px var(--mono); color: var(--muted); }
+.card h3 { margin: 0 0 6px; font: 700 1.2em/1.2 var(--display); outline: none; }
+.card-body { padding: 14px 18px 18px; overflow-y: auto; overscroll-behavior: contain; flex: 1; }
+.card-body p { margin: 0 0 12px; }
+#app[data-level="simply"] .card-body p.say { font-size: 1.1em; line-height: 1.55; }
+.card-body pre.json { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5 var(--mono); color: var(--ink-2); }
+.card-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+.card-nav button { min-height: 42px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); cursor: pointer; font-weight: 600; }
+.card-nav button.go { border: 0; background: linear-gradient(135deg, var(--gold), var(--ember)); color: #1a0f05; }
+.card-nav span { font: 12px var(--mono); color: var(--muted); }
+@media (max-width: 760px) {
+  .atlas-wrap { height: auto; }
+  #atlas { height: min(calc(100vw * 1.12), 62svh); min-height: 330px; }
+  .map-tools { display: flex; align-items: center; gap: 10px; padding: 8px 10px 10px; border-top: 1px solid var(--line); }
+  .map-tools .legend { position: static; flex: 1; flex-direction: row; flex-wrap: wrap; max-width: none; background: none; border: 0; padding: 0; font-size: 11px; gap: 2px 10px; }
+  .map-tools .hud { position: static; flex-direction: row; }
+  .card { background: #0d121d; box-shadow: 0 -18px 50px rgba(0, 0, 0, .6); }
+  .card { position: fixed; left: 0; right: 0; top: auto; bottom: 0; width: auto; max-height: 46svh; border-radius: 20px 20px 0 0; border-bottom: 0; }
+  .card-grip { display: block; width: 44px; height: 5px; border-radius: 3px; background: var(--line-2); margin: 8px auto 0; }
+  .card-head { padding: 8px 56px 10px 16px; }
+  .card-head .rune { width: 52px; height: 52px; }
+  .hint { display: none; }
+  .hud button { width: 38px; height: 38px; font-size: 18px; border-radius: 11px; }
+}
+
+/* ---- chips and tones ---- */
+.chip { display: inline-block; padding: 2px 10px; border-radius: 999px; font: 500 12px/1.6 var(--mono); border: 1px solid currentColor; white-space: nowrap; }
+.t-pass { --tone: var(--gold); } .t-partly { --tone: var(--rune); } .t-null { --tone: var(--violet); } .t-closed { --tone: var(--slate); }
+.t-gen, .t-core { --tone: var(--ember); } .t-place { --tone: var(--rune); } .t-record { --tone: var(--gold); } .t-you { --tone: var(--ink-2); }
+.chip { color: var(--tone, var(--ink-2)); background: color-mix(in srgb, var(--tone, #fff) 10%, transparent); }
+
+/* ---- stats ---- */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; max-width: 1120px; margin: 36px auto 0; padding: 0 16px; }
+.stat { background: linear-gradient(180deg, var(--panel), var(--ground-2)); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+.stat b { display: block; font: 700 clamp(26px, 4vw, 38px)/1.1 var(--display); color: var(--gold); margin-bottom: 6px; }
+.stat b small { font-size: .5em; color: var(--muted); font-weight: 500; }
+.stat span { color: var(--ink-2); font-size: .92em; }
+@media (max-width: 860px) { .stats { grid-template-columns: 1fr 1fr; } }
+
+/* ---- sections ---- */
+.section { max-width: 860px; margin: 0 auto; padding: 64px 16px 0; }
+.section h2 { font: 700 clamp(26px, 5vw, 36px)/1.15 var(--display); margin: 0 0 12px; letter-spacing: -.01em; }
+.section .intro { color: var(--ink-2); margin: 0 0 26px; }
+.steps { list-style: none; margin: 0; padding: 0; position: relative; }
+.steps::before { content: ''; position: absolute; left: 27px; top: 10px; bottom: 10px; width: 2px; background: linear-gradient(var(--violet), var(--rune), var(--gold)); opacity: .35; }
+.step { position: relative; display: grid; grid-template-columns: 56px 1fr; gap: 16px; margin-bottom: 26px; }
+.step-rune { width: 56px; height: 56px; border-radius: 16px; background: var(--ground-2); border: 1px solid color-mix(in srgb, var(--tone) 50%, var(--line)); box-shadow: 0 0 24px color-mix(in srgb, var(--tone) 18%, transparent); position: relative; }
+.step-body { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; min-width: 0; }
+.t-pass .step-body { border-color: color-mix(in srgb, var(--gold) 45%, var(--line)); box-shadow: 0 0 40px rgba(255, 181, 71, .08); }
+.step-kicker { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 0 0 8px; font: 12.5px var(--mono); color: var(--muted); }
+.step h3, .place h3 { margin: 0 0 8px; font: 700 1.14em/1.25 var(--display); }
+.step p, .place p { margin: 0 0 10px; }
+.sec { color: var(--muted); }
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 14px; margin: 0 0 10px; font: 13px var(--mono); }
+.facts div { border-left: 2px solid var(--tone, var(--line-2)); padding-left: 8px; }
+.facts dt { color: var(--muted); } .facts dd { margin: 0; color: var(--ink); word-break: break-word; }
+.nc { color: var(--ink-2); font-size: .92em; }
+.receipts { list-style: none; margin: 4px 0 10px; padding: 0; display: grid; gap: 8px; }
+.receipts li { display: flex; gap: 10px; align-items: flex-start; font-size: .9em; }
+.receipts .rune.sm { width: 30px; height: 30px; flex: none; border-radius: 8px; background: var(--ground); border: 1px solid var(--line); }
+.receipts .path { display: block; color: var(--muted); word-break: break-all; }
+.hash { border: 0; background: none; padding: 0; font: 12.5px var(--mono); color: var(--rune); cursor: pointer; text-decoration: underline dotted; }
+.to-map { border: 1px solid var(--line-2); background: var(--ground-2); border-radius: 999px; min-height: 38px; padding: 0 14px; cursor: pointer; font-size: .9em; font-weight: 600; color: var(--ink-2); }
+.to-map:hover { border-color: var(--tone, var(--gold)); color: var(--ink); }
+.places { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.place { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; }
+.place.t-you { border-style: dashed; background: transparent; }
+@media (max-width: 700px) { .places { grid-template-columns: 1fr; } .step { grid-template-columns: 44px 1fr; gap: 12px; } .step-rune { width: 44px; height: 44px; border-radius: 12px; } .steps::before { left: 21px; } }
+
+/* ---- forge ---- */
+.forge-box { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: center; background: linear-gradient(135deg, var(--panel), var(--ground-2)); border: 1px solid var(--line-2); border-radius: 22px; padding: 20px; }
+.forge-box label { display: block; font: 500 12.5px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 8px; }
+.forge-box input { width: 100%; box-sizing: border-box; min-height: 52px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--ground); color: var(--ink); font: 500 1.1em var(--body); }
+.forge-box input:focus { border-color: var(--gold); outline: none; box-shadow: 0 0 0 3px rgba(255, 181, 71, .2); }
+#forge-hex { display: block; margin-top: 10px; font: 12.5px/1.5 var(--mono); color: var(--muted); word-break: break-all; }
+#forge-rune { width: 150px; height: 150px; border-radius: 26px; background: radial-gradient(circle, rgba(255, 122, 48, .16), var(--ground) 70%); border: 1px solid var(--line-2); }
+.forge details { margin-top: 14px; color: var(--ink-2); }
+.forge summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+@media (max-width: 600px) { .forge-box { grid-template-columns: 1fr; justify-items: center; } .forge-box > div { width: 100%; } }
+
+/* ---- machines ---- */
+.letter { position: relative; background: linear-gradient(180deg, #151b28, #0f1420); border: 1px solid var(--line-2); border-radius: 22px; padding: 26px 24px 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
+.letter::before { content: ''; position: absolute; inset: 0; border-radius: 22px; padding: 1px; background: linear-gradient(135deg, rgba(34, 211, 197, .5), transparent 40%, rgba(255, 181, 71, .45));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
+.letter p { margin: 0 0 14px; font-size: 1.04em; }
+.letter p:first-child { font: 500 1.05em var(--mono); color: var(--rune); }
+.letter p:last-child { color: var(--gold); font-weight: 500; }
+.how { margin: 26px 0 14px; padding-left: 20px; color: var(--ink-2); }
+.how li { margin-bottom: 6px; }
+.copyrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 12px; }
+.copyrow span { font: 13px var(--mono); color: var(--rune); }
+pre.plain { margin: 0; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: var(--ground-2); border: 1px solid var(--line); border-radius: 16px; padding: 16px; font: 12.5px/1.55 var(--mono); color: var(--ink-2); }
+.nc-list { padding-left: 20px; color: var(--ink-2); }
+.nc-list li { margin-bottom: 8px; }
+
+footer { max-width: 860px; margin: 80px auto 0; padding: 28px 16px calc(40px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); display: grid; grid-template-columns: 64px 1fr; gap: 16px; align-items: center; color: var(--muted); font-size: .92em; }
+footer .rune { width: 64px; height: 64px; border-radius: 16px; background: var(--ground-2); border: 1px solid var(--line); }
+footer p { margin: 0 0 6px; }
+footer .mono { word-break: break-all; }
+</style>
+
+<div id="app" data-level="fully">
+<header class="bar">
+  <a class="brand" href="#top" aria-label="Runesmith Atlas, back to the top">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lg-ember" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb547"/><stop offset=".55" stop-color="#ff7a30"/><stop offset="1" stop-color="#ff4d5e"/></linearGradient></defs><path d="M32 3l25 14.5v29L32 61 7 46.5v-29z" fill="url(#lg-ember)"/><path d="M32 9.5l19.5 11.3v22.4L32 54.5 12.5 43.2V20.8z" fill="#0b0f17" opacity=".9"/><path d="M27 19v26M27 19h8.5a6.5 6.5 0 0 1 0 13H27l11.5 13" fill="none" stroke="url(#lg-ember)" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="45.5" cy="18.5" r="2.4" fill="#22d3c5"/></svg>
+    <span>Runesmith <b>Atlas</b></span>
+  </a>
+  <div class="levels" role="group" aria-label="Reading level">
+    <button type="button" data-level="simply" aria-pressed="false">Simply</button>
+    <button type="button" data-level="fully" aria-pressed="true">Fully</button>
+    <button type="button" data-level="machines" aria-pressed="false"><span class="long">For </span>machines</button>
+  </div>
+  <button type="button" class="aa" id="aa" aria-pressed="false" aria-label="Bigger text">Aa</button>
+</header>
+
+<main>
+<section class="hero" id="top">
+  <p class="kicker">@@SUBTITLE@@</p>
+  <h1>Runesmith</h1>
+  <p class="lead">@@LEAD@@</p>
+  <div class="cta">
+    <button type="button" class="btn primary" id="tour">Take the tour</button>
+    <a class="btn" href="#journey">Read the path</a>
+    <a class="btn hide-sm" href="#machines">For machines</a>
+  </div>
+  <p class="tally">7 studies · 1 pass · every failure published</p>
+</section>
+
+<section class="atlas-wrap" id="atlas-wrap" aria-label="The atlas: a map you can explore">
+  <svg id="atlas" viewBox="0 0 1200 1240" preserveAspectRatio="xMidYMid meet" role="group" aria-labelledby="atlas-t atlas-d">
+    <title id="atlas-t">The Runesmith Atlas</title>
+    <desc id="atlas-d">@@DESC@@</desc>
+    <defs>
+      <radialGradient id="g-halo"><stop offset="0" stop-color="#ff7a30" stop-opacity=".45"/><stop offset=".45" stop-color="#ff7a30" stop-opacity=".12"/><stop offset="1" stop-color="#ff7a30" stop-opacity="0"/></radialGradient>
+      <radialGradient id="g-halo-gold"><stop offset="0" stop-color="#ffb547" stop-opacity=".55"/><stop offset="1" stop-color="#ffb547" stop-opacity="0"/></radialGradient>
+      <radialGradient id="g-isle" cx=".4" cy=".35"><stop offset="0" stop-color="#22d3c5" stop-opacity=".22"/><stop offset=".7" stop-color="#8b6cff" stop-opacity=".10"/><stop offset="1" stop-color="#8b6cff" stop-opacity=".04"/></radialGradient>
+      <linearGradient id="g-ember" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb547"/><stop offset=".55" stop-color="#ff7a30"/><stop offset="1" stop-color="#ff4d5e"/></linearGradient>
+      <filter id="f-glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="7"/></filter>
+      <pattern id="p-hex" width="60" height="104" patternUnits="userSpaceOnUse"><path d="M30 0 L60 17.3 L60 52 L30 69.3 L0 52 L0 17.3Z M30 69.3 L30 104" fill="none" stroke="#1a2233" stroke-width="1"/></pattern>
+    </defs>
+    <g id="world"></g>
+  </svg>
+  <div class="map-tools">
+    <div class="legend" aria-hidden="true">
+      <span><i style="background:var(--gold)"></i>shown</span><span><i style="background:var(--rune)"></i>partly</span><span><i style="background:var(--violet)"></i>not shown</span><span><i style="background:var(--slate)"></i>closed</span><span><i style="background:var(--ember)"></i>generation</span>
+    </div>
+    <div class="hud">
+      <button type="button" id="z-in" aria-label="Zoom in">+</button>
+      <button type="button" id="z-out" aria-label="Zoom out">&minus;</button>
+      <button type="button" id="z-home" aria-label="Show the whole map">&#8962;</button>
+    </div>
+  </div>
+  <p class="hint" id="hint">Tap a rune · drag to move · pinch or ctrl + scroll to zoom</p>
+  <aside class="card" id="card" role="dialog" aria-labelledby="card-title" hidden>
+    <div class="card-grip" aria-hidden="true"></div>
+    <button type="button" class="card-x" id="card-x" aria-label="Close the story">&times;</button>
+    <div class="card-head">
+      <svg class="rune" id="card-rune" viewBox="-20 -20 40 40" aria-hidden="true"></svg>
+      <div><p class="card-kicker" id="card-kicker"></p><h3 id="card-title" tabindex="-1"></h3><span class="chip" id="card-chip"></span></div>
+    </div>
+    <div class="card-body" id="card-body"></div>
+    <nav class="card-nav" aria-label="Tour"><button type="button" id="card-prev">&larr; Back</button><span id="card-count"></span><button type="button" class="go" id="card-next">Next &rarr;</button></nav>
+  </aside>
+</section>
+
+<section class="stats" aria-label="The result in four numbers">
+  <div class="stat"><b>57 <small>vs</small> 35</b><span>unseen tasks fixed out of 162: C7 against its predecessor B</span></div>
+  <div class="stat"><b>+13.6</b><span>percentage points, with the same small repair model</span></div>
+  <div class="stat"><b>0.00085</b><span>one-sided p, with the analysis sealed before the data</span></div>
+  <div class="stat"><b>1.9&times;</b><span>faster per success: 542 s against 1,024 s</span></div>
+</section>
+
+<section class="section" id="journey">
+  <h2>The path, step by step</h2>
+  <p class="intro lv lv-simply">Seven tests. Six said "not yet", and one said "yes". Every one is here, because the "not yet"s taught us how to get to the "yes".</p>
+  <p class="intro lv lv-fully lv-machines">The studies and generations in order. Each verdict is quoted from the record, and each receipt is a file you can hash.</p>
+  <ol class="steps">@@JOURNEY@@</ol>
+</section>
+
+<section class="section" id="places">
+  <h2>Where it has worked</h2>
+  <p class="intro">Three example folders, built to walk through the Studio the way their owners would. And one more, for you.</p>
+  <div class="places">@@PLACES@@</div>
+</section>
+
+<section class="section forge" id="forge">
+  <h2>Every rune is a fingerprint</h2>
+  <p class="intro">Each rune on this page is drawn from a real SHA-256 hash, the fingerprint of a file. The same file always gives the same rune. Change one letter, and the rune changes. Try it: type your name, a word, or a hash from the receipts.</p>
+  <div class="forge-box">
+    <div>
+      <label for="forge-in">Forge a rune from</label>
+      <input id="forge-in" value="Runesmith" autocomplete="off" spellcheck="false" maxlength="200">
+      <code id="forge-hex" aria-live="polite"></code>
+    </div>
+    <svg id="forge-rune" viewBox="-20 -20 40 40" role="img" aria-label="Your rune"></svg>
+  </div>
+  <details>
+    <summary>How a rune is drawn</summary>
+    <p>A rune starts as a stave, one upright line. The hash's first bytes then choose 2 to 4 twigs: where each one starts, which way it leans, and whether it bends back. One rune in four is mirrored, and some carry a spark. Text is hashed first. A 64-character hash is used as it is.</p>
+    <p>A rune is a quick check for the eye, not a proof. Two different files can share a rune, but they will not share a hash. For proof, compare the full SHA-256.</p>
+  </details>
+</section>
+
+<section class="section machines" id="machines">
+  <h2>For machines: a letter to AI readers</h2>
+  <div class="letter">@@LETTER@@</div>
+  <ul class="how">
+    <li><code>application/ld+json</code> in the page head: a schema.org summary with one Claim per study.</li>
+    <li><code>#runesmith-story</code>: the whole story as JSON, the same data that draws this page. There is no hidden version.</li>
+    <li>The atlas's <code>&lt;desc&gt;</code>, which describes the map in words.</li>
+    <li>The plain text below, ready to quote. Receipt paths are relative to the research folder that the record describes.</li>
+  </ul>
+  <div class="copyrow"><button type="button" class="btn" id="copy-text">Copy the story as text</button><button type="button" class="btn" id="copy-json">Copy the JSON</button><span id="copy-msg" role="status"></span></div>
+  <pre class="plain" id="plain" tabindex="0" aria-label="The story as plain text">@@PLAIN@@</pre>
+</section>
+
+<section class="section" id="honest">
+  <h2>What we do not claim</h2>
+  <ul class="nc-list">@@NOTCLAIMED@@</ul>
+</section>
+</main>
+
+<footer>
+  <svg class="rune" data-hash="@@RECORD_SHA@@" viewBox="-20 -20 40 40" role="img" aria-label="The record's rune"></svg>
+  <div>
+    <p>@@CREDITS@@</p>
+    <p class="mono">@@RECORD_LINE@@</p>
+  </div>
+</footer>
+</div>
+
+<script>
+(function () {
+'use strict';
+var STORY = JSON.parse(document.getElementById('runesmith-story').textContent);
+var NODES = {}; STORY.nodes.forEach(function (n) { NODES[n.id] = n; });
+var app = document.getElementById('app');
+var reduceMq = window.matchMedia('(prefers-reduced-motion: reduce)');
+function reduced() { return reduceMq.matches; }
+function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+
+// ------------------------------------------------------------------ SHA-256 (synchronous, for runes from text)
+function sha256(text) {
+  var bytes = unescape(encodeURIComponent(text)), i, j, maxWord = Math.pow(2, 32), words = [], bitLen = bytes.length * 8;
+  var hash = [], k = [], primes = 0, composite = {};
+  for (var c = 2; primes < 64; c++) {
+    if (!composite[c]) {
+      for (i = 0; i < 313; i += c) composite[i] = c;
+      hash[primes] = (Math.pow(c, .5) * maxWord) | 0;
+      k[primes++] = (Math.pow(c, 1 / 3) * maxWord) | 0;
+    }
+  }
+  bytes += '\x80';
+  while (bytes.length % 64 - 56) bytes += '\x00';
+  for (i = 0; i < bytes.length; i++) words[i >> 2] |= bytes.charCodeAt(i) << ((3 - i) % 4) * 8;
+  words[words.length] = (bitLen / maxWord) | 0;
+  words[words.length] = bitLen;
+  function rr(v, n) { return (v >>> n) | (v << (32 - n)); }
+  for (j = 0; j < words.length;) {
+    var w = words.slice(j, j += 16), old = hash;
+    hash = hash.slice(0, 8);
+    for (i = 0; i < 64; i++) {
+      var w15 = w[i - 15], w2 = w[i - 2], a = hash[0], e = hash[4];
+      var t1 = hash[7] + (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25)) + ((e & hash[5]) ^ (~e & hash[6])) + k[i] +
+        (w[i] = i < 16 ? w[i] : (w[i - 16] + (rr(w15, 7) ^ rr(w15, 18) ^ (w15 >>> 3)) + w[i - 7] + (rr(w2, 17) ^ rr(w2, 19) ^ (w2 >>> 10))) | 0);
+      var t2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+      hash = [(t1 + t2) | 0].concat(hash);
+      hash[4] = (hash[4] + t1) | 0;
+    }
+    for (i = 0; i < 8; i++) hash[i] = (hash[i] + old[i]) | 0;
+  }
+  var out = '';
+  for (i = 0; i < 8; i++) for (j = 3; j + 1; j--) { var b = (hash[i] >> (j * 8)) & 255; out += (b < 16 ? '0' : '') + b.toString(16); }
+  return out;
+}
+
+// ------------------------------------------------------------------ runes: a stave and twigs, chosen by the hash's bytes
+function runeGeom(hex) {
+  hex = String(hex || '').toLowerCase().replace(/[^0-9a-f]/g, '');
+  if (!hex) hex = '0';
+  while (hex.length < 64) hex += hex;
+  function b(i) { return parseInt(hex.substr((i * 2) % 64, 2), 16); }
+  var lines = [[[0, 0], [0, 4]]], seen = { '0,0|0,4': 1 };
+  function add(pts) {
+    var k1 = pts.map(String).join('|'), k2 = pts.slice().reverse().map(String).join('|');
+    if (seen[k1] || seen[k2]) return;
+    seen[k1] = 1; lines.push(pts);
+  }
+  var n = 2 + b(0) % 3, mirror = ((b(0) >> 2) & 3) === 0;
+  for (var i = 0; i < n; i++) {
+    var v = b(1 + i), sy = v % 5, dir = (v >> 3) & 1 ? 1 : -1, dy = (v >> 4) & 1 ? 1 : -1;
+    if (sy + dy < 0 || sy + dy > 4) dy = -dy;
+    var bent = ((v >> 5) & 3) === 0 && sy + 2 * dy >= 0 && sy + 2 * dy <= 4;
+    var pts = bent ? [[0, sy], [dir, sy + dy], [0, sy + 2 * dy]] : [[0, sy], [dir, sy + dy]];
+    add(pts);
+    if (mirror) add(pts.map(function (p) { return [-p[0], p[1]]; }));
+  }
+  var spark = b(6) % 3 === 0 ? [(b(7) & 1 ? 1 : -1) * 0.95, 0.5 + ((b(7) >> 1) % 4)] : null;
+  return { lines: lines, spark: spark };
+}
+function runeMarkup(hex, size, color, sw, sparkColor) {
+  var g = runeGeom(hex), cw = size * 0.3, rh = size * 0.22, oy = -2 * rh;
+  function pt(p) { return (p[0] * cw).toFixed(1) + ',' + (p[1] * rh + oy).toFixed(1); }
+  var s = '<g fill="none" stroke="' + color + '" stroke-width="' + sw + '" stroke-linecap="round" stroke-linejoin="round">';
+  g.lines.forEach(function (l) { s += '<polyline points="' + l.map(pt).join(' ') + '"/>'; });
+  s += '</g>';
+  if (g.spark) s += '<circle cx="' + (g.spark[0] * cw).toFixed(1) + '" cy="' + (g.spark[1] * rh + oy).toFixed(1) + '" r="' + (sw * 0.85).toFixed(1) + '" fill="' + (sparkColor || color) + '"/>';
+  return s;
+}
+var TONE = { pass: '#ffb547', partly: '#22d3c5', 'null': '#9b82ff', closed: '#8d97ad', gen: '#ff7a30', core: '#ff7a30', place: '#22d3c5', record: '#ffb547', you: '#b7bfd0' };
+function hashOf(n) { return (n.rune && n.rune.hash) || sha256(n.title); }
+function drawRune(svg, hex, color) { svg.innerHTML = runeMarkup(hex, 30, color || '#eceff6', 2.3, '#22d3c5'); }
+function drawStaticRunes(root) {
+  (root || document).querySelectorAll('svg.rune[data-hash]').forEach(function (svg) {
+    var hex = svg.getAttribute('data-hash');
+    var tone = svg.closest('[class*="t-"]');
+    var col = '#eceff6';
+    if (tone) { var m = /t-(\w+)/.exec(tone.className.baseVal !== undefined ? tone.className.baseVal : tone.className); if (m && TONE[m[1]]) col = TONE[m[1]]; }
+    if (!hex) { svg.innerHTML = ''; return; }
+    drawRune(svg, hex, col);
+  });
+}
+
+// ------------------------------------------------------------------ layout
+var CX = 600, CY = 600;
+function sp(t) { var th = (-90 + t * 58.5) * Math.PI / 180, r = 470 - 35 * t; return { x: CX + r * Math.cos(th), y: CY + r * Math.sin(th) }; }
+function polar(deg, r) { var a = deg * Math.PI / 180; return { x: CX + r * Math.cos(a), y: CY + r * Math.sin(a) }; }
+var PATH = ['sr1', 'sr3', 'sr4', 'g0', 'sr5', 'sr6w', 'sr6', 'sr7', 'c7'];
+var POS = { core: { x: CX, y: CY }, b: polar(165, 235), record: { x: 150, y: 150 }, bakery: { x: 1068, y: 140 },
+  freight: { x: 1055, y: 1045 }, clinics: { x: 145, y: 1050 }, you: { x: 600, y: 1138 } };
+PATH.forEach(function (id, i) { POS[id] = sp(i); });
+var BADGE = { sr4: 'not shown', c7: 'proven vs B', you: 'not yet forged' };
+var LABEL_DIR = { b: [-1, 0], sr3: [1, 0.1] };
+function prng(seed) { var s = parseInt(String(seed).slice(0, 8), 16) || 1; return function () { s |= 0; s = (s + 0x6D2B79F5) | 0; var t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function blobPath(r, seed) {
+  var rnd = prng(seed), n = 9, p = [];
+  for (var i = 0; i < n; i++) { var a = i / n * Math.PI * 2, rr = r * (0.84 + rnd() * 0.28); p.push([rr * Math.cos(a), rr * Math.sin(a) * 0.8]); }
+  var d = 'M' + p[0][0].toFixed(1) + ' ' + p[0][1].toFixed(1);
+  for (i = 0; i < n; i++) {
+    var p0 = p[(i - 1 + n) % n], p1 = p[i], p2 = p[(i + 1) % n], p3 = p[(i + 2) % n];
+    d += ' C' + (p1[0] + (p2[0] - p0[0]) / 6).toFixed(1) + ' ' + (p1[1] + (p2[1] - p0[1]) / 6).toFixed(1) + ' ' +
+      (p2[0] - (p3[0] - p1[0]) / 6).toFixed(1) + ' ' + (p2[1] - (p3[1] - p1[1]) / 6).toFixed(1) + ' ' + p2[0].toFixed(1) + ' ' + p2[1].toFixed(1);
+  }
+  return d + 'Z';
+}
+function hexPath(r) { var d = ''; for (var i = 0; i < 6; i++) { var a = (-90 + 60 * i) * Math.PI / 180; d += (i ? 'L' : 'M') + (r * Math.cos(a)).toFixed(1) + ' ' + (r * Math.sin(a)).toFixed(1); } return d + 'Z'; }
+function pathThrough(pts) { return pts.map(function (p, i) { return (i ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1); }).join(''); }
+function spiralPts(t0, t1) { var out = []; for (var t = t0; t < t1; t += 0.02) out.push(sp(t)); out.push(sp(t1)); return out; }
+
+function label(n, dx, dy, anchorOverride) {
+  var anchor = anchorOverride || (dx > 0.35 ? 'start' : dx < -0.35 ? 'end' : 'middle');
+  var off = 64, x = dx * off, y = dy * off, y1, y2;
+  if (dy < -0.35) { y1 = y - 20; y2 = y + 2; } else if (dy > 0.35) { y1 = y + 16; y2 = y + 38; } else { y1 = y + 2; y2 = y + 24; }
+  var col = TONE[n.tone];
+  return '<g class="lbl" text-anchor="' + anchor + '"><text class="t1" x="' + x.toFixed(1) + '" y="' + y1.toFixed(1) + '">' + esc(n.short) + '</text>' +
+    '<text class="t2" x="' + x.toFixed(1) + '" y="' + y2.toFixed(1) + '" fill="' + col + '">' + esc(BADGE[n.id] || n.verdict) + '</text></g>';
+}
+function outward(p) { var dx = p.x - CX, dy = p.y - CY, L = Math.hypot(dx, dy) || 1; return [dx / L, dy / L]; }
+function nodeOpen(n, p) {
+  return '<g class="node k-' + n.kind + ' t-' + n.tone + '" data-id="' + n.id + '" transform="translate(' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ')" tabindex="0" role="button" aria-label="' +
+    esc(n.title + ', ' + n.verdict + '. Open its story.') + '">';
+}
+
+function buildWorld() {
+  var s = '', i, rnd = prng(STORY.record.sha256);
+  // sky
+  s += '<rect x="-1400" y="-1400" width="4000" height="4040" fill="url(#p-hex)" opacity=".55"/>';
+  s += '<g class="stars">';
+  for (i = 0; i < 230; i++) {
+    var x = -700 + rnd() * 2600, y = -700 + rnd() * 2640, r = 0.6 + Math.pow(rnd(), 3) * 2.2;
+    s += '<circle cx="' + x.toFixed(0) + '" cy="' + y.toFixed(0) + '" r="' + r.toFixed(2) + '" opacity="' + (0.25 + rnd() * 0.6).toFixed(2) + '"' +
+      (rnd() < 0.18 ? ' class="tw" style="animation-delay:' + (rnd() * 4).toFixed(2) + 's"' : '') + '/>';
+  }
+  s += '</g>';
+  s += '<circle cx="' + CX + '" cy="' + CY + '" r="330" fill="url(#g-halo)" opacity=".7"/>';
+  // rays from the core to the places it has worked
+  ['bakery', 'freight', 'clinics', 'you', 'record'].forEach(function (id) {
+    var p = POS[id], o = outward(p), a = { x: CX + o[0] * 150, y: CY + o[1] * 150 };
+    s += '<path d="M' + a.x.toFixed(0) + ' ' + a.y.toFixed(0) + 'L' + p.x.toFixed(0) + ' ' + p.y.toFixed(0) + '" stroke="' + (id === 'record' ? '#ffb547' : '#22d3c5') + '" stroke-opacity=".16" stroke-width="2" stroke-dasharray="2 12" fill="none"/>';
+  });
+  // the spiral path: faint before it begins, then each stretch coloured from one station to the next
+  s += '<path d="' + pathThrough(spiralPts(-0.75, 0)) + '" stroke="#eceff6" stroke-opacity=".14" stroke-width="4" stroke-dasharray="2 9" fill="none" stroke-linecap="round"/>';
+  s += '<path d="' + pathThrough(spiralPts(0, 8)) + '" stroke="#9b82ff" stroke-opacity=".10" stroke-width="22" fill="none" stroke-linecap="round"/>';
+  var defs = '';
+  for (i = 0; i < 8; i++) {
+    var a0 = sp(i), a1 = sp(i + 1), c0 = TONE[NODES[PATH[i]].tone], c1 = TONE[NODES[PATH[i + 1]].tone];
+    defs += '<linearGradient id="sg' + i + '" gradientUnits="userSpaceOnUse" x1="' + a0.x.toFixed(0) + '" y1="' + a0.y.toFixed(0) + '" x2="' + a1.x.toFixed(0) + '" y2="' + a1.y.toFixed(0) + '"><stop offset="0" stop-color="' + c0 + '"/><stop offset="1" stop-color="' + c1 + '"/></linearGradient>';
+    s += '<path class="seg" d="' + pathThrough(spiralPts(i, i + 1)) + '" stroke="url(#sg' + i + ')" stroke-width="5" fill="none" stroke-linecap="round" stroke-opacity=".85"/>';
+  }
+  s += '<path class="flow late" d="' + pathThrough(spiralPts(0, 8)) + '" stroke="#fff" stroke-opacity=".55" stroke-width="2.2" stroke-dasharray="1 22" stroke-linecap="round" fill="none"/>';
+  // C7 joins the core
+  var c7 = POS.c7, o7 = outward(c7);
+  s += '<path d="M' + (CX + o7[0] * 156).toFixed(1) + ' ' + (CY + o7[1] * 156).toFixed(1) + 'L' + (CX + o7[0] * 92).toFixed(1) + ' ' + (CY + o7[1] * 92).toFixed(1) + '" class="late" stroke="#ffb547" stroke-width="12" stroke-opacity=".35" filter="url(#f-glow)"/>';
+  s += '<path d="M' + (CX + o7[0] * 156).toFixed(1) + ' ' + (CY + o7[1] * 156).toFixed(1) + 'L' + (CX + o7[0] * 92).toFixed(1) + ' ' + (CY + o7[1] * 92).toFixed(1) + '" class="late" stroke="#ffb547" stroke-width="4" stroke-linecap="round"/>';
+  // the family line g0 -> B -> C7
+  var g0 = POS.g0, bb = POS.b, lin = [];
+  for (var th = 165; th >= 18; th -= 3) lin.push(polar(th, 235 + (190 - 235) * (165 - th) / 147));
+  s += '<path d="M' + g0.x.toFixed(1) + ' ' + g0.y.toFixed(1) + ' Q430 890 ' + bb.x.toFixed(1) + ' ' + bb.y.toFixed(1) + '" class="late" stroke="#ff7a30" stroke-width="2.6" stroke-dasharray="3 8" fill="none" stroke-linecap="round" opacity=".9"/>';
+  s += '<path class="late" d="' + pathThrough(lin) + '" stroke="#ff7a30" stroke-width="2.6" stroke-dasharray="3 8" fill="none" stroke-linecap="round" opacity=".9"/>';
+  // notes along the way
+  s += '<text class="note" x="648" y="104" text-anchor="start">23 Sept 2026 · where the path begins</text>';
+  s += '<text class="note" x="700" y="772" text-anchor="middle">25 Sept · C7 joins the library</text>';
+
+  // places
+  ['bakery', 'freight', 'clinics'].forEach(function (id) {
+    var n = NODES[id], p = POS[id], seed = sha256(n.title);
+    s += nodeOpen(n, p) + '<g class="nz"><circle class="hit" r="92"/><path d="' + blobPath(84, seed) + '" fill="url(#g-isle)" stroke="#22d3c5" stroke-opacity=".45" stroke-width="2"/>' +
+      '<circle class="sel" r="96"/>' + placeIcon(id) + '<g transform="translate(34 -26)">' + runeMarkup(seed, 26, '#22d3c5', 2.2) + '</g></g>' +
+      '<g class="lbl" text-anchor="middle"><text class="t1" x="0" y="100" style="font-size:23px">' + esc(n.short) + '</text><text class="t2" x="0" y="122" fill="#22d3c5">' + esc(n.verdict) + ' · example</text></g></g>';
+  });
+  var you = NODES.you;
+  s += nodeOpen(you, POS.you) + '<g class="nz"><circle class="hit" r="62"/><path d="' + blobPath(56, 'c0ffee42') + '" fill="rgba(236,239,246,.03)" stroke="#b7bfd0" stroke-opacity=".6" stroke-width="2" stroke-dasharray="6 7"/>' +
+    '<circle class="sel" r="66"/><g id="you-rune">' + runeMarkup(sha256('your folder'), 34, '#b7bfd0', 2.6) + '</g></g>' +
+    '<g class="lbl" text-anchor="start"><text class="t1" x="74" y="-4" style="font-size:23px">Your folder</text><text class="t2" x="74" y="18" fill="#b7bfd0">not yet forged</text></g></g>';
+  // the record
+  var rec = NODES.record;
+  s += nodeOpen(rec, POS.record) + '<g class="nz"><circle class="hit" r="64"/>' +
+    '<path d="M-16 38 L-26 78 L-13 70 L-5 82 L1 44Z M16 38 L26 78 L13 70 L5 82 L-1 44Z" fill="#ff7a30" opacity=".75"/>' +
+    '<circle r="50" fill="url(#g-halo-gold)" opacity=".5"/><circle r="46" fill="#141a26" stroke="#ffb547" stroke-width="2.5"/><circle r="38" fill="none" stroke="#ffb547" stroke-opacity=".5" stroke-dasharray="3 5"/>' +
+    '<circle class="sel" r="58"/>' + runeMarkup(rec.rune.hash, 40, '#ffb547', 2.8) + '</g>' +
+    '<g class="lbl" text-anchor="middle"><text class="t1" x="0" y="112" style="font-size:23px">The record</text><text class="t2" x="0" y="134" fill="#ffb547">one paper · 640,595 bytes</text></g></g>';
+  // the core
+  var core = NODES.core, kr = '', kr2 = '';
+  for (i = 0; i < 24; i++) {
+    var ang = i / 24 * 360, pt = { x: Math.cos(ang * Math.PI / 180) * 128, y: Math.sin(ang * Math.PI / 180) * 128 };
+    var seg = core.rune.hash.slice((i * 5) % 64) + core.rune.hash.slice(0, (i * 5) % 64);
+    kr += '<g transform="translate(' + pt.x.toFixed(1) + ' ' + pt.y.toFixed(1) + ') rotate(' + (ang + 90).toFixed(1) + ')">' + runeMarkup(seg, 20, i % 6 ? 'rgba(255,190,120,.62)' : '#ffb547', 1.8) + '</g>';
+  }
+  s += nodeOpen(core, POS.core) + '<g class="nz"><circle class="hit" r="150"/>' +
+    '<circle class="breathe" r="118" fill="url(#g-halo)"/>' +
+    '<circle r="108" fill="none" stroke="#22d3c5" stroke-opacity=".5" stroke-width="1.4" stroke-dasharray="40 12 4 12" class="kring2"/>' +
+    '<g class="kring">' + kr + '</g>' +
+    '<path d="' + hexPath(88) + '" fill="url(#g-ember)"/><path d="' + hexPath(76) + '" fill="#0b0f17" opacity=".94"/>' +
+    '<g transform="translate(-4 -12) scale(2.1) translate(-34 -32)"><path d="M27 19v26M27 19h8.5a6.5 6.5 0 0 1 0 13H27l11.5 13" fill="none" stroke="url(#g-ember)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/></g>' +
+    '<circle cx="26" cy="-38" r="4.5" fill="#22d3c5"/>' +
+    '<text x="0" y="52" text-anchor="middle" style="font:700 15px var(--display);letter-spacing:.3em;fill:#ffb547">CORE</text>' +
+    '<circle class="sel" r="150"/></g></g>';
+
+  // stations and stones
+  PATH.concat(['b']).forEach(function (id) {
+    var n = NODES[id], p = POS[id], col = TONE[n.tone], o = outward(p), inner = '';
+    if (n.kind === 'generation') {
+      inner = '<circle class="hit" r="54"/>' + (n.tone === 'pass' ? '<circle r="58" fill="url(#g-halo-gold)"/><circle class="pulse" r="36" fill="none" stroke="#ffb547" stroke-width="2"/>' : '') +
+        '<path d="' + hexPath(40) + '" fill="#1b130d" stroke="' + (n.tone === 'pass' ? '#ffb547' : '#ff7a30') + '" stroke-width="3"/>' +
+        '<circle class="sel" r="50"/>' + runeMarkup(n.rune.hash, 40, n.tone === 'pass' ? '#ffb547' : '#ff9a55', 3);
+    } else {
+      inner = '<circle class="hit" r="54"/>' + (n.tone === 'pass' ? '<circle r="70" fill="url(#g-halo-gold)"/><circle class="pulse" r="34" fill="none" stroke="#ffb547" stroke-width="2.4"/>' : '') +
+        '<circle r="36" fill="' + col + '" fill-opacity=".12"/><circle r="30" fill="#101622" stroke="' + col + '" stroke-width="3"/>' +
+        '<circle class="sel" r="44"/>' + runeMarkup(n.rune.hash, 36, n.tone === 'pass' ? '#ffd48a' : '#eceff6', 2.6, col);
+    }
+    var dir = LABEL_DIR[id] || o, lab = label(n, dir[0], dir[1]);
+    s += nodeOpen(n, p) + '<g class="nz">' + inner + '</g>' + lab + '</g>';
+  });
+  var world = document.getElementById('world');
+  world.innerHTML = s;
+  document.querySelector('#atlas defs').insertAdjacentHTML('beforeend', defs);
+}
+function placeIcon(id) {
+  var st = ' fill="none" stroke="#eceff6" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"';
+  if (id === 'bakery') return '<g transform="translate(-10 4)"><path d="M6 -22 A24 24 0 1 0 6 22 A18 18 0 0 1 6 -22Z"' + st + '/><path d="M-4 -2 q6 -8 14 0" ' + st + '/></g>';
+  if (id === 'freight') return '<g transform="translate(-10 2)"' + st + '><rect x="-24" y="-8" width="22" height="16" rx="2"/><rect x="2" y="-8" width="22" height="16" rx="2"/><rect x="-11" y="-28" width="22" height="16" rx="2"/><path d="M-32 14 H32 L24 28 H-24Z"/></g>';
+  return '<g transform="translate(-10 2)"' + st + '><rect x="-24" y="-24" width="48" height="48" rx="12"/><path d="M0 -12 V12 M-12 0 H12" stroke-width="5"/></g>';
+}
+
+// ------------------------------------------------------------------ camera
+var svg = document.getElementById('atlas'), wrap = document.getElementById('atlas-wrap');
+var vb = { x: 0, y: 0, w: 1200, h: 1240 }, anim = 0;
+function dims() { var r = svg.getBoundingClientRect(); return { W: Math.max(1, r.width), H: Math.max(1, r.height) }; }
+function apply() { svg.setAttribute('viewBox', vb.x.toFixed(2) + ' ' + vb.y.toFixed(2) + ' ' + vb.w.toFixed(2) + ' ' + vb.h.toFixed(2)); }
+function wide() { return window.innerWidth > 760; }
+function cardOpen() { return !card.hidden; }
+function homeView() {
+  var d = dims(), bx = -20, by = -10, bw = 1250, bh = 1265;
+  var freeW = wide() && cardOpen() ? Math.max(200, d.W - 430) : d.W, scale = Math.min(freeW / bw, d.H / bh);
+  var w = d.W / scale, h = d.H / scale;
+  return { x: bx + bw / 2 - (freeW / 2) / scale, y: by + bh / 2 - h / 2, w: w, h: h };
+}
+function viewFor(id) {
+  var p = POS[id], d = dims(), span = (id === 'core' ? 520 : (NODES[id].kind === 'place' || id === 'record' ? 430 : 400)) * (wide() ? 1.45 : 1), w, h;
+  if (wide()) {
+    var free = d.W - 430, scale = Math.min(free, d.H) / span;
+    w = d.W / scale; h = d.H / scale;
+    return { x: p.x - (free / 2) / scale, y: p.y - h / 2, w: w, h: h };
+  }
+  var sc = Math.min(d.W, d.H) / span; w = d.W / sc; h = d.H / sc;
+  return { x: p.x - w / 2, y: p.y - h / 2, w: w, h: h };
+}
+function ease(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+function fly(to, ms) {
+  cancelAnimationFrame(anim);
+  if (reduced() || ms === 0) { vb = to; apply(); return; }
+  var from = { x: vb.x, y: vb.y, w: vb.w, h: vb.h }, t0 = performance.now();
+  var dist = Math.hypot((to.x + to.w / 2) - (from.x + from.w / 2), (to.y + to.h / 2) - (from.y + from.h / 2));
+  ms = ms || Math.min(1300, 650 + dist * 0.6);
+  var lift = Math.min(1.5, 1 + dist / Math.max(from.w, to.w) * 0.35);
+  (function step(now) {
+    var t = Math.min(1, (now - t0) / ms), e = ease(t), bump = 1 + (lift - 1) * Math.sin(Math.PI * t);
+    var w = (from.w + (to.w - from.w) * e) * bump, h = (from.h + (to.h - from.h) * e) * bump;
+    var cx = from.x + from.w / 2 + ((to.x + to.w / 2) - (from.x + from.w / 2)) * e, cy = from.y + from.h / 2 + ((to.y + to.h / 2) - (from.y + from.h / 2)) * e;
+    vb = { x: cx - w / 2, y: cy - h / 2, w: w, h: h }; apply();
+    if (t < 1) anim = requestAnimationFrame(step); else { vb = to; apply(); }
+  })(t0);
+}
+function zoomAt(f, px, py) {
+  cancelAnimationFrame(anim); touched = true;
+  var d = dims(), ux = vb.x + px / d.W * vb.w, uy = vb.y + py / d.H * vb.h, nw = Math.min(3400, Math.max(170, vb.w * f));
+  f = nw / vb.w;
+  vb = { x: ux - (ux - vb.x) * f, y: uy - (uy - vb.y) * f, w: nw, h: vb.h * f };
+  clampView(); apply();
+}
+function clampView() {
+  var cx = vb.x + vb.w / 2, cy = vb.y + vb.h / 2, ncx = Math.min(1500, Math.max(-300, cx)), ncy = Math.min(1540, Math.max(-300, cy));
+  vb.x += ncx - cx; vb.y += ncy - cy;
+}
+function fitAspect() {
+  var d = dims(), cx = vb.x + vb.w / 2, cy = vb.y + vb.h / 2, h = vb.w * d.H / d.W;
+  vb = { x: vb.x, y: cy - h / 2, w: vb.w, h: h };
+  vb.x = cx - vb.w / 2; apply();
+}
+
+// pointer: drag to pan, two fingers to pinch, tap to open
+var pointers = new Map(), downAt = null, moved = false, pinch = null, touched = false;
+var hint = document.getElementById('hint');
+function hideHint() { hint.classList.add('gone'); }
+svg.addEventListener('pointerdown', function (e) {
+  if (e.button !== undefined && e.button > 0) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 1) { downAt = { x: e.clientX, y: e.clientY, node: e.target.closest ? e.target.closest('.node') : null }; moved = false; }
+  if (pointers.size === 2) { var ps = Array.from(pointers.values()); pinch = { d: Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y), w: vb.w }; moved = true; }
+  cancelAnimationFrame(anim);
+});
+window.addEventListener('pointermove', function (e) {
+  if (!pointers.has(e.pointerId)) return;
+  var prev = pointers.get(e.pointerId), cur = { x: e.clientX, y: e.clientY };
+  pointers.set(e.pointerId, cur);
+  var d = dims(), r = svg.getBoundingClientRect();
+  if (pointers.size === 2 && pinch) {
+    var ps = Array.from(pointers.values()), dist = Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y), mx = (ps[0].x + ps[1].x) / 2 - r.left, my = (ps[0].y + ps[1].y) / 2 - r.top;
+    var target = pinch.w * pinch.d / Math.max(20, dist);
+    zoomAt(target / vb.w, mx, my);
+    vb.x -= (cur.x - prev.x) / 2 / d.W * vb.w; vb.y -= (cur.y - prev.y) / 2 / d.H * vb.h; apply();
+    hideHint();
+    return;
+  }
+  if (!downAt) return;
+  if (!moved && Math.hypot(cur.x - downAt.x, cur.y - downAt.y) > 6) { moved = true; touched = true; svg.classList.add('dragging'); hideHint(); }
+  if (moved) { vb.x -= (cur.x - prev.x) / d.W * vb.w; vb.y -= (cur.y - prev.y) / d.H * vb.h; clampView(); apply(); }
+});
+function endPointer(e) {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (pointers.size === 0) {
+    svg.classList.remove('dragging');
+    if (downAt && !moved && e.type === 'pointerup' && downAt.node) openCard(downAt.node.getAttribute('data-id'), false);
+    downAt = null;
+  }
+}
+window.addEventListener('pointerup', endPointer);
+window.addEventListener('pointercancel', endPointer);
+svg.addEventListener('wheel', function (e) {
+  if (!e.ctrlKey && !e.metaKey) { hint.classList.remove('gone'); clearTimeout(svg._ht); svg._ht = setTimeout(hideHint, 1600); return; }
+  e.preventDefault();
+  var r = svg.getBoundingClientRect();
+  zoomAt(Math.exp(e.deltaY * 0.0022), e.clientX - r.left, e.clientY - r.top);
+}, { passive: false });
+svg.addEventListener('dblclick', function (e) { var r = svg.getBoundingClientRect(); zoomAt(0.6, e.clientX - r.left, e.clientY - r.top); });
+svg.addEventListener('keydown', function (e) {
+  var node = e.target.closest && e.target.closest('.node');
+  if (node && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openCard(node.getAttribute('data-id'), true); }
+});
+document.getElementById('z-in').onclick = function () { var d = dims(); zoomAt(0.7, d.W / 2, d.H / 2); };
+document.getElementById('z-out').onclick = function () { var d = dims(); zoomAt(1.4, d.W / 2, d.H / 2); };
+document.getElementById('z-home').onclick = function () { touched = false; fly(homeView()); };
+// on a resize: keep the open story in view, or the whole map until someone has moved it, or else the zoom
+if (window.ResizeObserver) new ResizeObserver(function () {
+  var d = dims(); if (d.W < 40 || d.H < 40) return;  // hidden or collapsed: keep the last good view
+  if (current) { cancelAnimationFrame(anim); vb = viewFor(current); apply(); }
+  else if (!touched) { vb = homeView(); apply(); }
+  else fitAspect();
+}).observe(svg);
+
+// ------------------------------------------------------------------ story card
+var card = document.getElementById('card'), current = null, lastFocus = null;
+var TOUR = STORY.tour;
+function level() { return app.getAttribute('data-level'); }
+function receiptsHtml(n) {
+  if (!n.receipts || !n.receipts.length) return '';
+  return '<ul class="receipts">' + n.receipts.map(function (r) {
+    return '<li><svg class="rune sm" viewBox="-20 -20 40 40" aria-hidden="true">' + runeMarkup(r.sha256, 30, '#b7bfd0', 2.3, '#22d3c5') + '</svg><span><b>' + esc(r.label) + '</b> <code class="path">' + esc(r.path) + '</code> ' +
+      '<button type="button" class="hash" data-copy="' + esc(r.sha256) + '" title="Copy the full SHA-256">sha256 ' + esc(r.sha256.slice(0, 8)) + '…</button></span></li>';
+  }).join('') + '</ul>';
+}
+function renderCard() {
+  var n = NODES[current]; if (!n) return;
+  var col = TONE[n.tone], lv = level(), body = '';
+  document.getElementById('card-kicker').textContent = n.date + (n.section && lv !== 'simply' ? ' · ' + n.section : '');
+  document.getElementById('card-title').textContent = n.title;
+  var chip = document.getElementById('card-chip'); chip.textContent = n.verdict; chip.className = 'chip t-' + n.tone;
+  drawRune(document.getElementById('card-rune'), n.id === 'you' ? sha256('your folder') : hashOf(n), col);
+  if (lv === 'simply') body = '<p class="say">' + esc(n.simply) + '</p>';
+  else if (lv === 'fully') {
+    body = '<p>' + esc(n.fully) + '</p>';
+    if (n.not_claimed) body += '<p class="nc"><b>Not claimed:</b> ' + esc(n.not_claimed.join('; ')) + '.</p>';
+    body += receiptsHtml(n);
+    if (n.rune && n.rune.of) body += '<p class="nc">The rune is drawn from ' + esc(n.rune.of) + '.</p>';
+  } else body = '<pre class="json">' + esc(JSON.stringify(n, null, 1)) + '</pre>';
+  document.getElementById('card-body').innerHTML = body;
+  document.getElementById('card-body').scrollTop = 0;
+  var i = TOUR.indexOf(current);
+  document.getElementById('card-count').textContent = (i + 1) + ' / ' + TOUR.length;
+  document.getElementById('card-prev').disabled = i <= 0;
+  var next = document.getElementById('card-next');
+  next.textContent = i >= TOUR.length - 1 ? 'The whole map' : 'Next →';
+}
+function openCard(id, focusCard) {
+  if (!NODES[id]) return;
+  if (card.hidden) lastFocus = document.activeElement;
+  current = id; card.hidden = false; renderCard();
+  svg.querySelectorAll('.node.on').forEach(function (g) { g.classList.remove('on'); });
+  var g = svg.querySelector('.node[data-id="' + id + '"]'); if (g) g.classList.add('on');
+  hideHint();
+  var r = wrap.getBoundingClientRect(), bar = 64;
+  if (r.top < bar - 40 || r.top > window.innerHeight * 0.35) wrap.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'start' });
+  fly(viewFor(id));
+  if (focusCard) document.getElementById('card-title').focus({ preventScroll: true });
+}
+function closeCard() {
+  card.hidden = true; current = null;
+  svg.querySelectorAll('.node.on').forEach(function (g) { g.classList.remove('on'); });
+  touched = false; fly(homeView());
+  if (lastFocus && lastFocus.focus) lastFocus.focus({ preventScroll: true });
+}
+document.getElementById('card-x').onclick = closeCard;
+document.getElementById('card-prev').onclick = function () { var i = TOUR.indexOf(current); if (i > 0) openCard(TOUR[i - 1], false); };
+document.getElementById('card-next').onclick = function () { var i = TOUR.indexOf(current); if (i < TOUR.length - 1) openCard(TOUR[i + 1], false); else closeCard(); };
+document.getElementById('tour').onclick = function () { openCard(TOUR[0], false); };
+document.addEventListener('keydown', function (e) {
+  if (card.hidden || /INPUT|TEXTAREA/.test((e.target && e.target.tagName) || '')) return;
+  if (e.key === 'Escape') closeCard();
+  else if (e.key === 'ArrowRight' && !e.target.closest('.levels')) document.getElementById('card-next').click();
+  else if (e.key === 'ArrowLeft' && !e.target.closest('.levels')) document.getElementById('card-prev').click();
+});
+document.addEventListener('click', function (e) {
+  var t = e.target.closest && e.target.closest('.to-map');
+  if (t) { openCard(t.getAttribute('data-id'), false); return; }
+  var h = e.target.closest && e.target.closest('.hash');
+  if (h) copy(h.getAttribute('data-copy'), h);
+});
+
+// ------------------------------------------------------------------ reading level and text size
+function setLevel(lv, save) {
+  app.setAttribute('data-level', lv);
+  document.querySelectorAll('.levels button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-level') === lv)); });
+  if (current) renderCard();
+  if (save) store('rs-atlas-level', lv);
+}
+document.querySelectorAll('.levels button').forEach(function (b) { b.onclick = function () { setLevel(b.getAttribute('data-level'), true); }; });
+var aa = document.getElementById('aa');
+function setBig(on, save) { app.setAttribute('data-big', String(on)); aa.setAttribute('aria-pressed', String(on)); if (save) store('rs-atlas-big', on ? '1' : '0'); }
+aa.onclick = function () { setBig(app.getAttribute('data-big') !== 'true', true); };
+var savedLevel = store('rs-atlas-level'); if (savedLevel && /^(simply|fully|machines)$/.test(savedLevel)) setLevel(savedLevel, false);
+if (store('rs-atlas-big') === '1') setBig(true, false);
+
+// ------------------------------------------------------------------ copying (with a fallback when the clipboard is closed)
+var msg = document.getElementById('copy-msg');
+function copy(text, anchor) {
+  function done(ok) { msg.textContent = ok ? 'Copied.' : 'Selected: press Ctrl+C (or long-press) to copy.'; setTimeout(function () { msg.textContent = ''; }, 2600); if (anchor) { var o = anchor.textContent; anchor.textContent = ok ? 'copied' : o; setTimeout(function () { anchor.textContent = o; }, 1400); } }
+  function fallback() {
+    var pre = document.getElementById('plain');
+    if (text === pre.textContent) { var r = document.createRange(); r.selectNodeContents(pre); var s = getSelection(); s.removeAllRanges(); s.addRange(r); done(false); return; }
+    var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta); done(ok);
+  }
+  try { navigator.clipboard.writeText(text).then(function () { done(true); }, fallback); } catch (e) { fallback(); }
+}
+document.getElementById('copy-text').onclick = function () { copy(document.getElementById('plain').textContent); };
+document.getElementById('copy-json').onclick = function () { copy(JSON.stringify(STORY, null, 1)); };
+
+// ------------------------------------------------------------------ the rune forge
+var forgeIn = document.getElementById('forge-in'), forgeRune = document.getElementById('forge-rune'), forgeHex = document.getElementById('forge-hex');
+function forge() {
+  var v = forgeIn.value.trim(), isHash = /^[0-9a-fA-F]{64}$/.test(v), hex = isHash ? v.toLowerCase() : sha256(forgeIn.value);
+  drawRune(forgeRune, hex, '#ffb547');
+  forgeHex.textContent = (isHash ? 'a hash, used as it is: ' : 'sha256("' + forgeIn.value + '") = ') + hex;
+  forgeRune.setAttribute('aria-label', 'The rune of ' + (isHash ? 'this hash' : '"' + forgeIn.value + '"'));
+}
+forgeIn.addEventListener('input', forge);
+
+// ------------------------------------------------------------------ the first look: the path draws itself, station by station
+// (Web Animations with fill 'backwards': if they never run, everything is simply there.)
+function entrance() {
+  if (reduced() || !svg.animate) return;
+  var step = 260, t0 = 250;
+  svg.querySelectorAll('.seg').forEach(function (p, i) {
+    var L = p.getTotalLength(); p.style.strokeDasharray = L + ' ' + L;
+    p.animate([{ strokeDashoffset: L }, { strokeDashoffset: 0 }], { duration: step + 40, delay: t0 + i * step, easing: 'ease-in-out', fill: 'backwards' });
+  });
+  function show(el, delay) { el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 520, delay: delay, easing: 'ease-out', fill: 'backwards' }); }
+  var at = { core: 0, b: t0 + 4.5 * step, record: t0 + 9 * step, bakery: t0 + 9.6 * step, freight: t0 + 10.2 * step, clinics: t0 + 10.8 * step, you: t0 + 11.6 * step };
+  PATH.forEach(function (id, i) { at[id] = t0 + i * step; });
+  svg.querySelectorAll('.node').forEach(function (g) { show(g, at[g.getAttribute('data-id')] || 0); });
+  svg.querySelectorAll('.late, .note').forEach(function (el) { show(el, t0 + 8.4 * step); });
+}
+function entranceWhenSeen() {
+  if (!('IntersectionObserver' in window)) return entrance();
+  var io = new IntersectionObserver(function (es) { if (es.some(function (e) { return e.isIntersecting; })) { io.disconnect(); entrance(); } }, { threshold: 0.3 });
+  io.observe(svg);
+}
+
+// ------------------------------------------------------------------ start
+buildWorld();
+entranceWhenSeen();
+drawStaticRunes();
+forge();
+vb = homeView(); apply();
+// the empty island's rune is still being forged: it changes until someone brings a folder
+setInterval(function () {
+  if (reduced() || document.hidden) return;
+  var g = document.getElementById('you-rune'); if (!g) return;
+  g.innerHTML = runeMarkup(sha256('your folder ' + Math.random()), 34, '#b7bfd0', 2.6);
+}, 1500);
+setTimeout(hideHint, 6000);
+})();
+</script>

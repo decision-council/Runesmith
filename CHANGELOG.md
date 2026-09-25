@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased: the Atlas (2026-09-25)
+
+- **`site/atlas/`: the Runesmith Atlas**, one page that tells how Runesmith was built, failures included (`python scripts/build_atlas.py`).
+  - An explorable map: the Core ringed by its kernel runes, a spiral path through the seven studies (the nulls included) that ends at C7 joining the Core, the family line g0 → B → C7, and the example folders. Tap anything for its story. There is a guided tour, and it pans and pinches on a phone.
+  - Three reading levels: *Simply* (for children and elders, with an optional bigger text size), *Fully* (numbers, sections, receipts) and *For machines* (the raw record).
+  - **Runes from real fingerprints.** Every rune is drawn from a SHA-256: a study's `RESULT.json`, a generation's organ digest, the paper itself. The rune forge draws one from any text or hash.
+  - **For AI readers:** a letter written to them, schema.org JSON-LD, the whole story as JSON (`#runesmith-story`), the SVG's `<desc>`, and `llms.txt`. All of it is generated from `site/atlas/story.json`, the same file that draws the page, so there is no hidden version.
+  - `--verify MILLINEROS_ROOT` re-hashes every receipt the story cites. At build time, 18 of 18 on disk matched.
+  - Motion respects `prefers-reduced-motion`. Every node is keyboard-reachable, and the page has no horizontal scroll at phone width.
+
 ## Unreleased: Runesmith Studio (2026-09-25)
 
 **The app** (`runesmith/app`, standard library only, no build step)
