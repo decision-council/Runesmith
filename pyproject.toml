@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runesmith"
+version = "0.1.0"
+description = "A model-agnostic runtime that improves the objects it works on and improves itself, with an evidence-bound Kaizen loop."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+code = ["pytest>=8"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+runesmith = "runesmith.cli:main"
+runesmith-studio = "runesmith.app.server:main"
+
+[tool.setuptools.packages.find]
+include = ["runesmith*"]
+
+[tool.setuptools.package-data]
+runesmith = ["demo_data/*.json", "library/*.json", "library/*.zip", "app/static/*.html", "app/static/*.css",
+             "app/static/*.svg", "app/static/js/*.js", "app/static/js/views/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+addopts = "-p no:cacheprovider"

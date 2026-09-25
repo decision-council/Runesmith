@@ -1,0 +1,6 @@
+# Runesmith's digests (kernel, organs, generations) are computed over bytes, so every checkout keeps LF,
+# whatever the platform. The Windows launcher is the one exception: cmd.exe wants CRLF.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.png binary
+*.zip binary

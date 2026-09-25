@@ -1,0 +1,213 @@
+# Changelog
+
+## Unreleased: Runesmith Studio (2026-09-25)
+
+**The app** (`runesmith/app`, standard library only, no build step)
+- `runesmith` with no arguments, or `runesmith up [folder]`, opens **Runesmith Studio**, a local web app for the folder.
+  - It listens on 127.0.0.1 only.
+  - Access is by a one-time link that becomes an HttpOnly, SameSite=Strict cookie.
+  - It checks the Host header (against DNS rebinding) and requires a custom header for every change (against CSRF).
+  - A strict Content-Security-Policy applies.
+  - Launchers: `Runesmith.cmd`, `Runesmith.command` and `runesmith.sh`. Each checks for Python and opens the last folder or a new first project.
+- **Genesis**, the opening sequence: seven scenes on the real folder (spark, forge, your world, itself, the guard, the evidence, any mind). It ends by naming what you will create, with an optional description. `/cinema` plays it looping on demo data, for sharing.
+  - It is sized to the player, not the window (container units): the scene keeps the upper band and the words the lower one, so nothing overlaps on a full screen, a laptop or a small web player. On a phone-sized player it keeps the title line alone.
+  - The cinema cycles three stories: a corner bakery, a freight company and a group of clinics. Their folders and file counts are those of the website's demo folders. A page can follow the stories (`genesis:story`) and pick one (`genesis:play`).
+- **Living map** in four lenses:
+  - Environment: objects, health bands, ladders, last-round status; exclude an object.
+  - Self: the kernel ring, organs, capabilities, lineage.
+  - Development: goal, plan, ladder and generation tracks.
+  - Operations: the work loop, roles and calls, attention, trial, schedule.
+- **Work & proposals.**
+  - Apply judge-accepted fixes only when every file is unchanged since the fix was made. Line endings are preserved, a backup is kept, Undo is exact, and Reject records the reason as a note.
+  - Model-written **drafts** are labelled unverified. Unsafe paths are refused, and an existing file is replaced only after a second confirmation.
+- **Goals, brief, blueprints and plan.** The **Planner** role drafts milestones on tracks, then first files per milestone. When it has no model of its own it borrows the Improver's or the Worker's.
+- **Thinking power.**
+  - Presets for local servers (auto-discovered), key providers, a chat window, and Milliner.
+  - Model listing and a one-call test.
+  - Roles with ordered fallbacks.
+  - Keys go in `<home>/secrets.json` and are never returned.
+  - The manual chat relay works inside the app.
+- **Comment on anything.** Press C or use the hover bubble on any card, map node, rung, fix, model or generation. Open notes reach the model that works on that thing, labelled as the owner's guidance. The Kaizen author also gets the owner's notes on Runesmith itself.
+- **Self-improvement page:**
+  - generations with friendly names;
+  - the open trial and its looks;
+  - the library with **C7**, which is adopted only through a trial;
+  - campaigns and capabilities.
+- **Activity:** the live log, the verifiable ledger timeline, and the jobs history.
+- **Settings:** autonomy (observe or propose), the schedule, mapping, exclusions, notes, Kaizen, theme, health, the folder picker, a snapshot export, and About & evidence.
+- A background worker runs jobs one at a time (map, round, plan, draft, health), on a schedule or on demand. Live events stream to the page.
+
+**Kernel and maps**
+- `envmap`:
+  - maps empty folders, and plain folders as a `folder` kind with a small ladder;
+  - maps the workspace's own loose files as an object;
+  - lists excluded objects without reading them;
+  - adds `workspace_facts`.
+- `generations.kernel_digest` leaves out the Studio interface (`app/`), which never runs an organ. The self-map shows it as its own region.
+- `KaizenRun`, `subject_step` and `run_loop` accept `owner_notes`. When empty, the author packet is byte-identical to before.
+- `home.init_home`, `keystore`, `notes`.
+- The shipped library holds C7 (`library/c7.zip`, with its evidence and caveat).
+
+**Fixed in use loops** (see [docs/USE_LOOP_LOG.md](docs/USE_LOOP_LOG.md))
+- Source files with a UTF-8 byte-order mark could not be repaired: organs got the BOM inside the text, and `ast.parse` rejects it. `read_src_files` now strips it. `encode_like` restores it, and the line endings, on every write-back, including `repair --apply`, which used to write in text mode.
+- A quick map no longer erases test measurements. A code object keeps the measurement while its files are unchanged (a fingerprint of names, sizes and times), marked `measured_utc`.
+- Plain-text documents (`.txt`, `.rst`, `.adoc`, `.org`) count as documents on the ladder. Links are still checked only in Markdown.
+- `discover` explains a test run that could not start (`detail`, `triage`). The Studio shows it.
+- A new **website** object kind (static HTML): link and image integrity, phone readiness, titles, and a ladder from pages to links resolving. The Planner reads these facts.
+- For non-technical owners:
+  - "Use a chat window (no key)" is one click;
+  - the chat relay opens in a drawer from anywhere, with a toast when a request arrives, and has **Skip**;
+  - writing a draft moves its milestone to in progress.
+- A round skips unreachable Worker models and uses their fallbacks. It stops only when none answers, and its message names the fix.
+- Choosing a generation by hand closes an open trial as `closed_by_owner`, recorded in the ledger. Before this, its arms went on comparing generations that no longer described what ran.
+- **Link doctor**, with no model involved. Broken internal links in Markdown and HTML are pointed at the existing file with the same or closest name. The fixes come as an unverified draft of edits, each applied only onto the version it was made from.
+- Link checks require the exact case of every path part (`envmap.exists_exactly`). A link that only works on a case-insensitive disk counts as broken, because it breaks on a web server.
+- Projects nested inside plain folders (`services/billing`) are found as objects of their own. They carry their path as their name on the map and in proposals and attempts. A map node shows the last part as its title and the parent in its subtitle.
+- The link doctor no longer guesses generic names such as `README.md` or `index.md`: such a target is used only when the surrounding path agrees.
+- After a restart, a job that was running is recorded as interrupted. Chat-relay requests that nothing waits for any more are set aside, and the ledger records it.
+- The map's test dot follows what happened since the last round. A fix applied afterwards shows as "fix applied, measure to confirm", and a later measurement replaces the round's verdict.
+- The overview names what waits ("1 fix and 1 draft"), and a long workspace name wraps in the map's hub instead of being cut.
+- Changing scene during the opening's finale removes the naming form, and the demo typing stops with it.
+- The map's rings never let nodes overlap, from 0 to 200 objects. Up to 12 share one ring, grown as needed; more are shared out over rings wider apart than a node.
+- The opening's drawing takes the shape of its band (`Genesis.frame()`), so wide scenes fill a full screen or a web player. It no longer prints "null" when embedded, keeps a phone-sized player free of corner buttons, and never shows a negative count.
+- **Links and junctions are never followed** (loop 10). Python's walkers follow Windows junctions, so through them:
+  - the map read folders outside the workspace;
+  - the throwaway test copy copied outside files;
+  - a model was shown outside code;
+  - applying a fix could write outside the workspace.
+
+  Now a single `is_link()` check guards every walker. A fix that resolves outside the workspace is refused (`outside`), and a linked top-level folder shows as "a link: not followed".
+- **Large folders** (loop 10). The map walks with `os.scandir`, reading links, sizes and times from the directory listing: 29,000 files now map in 2.6 s instead of 18.6 s. A scan that stops at 20,000 files says so in the unknowns and shows "20000+ files". Blueprint candidates take 0.7 s instead of 2.6 s, and the link doctor 1.1 s instead of 4.9 s.
+- **One Studio per folder, one listener per port** (loop 15). On Windows, `SO_REUSEADDR` let a second Studio, or any program, bind a port that was already listening, so a second folder's link reached the wrong Studio. The server now takes its port exclusively there.
+
+  An OS-held `InstanceLock` allows one Studio per folder: a second launch opens the first instead of crashing on the half-made home. `generations.freeze` also accepts a generation another process froze a moment earlier.
+- **The Studio on a phone** (loop 14). Every page used to scroll sideways, because the top bar never wrapped. Now, under 640 px:
+  - the top bar takes two rows, and its buttons show icons, with their names kept for screen readers;
+  - rows, the lens switcher, model cards and settings wrap;
+  - the living map becomes a readable column under the workspace, as tall as it needs.
+- **Skipping a chat-relay request no longer wipes the plan** (loop 13). The forced "skipped" answer was saved as an empty plan. A skip now ends a plan or draft job as `skipped` (`SkippedByOwner`) and saves nothing, and the Planner saves no answer that lacks its required parts. Attempts end in plain words (`ATTEMPT_WORDS`), and failed jobs and relay problems no longer show internal names.
+- `runesmith proposals` respects what was decided in the Studio (loop 12). It shows the proposals still waiting and names the applied, undone or rejected ones, and `--write` saves patches only for waiting ones. It used to offer a fix already applied in the Studio as a patch that no longer applies.
+- The server answers a broken or negative `Content-Length` with 400 (loop 11). A negative length used to hold a server thread until the client hung up. The Self and Development lenses of the map work by keyboard too (`keyboardNodes`).
+- **Keyboard and screen readers** (loop 9):
+  - map objects are focusable buttons with spoken summaries;
+  - every clickable card, row or tile answers Tab, Enter and Space;
+  - dialogs and drawers stack (`core.layer`): Tab stays inside the top one, Escape closes only it, and the focus returns to what opened it;
+  - comment mode works by keyboard;
+  - there is a skip link, and the focus moves to the new page's heading;
+  - the window title names the page and the folder;
+  - the palette is announced as a combobox with its options;
+  - faint text meets WCAG AA in both themes.
+
+## 0.1.0 — 2026-09-24 (research release)
+
+**Kernel**
+- Canonical identity and content digests (`canon`).
+- A hash-chained, append-only ledger with tamper detection (`ledger`).
+- Instrument router with transport-first failure classes and censoring. Adapters: Milliner and any OpenAI-compatible endpoint, plus a scripted instrument for tests and offline demos (`instruments`).
+- A kernel-owned resource envelope and a per-opportunity cockpit with call, signal-run, request-size and wall-clock ceilings (`opportunity`).
+- Code objects observed through their tests, with an optional executed-line trace (`objects/code`).
+- Confined organ execution: an isolated interpreter, a secret-free environment and a PEP 578 audit hook, with RPC over stdio (`sandbox`, `organ_child`).
+- Frozen generations with verification and compare-and-swap activation (`generations`).
+
+**Organs**
+- `repair` g0: a port of the Runesmith v1 repair policy.
+
+**Kaizen**
+- `diagnose`: value stream, failure families refined by matured references, and the declared target-ranking rule.
+- `attention`: a standing self-improvement share that rises under struggle, with exact credit carry.
+- `improve`: plan-do-study-act with prediction and falsifier, static check, confined smoke test, development replay, keep-best and a PDSA log.
+
+**Maps, memory, loop and CLI**
+- `SELF_MAP.json` and `ENVIRONMENT.json`, with the owner's band vocabulary (bad / minimal / optimal / world-class) and explicit unknowns.
+- Append-only memory with BM25 recall and retirement.
+- Object-target discovery from failing tests (`discover`).
+- The Kaizen-always run loop (`loop`): an experience store, experience/validation splits, freeze without activation.
+- CLI: `init`, `status`, `selfmap`, `envmap`, `discover`, `repair`, `run`, `diagnose`, `kaizen`, `generations`, `ledger`.
+
+**Post-snapshot development (not part of the SR5 subject snapshot)**
+- `envmap`: Node repositories get objectives, a build ladder and a next rung. Probing with npm is not implemented yet and stays unknown.
+- `kaizen.improve`: the author packet now carries each attempt's diff and a diversity rule. This responds to SR5, where the author proposed one refinement in four consecutive iterations (4–7).
+- `kaizen.improve`: optional `confirm_replays`. A candidate that beats the incumbent once must keep beating it on the average of further replays. This responds to SR5, where identical organs scored 10/32 and 16/32.
+
+- `loop.subject_step`: a **noise-aware freeze bar**, learned from SR5. The incumbent is replayed twice on the validation split, and a candidate is frozen only if its gain over the incumbent's mean is at least `bar` and larger than the spread between the incumbent's two replays (`freeze_rule`). SR5 froze B on +6 (11 → 17) although identical organs had differed by 6 between replays, and B then failed on fresh work. Under the new rule, with replays of 10 and 16, B's +4 over their mean is within the noise and it is not frozen. The rule's numbers are recorded in the frozen generation's provenance.
+- `kaizen.trial` and `loop`: online confirmation.
+  - Seeded assignment of live opportunities between incumbent and candidate.
+  - Sequential one-sided Fisher tests with Bonferroni-spent α.
+  - Compare-and-swap activation or rejection, with no campaign while a trial is open.
+  - New command: `runesmith trial`.
+- `instruments`: tolerant JSON extraction for OpenAI-compatible (local) models, on by default and configurable with `tolerant_json`. The Milliner path stays strict.
+- `docs/LOCAL_MODELS.md`: running Runesmith on a small local model, with measured expectations.
+- `report`: a reproducible `REPORT.md` dashboard of one home. It shows the lineage, capability bands, per-generation yield and cycle time, open Kaizen targets, trials and recent opportunities. New command: `runesmith report`.
+- `demo`: `runesmith demo` shows the whole loop in about a minute on a bundled three-slip workspace: map, discover, repair through the run loop, apply judge-accepted fixes, map again, report. It is offline by default, with a labelled scripted stand-in, and uses real models with `--live`. It refuses to overwrite a directory it did not create.
+- `demo --kaizen`: watch self-improvement offline in a few minutes. On a bundled eight-slip workspace:
+  1. The shipped organ g0 struggles, because a scripted weak model always breaks its navigation answer.
+  2. Kaizen diagnoses `navigation_output_failure` from its own telemetry.
+  3. The author's answer is replayed: the change gpt-oss-120b actually wrote in SR5 (generation `gen-a4415db24a53`, in `demo_data/`).
+  4. It qualifies on held-out replays, is frozen, wins an online trial (0/4 vs 4/4, p = 0.014) and is activated by compare-and-swap.
+  An end-to-end test asserts the whole chain, including that the activated organ is exactly SR5's B.
+  The demo ends with an honest footnote: in SR5's preregistered confirmation on large repositories, this change was not shown to help. It rescued 0/26 navigation failures there.
+- **Sandbox hardening after a security review.** Generation sharing made the organ sandbox matter against deliberately hostile code. Each gap below was first shown by a failing test, then closed:
+  - `_winapi` calls (OpenProcess/TerminateProcess could kill other processes);
+  - `gc` introspection (it could reach and widen the guard's own allow-list);
+  - sub-interpreter imports (Python-level audit hooks do not apply inside them);
+  - `ctypes` imports, crafted code objects, tracing and adding audit hooks, and `signal`;
+  - stderr floods (capped at 16 MB) and endless protocol lines (the host now reads lines with a bound).
+  The documentation now says plainly that PEP 578 audit hooks are not a hardened boundary: import generations only from people you trust, or run Runesmith in an OS-level sandbox.
+- `oslimits`: **OS-level limits under the audit hook.** On Windows each organ process runs in a Job Object that allows no child processes and caps memory (2 GB by default). On POSIX, `setrlimit` caps the address space and the file size and forbids new processes. Tests show the job refuses a spawn (WinError 1816) and a 600 MB allocation under a 200 MB cap, and that a sandboxed organ cannot hoard memory. These limits hold even for code that bypasses the hook.
+- **`ledger` fix: one chain, however many writers.** `append` used to chain onto the tail each `Ledger` object cached. Two objects on one file wrote duplicate sequence numbers and broken links, and the steward and the Kaizen demo each held such a second object. Every append now re-reads the file's real tail under a per-path lock and an OS file lock (`<ledger>.lock`). A test appends from 2 objects, 4 threads and 2 processes and verifies one intact chain of 143 records. The MillinerOS experiment ledgers were checked and are intact: their runners append from one thread per process, at distinct moments.
+- `loop.ExperienceStore`: keeps each judge-accepted fix (`verified_fix.json.gz`), so later recall and replays can use what worked.
+- `kaizen.affordances`: an affordance audit. It lists the kernel affordances an organ never uses, for g0: trace, recall, budget, a system message, a pre-edit signal run. They appear in the author packet (and in the diversity rule), in `SELF_MAP.json` under `improvement_options`, and in `REPORT.md`.
+- The organ contract shown to Kaizen authors now documents `cockpit.recall`. It was granted before but undocumented, so no author could use it.
+- `opportunity`: `recall` is now always granted and returns an empty list when the host has no memory, as in experiments and smoke tests. Before, the contract promised an affordance that some hosts refused, and an organ that followed the contract crashed there.
+- All text files use LF line endings, and a test keeps it that way. Digests are over bytes, and the project is cross-platform.
+- The contract now says how to read a trace. Import-time module lines are included, and lines inside function bodies show which functions the failing tests called. A kernel test pins the trace end to end: the defect's line is traced, an uncalled function body is not, and a never-imported module is absent.
+- `local`: memory episodes record the judge's verdict and a bounded summary of the changed lines, so recall returns what was tried, not only where.
+- `proposals`: `runesmith proposals [--write DIR]` turns judge-accepted fixes into unified-diff patches for human review. They are relative to the source as it was when the opportunity was served, and `git apply` refuses stale ones.
+- `report` gains a **By model** table: calls, unusable-answer share, opportunities, strict repairs and output tokens per call for each model that answered. It is Runesmith's measured knowledge of its own instruments, and it carries across model changes. Call records now also name the answering instrument.
+- **First Linux run** (Python 3.12.14 in a local container, no network, 1 CPU). The first full run gave 83 passed, 1 failed and 4 skipped. The skips are the three Windows-only Job Object and Windows API tests, plus the proposals test, because the image has no git.
+  - The failure showed a platform difference, not a hole. On POSIX, `RLIMIT_FSIZE` equals the stderr cap, so a flooding organ's write fails with EFBIG exactly at the cap, and the organ dies before the host's poll saw the file grow *over* the cap. The flood was refused either way, but the verdict differed by OS (`OSError` vs `OutputFlood`).
+  - `sandbox` now checks *at* the cap and classifies an organ that dies at the cap as `OutputFlood`, so the verdict is the same everywhere.
+  - The kernel, OS-limit and proposal tests then passed on Linux (26 passed, 4 skipped) and on Windows (25 passed).
+  - A second full Linux run passed: 84 passed, 4 skipped.
+- **Fix: organ and replay sources are written as exact bytes.** On Windows, text-mode writes turned every LF into CRLF.
+  - Affected: the Kaizen candidate organ (`improve.py`) and replayed task sources (`ExperienceStore.materialize`).
+  - Effect: an organ frozen on Windows differed in bytes from its author's text, so it carried two digests. Behaviour was identical, because Python reads source with universal newlines.
+  - Found by the new byte-level end-to-end test of the manual author. SR5's B is one such organ: file bytes `efef2b5c…`, author text `38d4be00…`. This is recorded in the SR5 and SR6 protocols.
+  - A regression test pins `materialize`.
+  - A flaky assertion in the loop test is fixed too: it did not allow the freeze rule's `within_noise` decision, which a timing tie can produce.
+- `manual`: **a chat model as the author, relayed by hand.** Anyone with access to a strong model only through a chat window can author generations: a campaign needs at most a few author calls, and the result runs on free models.
+  - An instrument of kind `manual` writes each request as a paste-ready file under `<home>/manual/` and waits for the reply.
+  - `runesmith manual list / show / answer [--clipboard | --file] [--model]` hands the reply back. Replies are checked against the request's schema first, so a person can ask the model to fix its answer before it counts.
+  - Replies may be written the way chat models write: prose around a ```` ```json ```` block, raw line breaks inside strings, and whole source files in named `@block:NAME` fenced blocks, which need no escaping. CRLF and UTF-16 are handled.
+  - A request nobody answers is a transport failure, so the work is censored, never scored. Router retries wait on the same content-addressed request.
+  - Receipts keep `answered_by` next to the instrument's label, and the Kaizen attempt record prefers it.
+  - `demo --kaizen --manual-author` puts your chat model's change through the demo's qualification and trial. An end-to-end test relays SR5's author answer as a chat reply with CRLF endings and a named block, and asserts that the activated organ is byte-identical to it.
+  - Guide: [docs/CHAT_AUTHOR.md](docs/CHAT_AUTHOR.md).
+- **Safety:** `discover` and `envmap --probe` run an object's tests on a throwaway copy, with no bytecode writes, so Runesmith never writes into the objects it inspects. A test checks the repository byte for byte. `in_place=True` remains available to library callers.
+- `attention`: **SPC drift detection**. A Bernoulli CUSUM watches strict-success yield against Runesmith's own baseline: the Wilson lower bound of its first 30 outcomes. It moves attention to blocked when yield drifts down although no single failure recurs, for example after a model or environment change. Its operating characteristics were simulated and are reproducible with `docs/simulations/drift_cusum.py`:
+  - at most 3.7% false alarms within 200 stable opportunities;
+  - a drop from 0.6 to 0.15 detected with a median delay of 22.
+  The baseline resets when a new generation is activated.
+- `attention` state now persists in `<home>/ATTENTION.json`, so struggle and drift are tracked across `run` invocations and steward rounds. Before, each run started fresh.
+- `report` shows attention: its mode, the resulting Kaizen share, the blocking signal, the last change with its reason, and the drift chart's state. It shows why Runesmith is spending more or less time on itself.
+- `discover`: **triage**. A failing test that only an environment change can fix (a missing third-party module, or a network dependency) is marked `environment`. The run loop and the steward skip it: no model call is spent, and it is recorded in the ledger. The rule is conservative. A missing module that exists in the object's own `src/` stays a repairable source defect, and anything unrecognised is left to the repair attempt. Discovery runs pytest with a wide terminal, so summary reasons are never truncated.
+- `envmap`: a **document-collection template**. It reads only and executes nothing. It measures internal Markdown link integrity in bands, and it knows:
+  - inline and reference links;
+  - anchors and URL-encoding;
+  - `file:line` code references;
+  - that code fences are ignored.
+  It also records a ladder (documents → index → links resolve) and the first broken links as examples. External links are not checked, and that is listed as an unknown. First real use: MillinerOS `docs/` has 78 documents and 499 internal links, none broken (band *optimal*), and its next rung is an index.
+- `doctor`: `runesmith doctor [--offline]` checks Python, pytest, the home, the ledger chain, the active generation (its organ files and kernel), the instruments (key present, endpoint reachable) and disk space. It gives a fix for each problem and never prints a secret.
+- `generations requalify`: after a Runesmith update, it re-freezes the active organs under the new kernel after a static check and a confined smoke test. The organs are byte-identical; the ledger records the requalification and the compare-and-swap activation.
+- `share`: `generations export <id> --to FILE` and `generations import --from FILE`, so improvements compound across people. An import must pass these checks, in order:
+  - archive members restricted to a manifest and `organs/**.py`, with no traversal and bounded sizes;
+  - digest match;
+  - static check;
+  - a confined smoke test.
+  It is then frozen inactive, bound to the receiver's kernel with provenance naming the source, and an online trial is opened. It is activated only by winning that trial. There is also a new `trial --open <id>`.
+- `steward`: `runesmith steward WORKSPACE [--rounds N --interval S --exclude NAME]` is the top-level "lowered into an environment" mode. Each round maps the workspace, discovers failing tests across all Python objects on throwaway copies, and serves only new work. Opportunity identity includes a digest of the object's `src`, so unchanged work is never re-served. The seed stays fixed across rounds, so the Kaizen validation split never leaks. The steward interleaves Kaizen and trials, writes the report and proposals, never edits an object, and never probes excluded objects.
+  Objects without a `src/` layout are skipped with a stated reason, because the shipped repair organ needs `src/`. Before this fix, one flat-layout repository crashed the round.
+
+**Evidence**
+- 29 tests.
+- SR5-KAIZEN, preregistered in the MillinerOS research repository, tests the first full Kaizen loop on fresh tasks.

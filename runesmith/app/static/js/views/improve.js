@@ -1,0 +1,101 @@
+// Self-improvement: generations, the online trial, the library of proven generations, campaigns, capabilities.
+import { h, icon, get, post, bus, toast, commentable, openNotes, clear, ago, plural, humanize, withBusy, confirmDialog,
+  empty, debounce } from '../core.js';
+import { bandPosition, fmtCap } from './home.js';
+
+export default async function render(root, ctx) {
+  const offs = [];
+  const head = h('div.page-head', h('div', h('h2', 'Self-improvement'),
+    h('p', 'Runesmith rewrites its own repair organ only with evidence. Its own experience is split in two: the Improver model sees one half, and every candidate is tested on the other. A candidate that wins is frozen, not switched on. It becomes active only by winning a trial on your fresh work, or by your explicit choice. Rolling back is one click.')));
+  const body = h('div');
+  root.append(head, body);
+  const load = async () => {
+    const d = await get('/api/improve');
+    const settings = ctx.app.state?.settings || {};
+    clear(body);
+    // ---- active + lineage
+    const activeName = (d.lineage.find((g) => g.active) || {}).name || d.active;
+    const lineage = h('div.card', h('div.card-head', h('h3', icon('branch'), 'Generations'), h('span.badge.rune', `active: ${activeName}`)));
+    const list = h('div.list');
+    for (const g of d.lineage.slice().reverse()) {
+      const val = g.validation ? `validation ${g.validation.strict_successes} vs ${g.incumbent_validation?.strict_successes ?? '?'}` : '';
+      const item = h('div.item', h('div', { class: `ico ${g.active ? 'accent' : ''}` }, icon(g.origin === 'imported' ? 'download' : g.origin === 'kaizen' ? 'spark' : 'rune')),
+        h('div.body', h('div.title', g.name || g.id, ' ', h('span.small.faint.mono', g.id), ' ', g.active ? h('span.badge.accent', 'active') : null, ' ', h('span.badge', g.origin), g.same_kernel ? null : h('span.badge.warn', 'older kernel')),
+          h('div.meta', [g.label, val, g.frozen_utc ? `frozen ${ago(g.frozen_utc)}` : ''].filter(Boolean).join(' · '))),
+        !g.active ? h('button.btn.sm', { onclick: (e) => activate(e.currentTarget, g, load) }, icon('undo'), 'Make active') : null);
+      commentable(item, 'generation', g.id, g.id);
+      item.querySelector('.note-btn').style.right = g.active ? '8px' : '120px';
+      list.append(item);
+    }
+    lineage.append(list);
+    if (d.requalification?.requalified) lineage.append(h('div.callout.mt-8', icon('info'), h('div', `Runesmith was updated, so the active organs were re-checked and re-qualified under the new kernel (same bytes): ${d.requalification.from} → ${d.requalification.id}.`)));
+    // ---- trial
+    const t = d.trial;
+    const nameOf = (id) => { const g = d.lineage.find((x) => x.id === id); return g ? `${g.name} · ${id.replace('gen-', '')}` : id; };
+    const trial = h('div.card', { class: t ? 'glow' : '' }, h('div.card-head', h('h3', icon('scale'), 'Online trial'), t ? h('span.badge.violet', 'running') : h('span.badge', 'none open')));
+    if (t) {
+      const bar = (arm) => { const [s, n] = t.counts[arm]; return h('div', h('div.row.small', h('b', arm === 'candidate' ? `Candidate ${nameOf(t.candidate)}` : `Incumbent ${nameOf(t.incumbent)}`), h('span.spacer'), h('span', `${s} repaired of ${n}`)),
+        h('div', { class: `bar mt-8${arm === 'incumbent' ? ' rune' : ''}` }, h('i', { style: { width: `${Math.min(100, (n / t.max_per_arm) * 100)}%` } }))); };
+      trial.append(h('p.small.muted', `New work is split between the two by a seeded coin, so nobody picks which generation gets which task. At every ${t.look_every} finished tasks per arm (from ${t.min_per_arm}), a one-sided Fisher test compares them at level ${t.level_per_look.toFixed(4)} per look. The candidate is activated only if it is clearly better; otherwise the incumbent stays. At most ${t.max_per_arm} tasks per arm.`),
+        h('div.col.gap-16.mt-8', bar('incumbent'), bar('candidate')),
+        t.looks_detail?.length ? h('table.table.small.mt-16', h('tr', ['Look', 'Incumbent', 'Candidate', 'p (better)', 'p (worse)'].map((x) => h('th', x))),
+          t.looks_detail.map((l) => h('tr', h('td', String(l.look)), h('td', `${l.incumbent[0]}/${l.incumbent[1]}`), h('td', `${l.candidate[0]}/${l.candidate[1]}`), h('td', String(l.p_candidate_better)), h('td', String(l.p_candidate_worse))))) : h('p.tiny.faint.mt-8', 'No look yet: the first comes after enough tasks on both arms.'));
+      commentable(trial, 'trial', t.candidate, `trial of ${t.candidate}`);
+    } else trial.append(h('p.muted', 'A trial opens when a candidate is frozen by a Kaizen campaign or adopted from the library.'));
+    const OUTCOME = { activate: ['good', 'check', 'won: activated'], reject: ['', 'x', 'did not win: rejected'], closed_by_owner: ['warn', 'user', 'closed by your choice'] };
+    if (d.closed_trials?.length) trial.append(h('div.label-text.mt-16', 'Closed trials'), h('div.list', d.closed_trials.map((c) => {
+      const [cls, ic, words] = OUTCOME[c.decision] || ['', 'info', c.decision];
+      return h('div.item', h('div', { class: `ico ${cls}` }, icon(ic)),
+        h('div.body', h('div.title', `${nameOf(c.candidate)}: ${words}`), h('div.meta', `incumbent ${c.counts.incumbent[0]}/${c.counts.incumbent[1]} · candidate ${c.counts.candidate[0]}/${c.counts.candidate[1]} · ${c.looks} look(s)`)));
+    })));
+    // ---- library
+    const lib = h('div.card', h('div.card-head', h('h3', icon('book'), 'Library of proven generations'), h('span.badge', 'ships with Runesmith')));
+    if (!d.library.length) lib.append(h('p.muted', 'Empty.'));
+    for (const e of d.library) {
+      const adoptedWords = e.imported_as ? (t && t.candidate === e.imported_as ? 'Adopted: on trial now' : e.imported_as === d.active ? 'Adopted: active' : 'Adopted') : null;
+      const adopt = h('button.btn.primary', { disabled: !!e.imported_as || !!t, title: e.imported_as || '' }, icon('download'), adoptedWords || (t ? 'A trial is already open' : 'Adopt: start a trial'));
+      adopt.addEventListener('click', () => withBusy(adopt, async () => {
+        if (!(await confirmDialog({ title: `Adopt ${e.name}?`, text: `${e.name} is checked (digests, allowed imports, a confined smoke test), frozen next to your active generation, and put on trial against it. It becomes active only if it wins on your own work.`, confirm: 'Adopt and start the trial' }))) return;
+        const r = await post(`/api/improve/adopt/${e.id}`, {});
+        r.ok ? toast(`${e.name} adopted as ${r.id}; the trial is open.`, 'good', 7000) : toast(r.detail, 'warn', 8000);
+        load();
+      }));
+      const card = h('div.card.flat.mt-8', h('div.row', h('div.monogram', { style: { background: 'linear-gradient(135deg,#ff7a30,#8b6cff)' } }, e.name), h('div.grow', h('b', e.title), h('div.small.muted', e.id))),
+        h('p', e.summary), h('div.evidence', h('b', 'Evidence. '), e.evidence), h('p.small.muted.mt-8', h('b', 'Caveat. '), e.caveat), h('p.tiny.faint', `Authored by ${e.authored_by}.`), h('div.row', adopt));
+      commentable(card, 'generation', e.id, `${e.name} (${e.id})`);
+      lib.append(card);
+    }
+    // ---- capabilities & campaigns
+    const caps = h('div.card', h('div.card-head', h('h3', icon('gauge'), 'Capabilities on your work'), h('span.badge', 'from its own records')));
+    const names = { repair_yield: 'Repair yield', seconds_per_repair: 'Seconds per repair', calls_per_repair: 'Calls per repair', false_promotion_rate: 'False "fixed" rate' };
+    for (const [k, label] of Object.entries(names)) {
+      const c = d.self.capabilities[k] || { band: 'unknown', value: null };
+      const row = h('div.gauge-row', h('span', label), h('div', { class: `bandbar${c.value == null ? ' unknown' : ''}` }, c.value != null ? h('span.mark', { style: { left: `${bandPosition(c)}%` } }) : null),
+        h('span', { class: `band ${c.band}` }, c.value == null ? 'unknown' : fmtCap(k, c.value)));
+      commentable(row, 'capability', k, label);
+      caps.append(row);
+    }
+    if (d.self.open_targets?.length) caps.append(h('div.label-text.mt-16', 'Where it struggles (the next Kaizen target)'), h('div.list', d.self.open_targets.map((x) => h('div.item', h('div.ico.warn', icon('crosshair')), h('div.body', h('div.title', humanize(x.family || x.stage || x.kind || 'target')), h('div.meta', `share of failures: ${Math.round((x.share || 0) * 100)}%`))))));
+    const camp = h('div.card', h('div.card-head', h('h3', icon('beaker'), 'Kaizen campaigns'),
+      h('div.actions', h('span', { class: `badge ${settings.kaizen ? 'good' : ''}` }, settings.kaizen ? 'on' : 'off'), h('button.btn.sm', { onclick: () => ctx.navigate('settings') }, icon('sliders'), 'Settings'))),
+      d.campaigns.length ? h('div.list', d.campaigns.slice().reverse().map((c) => h('div.item', h('div', { class: `ico ${c.decision === 'candidate' ? 'good' : ''}` }, icon('beaker')),
+        h('div.body', h('div.title', `${humanize(c.decision)} · ${humanize(c.target || '')}`), h('div.meta', `${c.campaign} · best ${c.best ?? '—'} vs baseline ${c.baseline ?? '—'}`),
+          c.attempts.length ? h('div.pillbox.mt-8', c.attempts.map((a) => h('span', { class: `badge ${a.accepted ? 'good' : ''}`, title: a.mechanism || '' }, `#${a.iteration} ${humanize(a.stage || '')}`))) : null))))
+        : h('p.muted', `No campaign yet. One starts when Runesmith has at least ${settings.min_experience || 8} stored attempts and enough new ones since the last campaign, and only while no trial is open.`),
+      h('button.btn.sm.mt-8', { onclick: () => openNotes('self', 'runesmith', 'Runesmith itself') }, icon('note'), 'Tell the Improver something'));
+    body.append(h('div.grid.two', h('div.col.gap-16', lineage, trial), h('div.col.gap-16', lib, caps, camp)));
+  };
+  await load();
+  offs.push(bus.on('improve', debounce(load, 300)), bus.on('round', debounce(load, 500)));
+  return () => offs.forEach((f) => f());
+}
+
+async function activate(btn, g, reload) {
+  const ok = await confirmDialog({ title: `Make ${g.name || g.id} active?`, text: 'This is your choice, recorded as such in the ledger. It skips the trial, so use it to roll back to an earlier generation rather than to promote an untested one. An open trial is closed by it.', confirm: 'Make active' });
+  if (!ok) return;
+  await withBusy(btn, async () => {
+    const r = await post(`/api/improve/activate/${g.id}`, {});
+    if (r.ok) toast(`${g.name || g.id} is active.${r.trial_closed ? ' The open trial was closed.' : ''}`, 'good', 6000); else toast(r.detail, 'warn', 8000);
+    reload();
+  });
+}

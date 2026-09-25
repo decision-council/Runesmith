@@ -1,0 +1,870 @@
+<title>Runesmith</title>
+<meta name="description" content="Runesmith: the suit any model can wear. Drop it into any folder: it maps the folder and itself, works under guard, and improves only with evidence.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Runesmith: the product's own palette, dark-first (the forge at night), with a daylight variant. */
+:root {
+  color-scheme: dark;
+  --ground: #080b12; --ground-2: #0b0f18; --panel: #111723; --panel-2: #161d2c; --line: #1f2839; --line-2: #2c374e;
+  --ink: #eceff6; --ink-2: #a9b2c6; --ink-3: #7e8aa4;
+  --ember: #ff7a30; --ember-2: #ff5a4e; --gold: #ffb547; --rune: #22d3c5; --violet: #8b6cff;
+  --good: #34d27b; --warn: #f5a524; --bad: #ff6b6b; --on-ember: #1b0c03;
+  --glow: rgba(255, 122, 48, .16); --rune-glow: rgba(34, 211, 197, .12); --shade: rgba(0, 0, 0, .35);
+  --dotgrid: rgba(255, 255, 255, .045); --sheen: rgba(255, 255, 255, .035);
+  --display: "Unbounded", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+  --r: 14px; --r-lg: 22px;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --ground: #f4f6fb; --ground-2: #eceff6; --panel: #ffffff; --panel-2: #f6f8fc; --line: #e1e6ef; --line-2: #cfd6e4;
+    --ink: #0e1322; --ink-2: #4a5570; --ink-3: #636d86;
+    --ember: #d4541a; --ember-2: #d93b3b; --gold: #a86a0c; --rune: #0b968a; --violet: #5b3ee0;
+    --good: #148a45; --warn: #a86a00; --bad: #c62828; --on-ember: #ffffff;
+    --glow: rgba(212, 84, 26, .1); --rune-glow: rgba(11, 150, 138, .08); --shade: rgba(20, 30, 60, .12);
+    --dotgrid: rgba(14, 19, 34, .06); --sheen: rgba(255, 255, 255, .6);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #f4f6fb; --ground-2: #eceff6; --panel: #ffffff; --panel-2: #f6f8fc; --line: #e1e6ef; --line-2: #cfd6e4;
+  --ink: #0e1322; --ink-2: #4a5570; --ink-3: #636d86;
+  --ember: #d4541a; --ember-2: #d93b3b; --gold: #a86a0c; --rune: #0b968a; --violet: #5b3ee0;
+  --good: #148a45; --warn: #a86a00; --bad: #c62828; --on-ember: #ffffff;
+  --glow: rgba(212, 84, 26, .1); --rune-glow: rgba(11, 150, 138, .08); --shade: rgba(20, 30, 60, .12);
+  --dotgrid: rgba(14, 19, 34, .06); --sheen: rgba(255, 255, 255, .6);
+}
+:root[data-theme="dark"] { color-scheme: dark; }
+
+* { box-sizing: border-box; }
+svg.ic { width: 1.15em; height: 1.15em; flex: none; }
+[data-icon] { display: inline-flex; }
+.player { --font: var(--body); --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 16px/1.62 var(--body); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+a { color: inherit; }
+img { max-width: 100%; display: block; }
+code, .mono { font-family: var(--mono); }
+:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; border-radius: 6px; }
+.wrap { max-width: 1180px; margin-inline: auto; padding-inline: clamp(16px, 4vw, 40px); }
+.eyebrow { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 12.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--rune); margin: 0 0 14px; }
+.eyebrow::before { content: ""; width: 18px; height: 1px; background: currentColor; opacity: .7; }
+h1, h2, h3 { font-family: var(--display); letter-spacing: -.02em; text-wrap: balance; margin: 0; }
+h2 { font-size: clamp(28px, 3.5vw, 44px); line-height: 1.08; font-weight: 700; }
+h3 { font-size: 18px; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; }
+p { margin: 0; }
+.lead { color: var(--ink-2); font-size: clamp(16px, 1.4vw, 19px); max-width: 64ch; text-wrap: pretty; }
+.muted { color: var(--ink-2); }
+.faint { color: var(--ink-3); }
+section { padding-block: clamp(64px, 9vw, 120px); position: relative; }
+section + section { border-top: 1px solid var(--line); }
+section.alt { background: linear-gradient(180deg, var(--ground-2), var(--ground) 70%); }
+.head { display: grid; gap: 14px; margin-bottom: clamp(28px, 4vw, 48px); max-width: 780px; }
+.card { border-radius: var(--r); background: var(--panel); border: 1px solid var(--line); box-shadow: inset 0 1px 0 var(--sheen); }
+
+/* buttons */
+.btn { display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 22px; border-radius: 13px; border: 1px solid var(--line-2);
+  background: var(--panel); color: var(--ink); font: 600 15px/1 var(--body); text-decoration: none; cursor: pointer; transition: transform .12s, border-color .15s, filter .15s; }
+.btn:hover { border-color: var(--ink-3); transform: translateY(-1px); }
+.btn.primary { border-color: transparent; color: var(--on-ember); background: linear-gradient(135deg, var(--gold), var(--ember) 55%, var(--ember-2)); box-shadow: 0 10px 34px var(--glow); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn svg { width: 18px; height: 18px; }
+.btn.sm { height: 38px; padding: 0 14px; font-size: 13.5px; border-radius: 11px; }
+
+/* nav */
+.nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; backdrop-filter: blur(12px); background: color-mix(in srgb, var(--ground) 78%, transparent); border-bottom: 1px solid var(--line); }
+.nav .wrap { display: flex; align-items: center; gap: 22px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 11px; text-decoration: none; font: 800 13px/1 var(--display); letter-spacing: .26em; }
+.brand svg { width: 28px; height: 28px; }
+.nav ul { display: flex; gap: 22px; list-style: none; margin: 0 0 0 auto; padding: 0; }
+.nav ul a { text-decoration: none; color: var(--ink-2); font-size: 14.5px; font-weight: 500; }
+.nav ul a:hover { color: var(--ink); }
+.nav .btn { height: 38px; padding: 0 16px; font-size: 14px; }
+@media (max-width: 920px) { .nav ul { display: none; } .nav .btn { margin-left: auto; } }
+
+/* hero */
+.hero { padding-block: clamp(40px, 7vw, 88px) clamp(28px, 4vw, 56px); position: relative; overflow: hidden; }
+.hero::before { content: ""; position: absolute; inset: -20% -10% auto; height: 620px; pointer-events: none;
+  background: radial-gradient(600px 300px at 18% 30%, var(--glow), transparent 70%), radial-gradient(520px 260px at 85% 20%, var(--rune-glow), transparent 70%); }
+.hero::after { content: ""; position: absolute; inset: 0 0 auto; height: 720px; pointer-events: none; z-index: 0;
+  background-image: radial-gradient(var(--dotgrid) 1px, transparent 1px); background-size: 26px 26px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 20%, #000 30%, transparent 75%); mask-image: radial-gradient(ellipse 70% 60% at 50% 20%, #000 30%, transparent 75%); }
+.hero > .wrap { position: relative; z-index: 1; }
+.hero-copy { display: grid; gap: 20px; }
+.hero h1 { font-size: clamp(40px, 6.4vw, 84px); line-height: 1.0; font-weight: 800; max-width: 14ch; letter-spacing: -.035em; }
+.hero h1 em { font-style: normal; background: linear-gradient(100deg, var(--gold), var(--ember) 45%, var(--ember-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
+.facts { display: flex; flex-wrap: wrap; gap: 10px 22px; font-family: var(--mono); font-size: 13px; color: var(--ink-3); margin-top: 6px; }
+.facts b { color: var(--ink-2); font-weight: 500; }
+.player-wrap { margin-top: clamp(32px, 5vw, 56px); }
+.player { position: relative; aspect-ratio: 16 / 9; max-width: 100%; border-radius: var(--r-lg); overflow: hidden; background: #05070c;
+  border: 1px solid rgba(255, 138, 61, .35); box-shadow: 0 30px 90px var(--shade), 0 0 0 6px var(--glow); isolation: isolate; }
+@media (max-width: 640px) { .player { aspect-ratio: 4 / 3; } }
+.player.paused .genesis *, .player.paused .genesis *::after { animation-play-state: paused !important; }
+.player .genesis .g-top { top: 14px; right: 14px; }
+.player .genesis .g-brand { top: 16px; left: 18px; }
+.story-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; margin-top: 16px; }
+.story-bar .now { font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin-right: 4px; }
+.story { display: inline-flex; align-items: center; gap: 9px; height: 40px; padding: 0 14px 0 12px; border-radius: 99px; border: 1px solid var(--line-2); background: var(--panel);
+  color: var(--ink-2); font: 500 14px/1 var(--body); cursor: pointer; transition: border-color .15s, color .15s, background .15s; }
+.story small { color: var(--ink-3); font-size: 12.5px; }
+.story i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); transition: background .2s, box-shadow .2s; }
+.story:hover { border-color: var(--ink-3); color: var(--ink); }
+.story[aria-selected="true"] { border-color: var(--ember); color: var(--ink); background: linear-gradient(90deg, var(--glow), transparent), var(--panel); }
+.story[aria-selected="true"] i { background: var(--ember); box-shadow: 0 0 0 4px var(--glow); }
+.story-bar .btn { margin-left: auto; }
+@media (max-width: 720px) { .story small { display: none; } .story-bar .btn { margin-left: 0; } }
+
+/* use cases */
+.types-row { display: flex; flex-wrap: wrap; gap: 8px; margin: -8px 0 26px; }
+.type-chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 99px; border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); font-size: 14px; }
+.type-chip svg { width: 16px; height: 16px; color: var(--ember); }
+.case-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 940px) { .case-tabs { grid-template-columns: minmax(0, 1fr); } }
+.case-tab { text-align: left; display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 16px; align-items: center; padding: 14px; border-radius: var(--r-lg);
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; font: inherit; box-shadow: inset 0 1px 0 var(--sheen);
+  transition: border-color .15s, transform .15s, box-shadow .15s; }
+.case-tab:hover { border-color: var(--line-2); transform: translateY(-1px); }
+.case-tab[aria-selected="true"] { border-color: var(--ember); background: radial-gradient(360px 120px at 0% 0%, var(--glow), transparent 70%), var(--panel); box-shadow: 0 18px 44px var(--shade); }
+.case-tab .emblem { width: 118px; height: 76px; border-radius: 12px; background: radial-gradient(circle at 50% 50%, #141a2b, #070a11 75%); border: 1px solid #1c2435; overflow: hidden; }
+.case-tab .emblem svg { width: 100%; height: 100%; display: block; }
+.case-tab b { display: block; font: 700 15.5px/1.2 var(--display); letter-spacing: -.01em; }
+.case-tab .who { display: block; color: var(--ink-2); font-size: 14px; margin-top: 3px; }
+.case-tab .meta { display: block; font-family: var(--mono); font-size: 12px; color: var(--ink-3); margin-top: 6px; }
+.case-panel { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 24px; margin-top: 24px; align-items: start; }
+@media (max-width: 980px) { .case-panel { grid-template-columns: minmax(0, 1fr); } }
+.case-story { display: grid; gap: 18px; }
+.typed { border-radius: var(--r-lg); border: 1px solid rgba(255, 138, 61, .32); padding: 20px 22px; display: grid; gap: 8px;
+  background: radial-gradient(420px 160px at 15% 0%, var(--glow), transparent 70%), var(--panel); box-shadow: inset 0 1px 0 var(--sheen); }
+.typed .label { font: 500 11.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+.typed .name { font: 700 clamp(20px, 2.2vw, 26px)/1.15 var(--display); letter-spacing: -.02em; }
+.typed .desc { color: var(--ink-2); }
+.typed .kind { justify-self: start; display: inline-flex; gap: 8px; align-items: center; padding: 6px 12px; border-radius: 99px; background: var(--glow); color: var(--ink);
+  font-size: 13.5px; border: 1px solid rgba(255, 138, 61, .35); margin-top: 4px; }
+.typed .kind svg { width: 15px; height: 15px; color: var(--ember); }
+.sub-label { font: 500 11.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px; }
+.folder-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.folder-chips span { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12.5px; padding: 5px 10px; border-radius: 8px;
+  background: var(--ground-2); border: 1px solid var(--line); color: var(--ink-2); }
+.folder-chips i { width: 8px; height: 8px; border-radius: 50%; }
+.folder-chips .x { border-style: dashed; color: var(--ink-3); }
+.folder-chips .x svg { width: 12px; height: 12px; }
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.steps li { position: relative; padding: 0 0 16px 42px; color: var(--ink-2); font-size: 15px; }
+.steps li::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 0; width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; font: 600 12px/1 var(--mono); color: var(--rune); border: 1.5px solid var(--rune); background: var(--panel); }
+.steps li::after { content: ""; position: absolute; left: 13px; top: 30px; bottom: 4px; width: 1px; background: var(--line-2); }
+.steps li:last-child { padding-bottom: 0; }
+.steps li:last-child::after { display: none; }
+.steps b { color: var(--ink); font-weight: 600; }
+.safe { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r); border: 1px dashed var(--line-2); color: var(--ink-2); font-size: 14.5px; }
+.safe svg { width: 20px; height: 20px; color: var(--rune); flex: none; margin-top: 2px; }
+.case-view { display: grid; gap: 12px; position: sticky; top: 84px; }
+@media (max-width: 980px) { .case-view { position: static; } }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.pills button { border: 1px solid var(--line-2); background: var(--panel); color: var(--ink-2); padding: 8px 14px; border-radius: 99px; cursor: pointer; font: 500 13.5px/1 var(--body); }
+.pills button:hover { color: var(--ink); border-color: var(--ink-3); }
+.pills button[aria-selected="true"] { border-color: var(--ember); color: var(--ink); background: var(--glow); }
+@media (max-width: 520px) {
+  .case-tab { grid-template-columns: 84px minmax(0, 1fr); gap: 12px; padding: 10px; }
+  .case-tab .emblem { width: 84px; height: 56px; }
+  .case-tab .meta { display: none; }
+}
+.models { font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); }
+/* any Studio screenshot opens full size: on a phone it is wider than the screen, to pan */
+.zoomable { cursor: zoom-in; }
+.lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(4, 6, 10, .93); backdrop-filter: blur(6px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.lightbox[hidden] { display: none; }
+.lb-close { justify-self: end; margin: 12px 16px 8px; width: 44px; height: 44px; border-radius: 50%; border: 1px solid #2c374e; background: #111723; color: #eceff6; cursor: pointer; display: grid; place-items: center; }
+.lb-close svg { width: 20px; height: 20px; }
+.lb-scroll { overflow: auto; padding: 0 16px; display: grid; place-items: center; overscroll-behavior: contain; }
+.lb-scroll img { width: min(1440px, 100%); max-width: none; height: auto; border-radius: 12px; border: 1px solid #2c374e; box-shadow: 0 30px 90px rgba(0, 0, 0, .6); }
+@media (max-width: 760px) { .lb-scroll { place-items: start; } .lb-scroll img { width: 1000px; } }
+.lb-cap { color: #a9b2c6; text-align: center; padding: 12px 16px 20px; font-size: 14px; }
+.replay { font-size: 13.5px; color: var(--ink-3); }
+
+/* how */
+.motions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+@media (max-width: 860px) { .motions { grid-template-columns: minmax(0, 1fr); } }
+.motion { border-radius: var(--r-lg); background: var(--panel); border: 1px solid var(--line); overflow: hidden; display: grid; box-shadow: inset 0 1px 0 var(--sheen); }
+.motion .art { background: radial-gradient(420px 200px at 50% 70%, var(--glow), transparent 70%), var(--ground-2); border-bottom: 1px solid var(--line); }
+.motion .art svg { width: 100%; height: auto; display: block; }
+.motion .copy { padding: 22px 24px 26px; display: grid; gap: 10px; }
+.motion .copy p { color: var(--ink-2); font-size: 15.5px; }
+.tag { display: inline-flex; gap: 6px; align-items: center; font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+.svg-ink { fill: var(--ink); } .svg-ink-2 { fill: var(--ink-2); } .svg-ink-3 { fill: var(--ink-3); }
+.svg-line { stroke: var(--line-2); } .svg-panel { fill: var(--panel-2); }
+
+/* studio */
+.shots { display: grid; gap: 16px; }
+.shot-bar { display: grid; gap: 14px; }
+.ws-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pills.tour button { padding: 7px 12px; font-size: 13px; }
+.link-btn { justify-self: start; display: inline-flex; align-items: center; gap: 8px; background: none; border: 0; padding: 2px 0; cursor: pointer; color: var(--ember); font: 600 14.5px/1.3 var(--body); }
+.link-btn svg { width: 16px; height: 16px; transition: transform .15s; }
+.link-btn:hover svg { transform: translateY(2px); }
+.seg { display: inline-flex; flex-wrap: wrap; padding: 4px; gap: 4px; border-radius: 12px; border: 1px solid var(--line); background: var(--ground-2); }
+.seg button { border: 0; background: none; color: var(--ink-2); padding: 8px 12px; border-radius: 9px; cursor: pointer; font: 500 13.5px/1 var(--body); }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 0 var(--sheen), 0 4px 14px var(--shade); }
+.seg-label { font: 500 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin-right: 8px; }
+.window { border-radius: var(--r-lg); border: 1px solid var(--line-2); background: var(--panel); overflow: hidden; box-shadow: 0 24px 70px var(--shade); }
+.window .chrome { display: flex; align-items: center; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+.window .chrome i { width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); }
+.window .chrome span { margin-left: 10px; font-family: var(--mono); font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.window img { width: 100%; height: auto; aspect-ratio: 1440 / 900; background: #0b0f18; }
+.shot-cap { color: var(--ink-2); max-width: 74ch; min-height: 3.2em; }
+.pillars { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 26px; }
+@media (max-width: 860px) { .pillars { grid-template-columns: minmax(0, 1fr); } }
+.pillar { padding: 20px 22px; border-radius: var(--r); border: 1px solid var(--line); background: var(--ground-2); display: grid; gap: 8px; align-content: start; }
+.pillar p { color: var(--ink-2); font-size: 15px; }
+kbd { font-family: var(--mono); font-size: 12px; padding: 1px 7px; border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 6px; background: var(--panel); }
+
+/* minds */
+.spectrum { position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 30px; }
+.spectrum::before { content: ""; position: absolute; left: 6%; right: 6%; top: 27px; height: 3px; border-radius: 3px; background: linear-gradient(90deg, var(--line-2), var(--rune), var(--ember)); }
+@media (max-width: 860px) { .spectrum { grid-template-columns: minmax(0, 1fr); } .spectrum::before { display: none; } }
+.stop { position: relative; display: grid; gap: 8px; justify-items: start; align-content: start; }
+.stop .dot { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--panel); border: 2px solid var(--line-2); color: var(--ink-2); }
+.stop:nth-child(n+2) .dot { border-color: var(--rune); color: var(--rune); }
+.stop:nth-child(n+4) .dot { border-color: var(--ember); color: var(--ember); }
+.stop .dot svg { width: 24px; height: 24px; }
+.stop b { font-size: 15px; }
+.stop p { color: var(--ink-2); font-size: 14px; }
+.roles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 860px) { .roles { grid-template-columns: minmax(0, 1fr); } }
+.role { padding: 22px; border-radius: var(--r); background: var(--panel); border: 1px solid var(--line); display: grid; gap: 8px; align-content: start; box-shadow: inset 0 1px 0 var(--sheen); }
+.role .who { font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--rune); }
+.role p { color: var(--ink-2); font-size: 15px; }
+.providers { margin-top: 18px; font-family: var(--mono); font-size: 13px; color: var(--ink-3); line-height: 1.9; }
+
+/* evidence */
+.ev-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 980px) { .ev-grid { grid-template-columns: minmax(0, 1fr); } }
+.chart { padding: 26px; border-radius: var(--r-lg); background: var(--panel); border: 1px solid var(--line); display: grid; gap: 18px; box-shadow: inset 0 1px 0 var(--sheen); }
+.bar-row { display: grid; gap: 8px; }
+.bar-row .lbl { display: flex; justify-content: space-between; gap: 12px; font-size: 14.5px; }
+.bar-row .lbl b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 22px; }
+.bar { height: 16px; border-radius: 99px; background: var(--ground-2); border: 1px solid var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 99px; }
+.axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+.stat-line { display: flex; flex-wrap: wrap; gap: 8px 18px; font-family: var(--mono); font-size: 13px; color: var(--ink-2); padding-top: 6px; border-top: 1px dashed var(--line-2); }
+.ledger { border-radius: var(--r-lg); border: 1px solid var(--line); background: var(--ground-2); overflow-x: auto; }
+.ledger table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 520px; }
+.ledger td:first-child { width: 74px; }
+.ledger td:last-child { width: 150px; }
+.ledger th { text-align: left; font: 500 11.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.ledger td { padding: 14px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ledger tr:last-child td { border-bottom: 0; }
+.ledger .rcpt { display: block; margin-top: 8px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); white-space: nowrap; }
+.verdict { display: inline-block; font: 600 11.5px/1 var(--mono); letter-spacing: .06em; padding: 5px 8px; border-radius: 6px; white-space: nowrap; }
+.verdict.pass { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.verdict.null { color: var(--ink-2); background: var(--panel-2); border: 1px solid var(--line-2); }
+.verdict.test { color: var(--rune); background: var(--rune-glow); }
+.not-claims { margin-top: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 26px; color: var(--ink-2); font-size: 15px; padding: 0; list-style: none; }
+.not-claims li { padding-left: 22px; position: relative; }
+.not-claims li::before { content: "×"; position: absolute; left: 0; color: var(--ink-3); font-family: var(--mono); }
+@media (max-width: 700px) { .not-claims { grid-template-columns: minmax(0, 1fr); } }
+
+/* trust */
+.trust { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
+@media (max-width: 860px) { .trust { grid-template-columns: minmax(0, 1fr); } }
+.trust div { background: var(--panel); padding: 24px; display: grid; gap: 8px; align-content: start; }
+.trust svg { width: 22px; height: 22px; color: var(--rune); }
+.trust p { color: var(--ink-2); font-size: 15px; }
+
+/* get */
+.oses { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 860px) { .oses { grid-template-columns: minmax(0, 1fr); } }
+.os { padding: 22px; border-radius: var(--r); background: var(--panel); border: 1px solid var(--line); display: grid; gap: 10px; align-content: start; box-shadow: inset 0 1px 0 var(--sheen); }
+.os code { font-size: 14px; color: var(--gold); }
+.os p { color: var(--ink-2); font-size: 15px; }
+.term { margin-top: 18px; border-radius: var(--r); background: #06080d; border: 1px solid var(--line-2); color: #d7deea; font-family: var(--mono); font-size: 14px; overflow-x: auto; }
+.term .bar2 { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #1c2433; color: #6f7a93; font-size: 12px; }
+.term pre { margin: 0; padding: 16px 18px; line-height: 1.8; }
+.term .c { color: #6f7a93; }
+.term .k { color: #ffb547; }
+.copy-btn { border: 1px solid #2c374e; background: #111723; color: #cfd6e6; border-radius: 8px; padding: 5px 10px; font: 500 12px/1 var(--mono); cursor: pointer; }
+.note { margin-top: 18px; padding: 16px 18px; border-radius: var(--r); border: 1px dashed var(--line-2); color: var(--ink-2); font-size: 15px; }
+
+/* faq */
+.faq { display: grid; gap: 10px; max-width: 860px; }
+.faq details { border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); padding: 4px 20px; }
+.faq summary { cursor: pointer; font-weight: 600; padding: 14px 0; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: "+"; font-family: var(--mono); color: var(--ember); }
+.faq details[open] summary::after { content: "−"; }
+.faq details p { color: var(--ink-2); padding-bottom: 16px; }
+
+footer { border-top: 1px solid var(--line); padding-block: 36px 48px; color: var(--ink-3); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 14px 30px; align-items: center; }
+footer .brand { color: var(--ink-2); }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn:hover, .case-tab:hover { transform: none; } }
+
+/*@GENESIS_CSS@*/
+</style>
+
+<nav class="nav" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Runesmith, back to top"><span data-logo></span>RUNESMITH</a>
+    <ul>
+      <li><a href="#cases">Use cases</a></li>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#studio">Studio</a></li>
+      <li><a href="#minds">Any model</a></li>
+      <li><a href="#evidence">Evidence</a></li>
+      <li><a href="#faq">Questions</a></li>
+    </ul>
+    <a class="btn primary" href="#get">Get Runesmith</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap hero-copy">
+    <p class="eyebrow">Open source · any model · evidence first</p>
+    <h1>The suit <em>any model</em> can wear.</h1>
+    <p class="lead">Drop Runesmith into any folder, empty or full. It maps the folder and itself, works under guard, and improves itself only when the evidence says so. Bring a model from your own computer, an API key, or just a chat window. With no model at all, it still maps and watches.</p>
+    <div class="cta-row">
+      <a class="btn primary" href="#get"><span data-icon="download"></span>Get Runesmith</a>
+      <a class="btn" href="#cases"><span data-icon="compass"></span>See it at work</a>
+    </div>
+    <div class="facts"><span><b>stdlib</b> Python 3.11+</span><span><b>local</b> 127.0.0.1 only</span><span><b>0</b> build steps</span><span><b>1</b> sealed self-improvement pass</span></div>
+  </div>
+  <div class="wrap player-wrap">
+    <div class="player" id="trailer" aria-label="The Runesmith opening sequence, playing three demo stories"></div>
+    <div class="story-bar" role="tablist" aria-label="Stories in the opening sequence">
+      <span class="now">Now playing</span>
+      <button class="story" role="tab" aria-selected="true" data-story="0" type="button"><i></i>Moonlight Bakery <small>a corner bakery</small></button>
+      <button class="story" role="tab" aria-selected="false" data-story="1" type="button"><i></i>Northwind Freight <small>a freight company</small></button>
+      <button class="story" role="tab" aria-selected="false" data-story="2" type="button"><i></i>Helio Clinics <small>three clinics</small></button>
+      <button class="btn sm" id="fs" type="button"><span data-icon="maximize"></span>Full screen</button>
+    </div>
+  </div>
+</header>
+
+<section id="cases" class="alt">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Use cases</p>
+      <h2>One suit. A bakery, a freight company, three clinics.</h2>
+      <p class="lead">Say as much or as little as you like: a sentence, a brief, whole blueprint documents, or nothing yet. Here are three real folders opened in the Studio. The worlds are very different, and the rules are the same.</p>
+    </div>
+    <div class="types-row" aria-label="What Runesmith can do in a folder">
+      <span class="type-chip"><span data-icon="wand"></span>Build something new</span>
+      <span class="type-chip"><span data-icon="hammer"></span>Improve your code</span>
+      <span class="type-chip"><span data-icon="doc"></span>Tend your documents</span>
+      <span class="type-chip"><span data-icon="compass"></span>Just explore</span>
+    </div>
+    <div class="case-tabs" role="tablist" aria-label="Use cases" id="case-tabs"></div>
+    <div class="case-panel" id="case-panel" role="tabpanel">
+      <div class="case-story">
+        <div class="typed">
+          <span class="label">What they typed at first boot</span>
+          <span class="name" id="case-name"></span>
+          <span class="desc" id="case-desc"></span>
+          <span class="kind" id="case-kind"></span>
+        </div>
+        <div><div class="sub-label">In the folder</div><div class="folder-chips" id="case-folder"></div></div>
+        <div><div class="sub-label">What Runesmith did</div><ol class="steps" id="case-steps"></ol></div>
+        <div class="safe"><span data-icon="shield"></span><span id="case-safe"></span></div>
+      </div>
+      <div class="case-view">
+        <div class="pills" role="tablist" aria-label="Screens" id="case-pills"></div>
+        <div class="window">
+          <div class="chrome"><i></i><i></i><i></i><span id="case-url"></span></div>
+          <img id="case-shot" alt="" width="1440" height="900" decoding="async">
+        </div>
+        <p class="models" id="case-models"></p>
+        <button class="link-btn" type="button" id="case-tour"></button>
+        <p class="replay">Every screen is the real Studio at work in that folder. The models in these demos are scripted stand-ins and a chat window, so each step can be replayed exactly.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">How it works</p>
+      <h2>Four motions, one ledger.</h2>
+      <p class="lead">Everything Runesmith does is written to a hash-chained ledger, so the history cannot be quietly rewritten. What it has not measured, it calls unknown.</p>
+    </div>
+    <div class="motions">
+      <article class="motion">
+        <div class="art"><svg viewBox="0 0 560 250" role="img" aria-label="Objects mapped into bands with build ladders">
+          <g font-family="IBM Plex Mono, monospace" font-size="12">
+            <text x="36" y="44" class="svg-ink-3">bad</text><text x="150" y="44" class="svg-ink-3">minimal</text><text x="284" y="44" class="svg-ink-3">optimal</text><text x="410" y="44" class="svg-ink-3">world-class</text>
+          </g>
+          <rect x="36" y="56" width="110" height="10" rx="5" fill="#ef4444" opacity=".75"/><rect x="150" y="56" width="130" height="10" rx="5" fill="#f5a524" opacity=".75"/>
+          <rect x="284" y="56" width="122" height="10" rx="5" fill="#22c55e" opacity=".75"/><rect x="410" y="56" width="114" height="10" rx="5" fill="#8b6cff" opacity=".45"/>
+          <path d="M232 50 v22" stroke="currentColor" class="svg-ink" stroke-width="3"/>
+          <g transform="translate(36 102)" font-family="IBM Plex Sans, sans-serif">
+            <rect width="488" height="112" rx="14" class="svg-panel" stroke-width="1" style="stroke: var(--line-2)"/>
+            <text x="20" y="32" font-size="15" font-weight="600" class="svg-ink">bakery-api · build ladder</text>
+            <g font-size="11.5" class="svg-ink-2" font-family="IBM Plex Mono, monospace">
+              <circle cx="32" cy="66" r="9" fill="#22c55e"/><text x="18" y="96">source</text>
+              <path d="M41 66h58" style="stroke: var(--line-2)" stroke-width="3"/><circle cx="108" cy="66" r="9" fill="#22c55e"/><text x="90" y="96">tests</text>
+              <path d="M117 66h58" style="stroke: var(--line-2)" stroke-width="3"/><circle cx="184" cy="66" r="9" fill="#22c55e"/><text x="160" y="96">collect</text>
+              <path d="M193 66h58" style="stroke: var(--line-2)" stroke-width="3"/><circle cx="260" cy="66" r="11" fill="none" stroke="#ff7a30" stroke-width="3"/><text x="244" y="96">pass</text>
+              <path d="M271 66h58" style="stroke: var(--line-2)" stroke-width="3"/><circle cx="338" cy="66" r="9" fill="none" stroke="#8a94ab" stroke-width="2" stroke-dasharray="3 3"/><text x="324" y="96">fast</text>
+              <path d="M347 66h58" style="stroke: var(--line-2)" stroke-width="3"/><circle cx="414" cy="66" r="9" fill="none" stroke="#8a94ab" stroke-width="2" stroke-dasharray="3 3"/><text x="390" y="96">coverage</text>
+            </g>
+          </g>
+        </svg></div>
+        <div class="copy"><span class="tag">ENVIRONMENT.json</span><h3>It maps your world</h3><p>Every object in the folder: Python and Node projects, websites, document collections, plain folders, and projects nested inside folders. Each gets proposed objectives in bands (bad, minimal, optimal, world-class) and a build ladder with its next rung.</p></div>
+      </article>
+      <article class="motion">
+        <div class="art"><svg viewBox="0 0 560 250" role="img" aria-label="Runesmith's anatomy: a fixed kernel ring around living organs">
+          <g transform="translate(280 125)">
+            <circle r="104" fill="none" style="stroke: var(--line-2)" stroke-dasharray="2 7"/>
+            <g id="ring"></g>
+            <circle r="50" fill="url(#org)"/>
+            <text y="5" text-anchor="middle" font-family="Unbounded, sans-serif" font-size="12" font-weight="700" fill="#1b0c03">organs</text>
+          </g>
+          <defs><radialGradient id="org" r="60%"><stop offset="0" stop-color="#ffd08a"/><stop offset=".6" stop-color="#ff7a30"/><stop offset="1" stop-color="#ff4d5e"/></radialGradient></defs>
+          <text x="36" y="46" font-family="IBM Plex Mono, monospace" font-size="12" class="svg-ink-3">KERNEL · FIXED</text>
+          <text x="524" y="220" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="12" class="svg-ink-3">ORGANS · IMPROVABLE</text>
+        </svg></div>
+        <div class="copy"><span class="tag">SELF_MAP.json</span><h3>It maps itself</h3><p>A small, fixed kernel keeps budgets, judges and the ledger. The organs, the policies that do the work, are the only part that changes. Its capabilities on your work are measured, never assumed.</p></div>
+      </article>
+      <article class="motion">
+        <div class="art"><svg viewBox="0 0 560 250" role="img" aria-label="The guarded loop: map, find work, repair, judge, propose, you decide">
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" font-weight="600" text-anchor="middle">
+            <path d="M70 125 H490" style="stroke: var(--line-2)" stroke-width="2" stroke-dasharray="4 6"/>
+            <g class="svg-ink-2">
+              <circle cx="70" cy="125" r="26" class="svg-panel" style="stroke: var(--rune)" stroke-width="1.6"/><text x="70" y="178">Map</text>
+              <circle cx="154" cy="125" r="26" class="svg-panel" style="stroke: var(--rune)" stroke-width="1.6"/><text x="154" y="178">Find work</text>
+              <circle cx="238" cy="125" r="26" class="svg-panel" style="stroke: var(--rune)" stroke-width="1.6"/><text x="238" y="178">Repair</text>
+              <circle cx="322" cy="125" r="26" class="svg-panel" style="stroke: var(--rune)" stroke-width="1.6"/><text x="322" y="178">Judge</text>
+              <circle cx="406" cy="125" r="26" class="svg-panel" style="stroke: var(--rune)" stroke-width="1.6"/><text x="406" y="178">Propose</text>
+            </g>
+            <circle cx="490" cy="125" r="30" fill="none" stroke="#ff7a30" stroke-width="3"/><circle cx="490" cy="125" r="40" fill="none" stroke="#ff7a30" stroke-opacity=".3" stroke-width="6"/>
+            <text x="490" y="182" fill="#ff7a30">You decide</text>
+            <text x="280" y="62" font-family="IBM Plex Mono, monospace" font-weight="400" font-size="12" class="svg-ink-3">tests on throwaway copies · a held-out judge · nothing written without you</text>
+          </g>
+          <g id="loopicons"></g>
+        </svg></div>
+        <div class="copy"><span class="tag">propose, never impose</span><h3>It works under guard</h3><p>Repairs happen on private copies. A judge that runs tests the repair never saw must accept a fix before you see it. Applying is your click, checked against conflicts, backed up, and undoable.</p></div>
+      </article>
+      <article class="motion">
+        <div class="art"><svg viewBox="0 0 560 250" role="img" aria-label="Self-improvement: split experience, test on held-out work, win a trial">
+          <g font-family="IBM Plex Mono, monospace" font-size="12">
+            <rect x="36" y="70" width="120" height="110" rx="12" class="svg-panel" style="stroke: var(--line-2)"/>
+            <text x="96" y="100" text-anchor="middle" class="svg-ink-2">experience</text>
+            <path d="M52 124h88M52 140h72M52 156h80" style="stroke: var(--line-2)" stroke-width="5" stroke-linecap="round"/>
+            <path d="M156 125 H214" stroke="#22d3c5" stroke-width="2"/><path d="M206 119l8 6-8 6" fill="none" stroke="#22d3c5" stroke-width="2"/>
+            <circle cx="248" cy="125" r="30" fill="url(#org)"/><text x="248" y="129" text-anchor="middle" font-family="Unbounded, sans-serif" font-size="12" font-weight="700" fill="#1b0c03">C7</text>
+            <text x="248" y="186" text-anchor="middle" class="svg-ink-3">candidate</text>
+            <path d="M280 125 H338" stroke="#22d3c5" stroke-width="2"/><path d="M330 119l8 6-8 6" fill="none" stroke="#22d3c5" stroke-width="2"/>
+            <rect x="344" y="70" width="180" height="110" rx="12" class="svg-panel" style="stroke: var(--line-2)"/>
+            <text x="434" y="96" text-anchor="middle" class="svg-ink-2">online trial</text>
+            <rect x="364" y="112" width="140" height="10" rx="5" fill="#ff7a30"/><rect x="364" y="134" width="86" height="10" rx="5" fill="#8a94ab"/>
+            <text x="434" y="166" text-anchor="middle" class="svg-ink-3">wins → active</text>
+          </g>
+        </svg></div>
+        <div class="copy"><span class="tag">Kaizen, with a trial</span><h3>It improves only with evidence</h3><p>When one failure keeps recurring, Runesmith asks a model to rewrite the organ responsible. The candidate is tested on work its author never saw. Even then it is only frozen. It becomes active by winning a live trial on your work, and rolling back is one click.</p></div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="studio" class="alt">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Runesmith Studio</p>
+      <h2>A control room for any shape and size.</h2>
+      <p class="lead">One command, or a double-click, opens the Studio in your browser. It runs on your computer only, reached through a private link. Walk through every screen in any of the three folders.</p>
+    </div>
+    <div class="shots">
+      <div class="shot-bar">
+        <div class="ws-pick"><span class="seg-label">Folder</span><span class="seg" id="studio-ws" role="group" aria-label="Folder"></span></div>
+        <div class="pills tour" role="tablist" aria-label="Studio screens" id="studio-tabs"></div>
+      </div>
+      <div class="window">
+        <div class="chrome"><i></i><i></i><i></i><span id="shot-url"></span></div>
+        <img id="shot" alt="" width="1440" height="900" decoding="async">
+      </div>
+      <p class="shot-cap" id="shot-cap"></p>
+    </div>
+    <div class="pillars">
+      <div class="pillar"><h3>Comment on anything</h3><p>Press <kbd>C</kbd> and click an object, a rung, a fix, a model, or Runesmith itself. Your open notes travel with the work they are about, clearly labelled as your guidance.</p></div>
+      <div class="pillar"><h3>Undo everything</h3><p>Fixes apply only to unchanged files, keep your line endings and a backup, and undo byte for byte. Drafts never overwrite a file without asking you twice.</p></div>
+      <div class="pillar"><h3>Built for old laptops</h3><p>Standard-library Python, no build step, no framework, no fonts to download. Jobs run one at a time, so a modest machine never juggles two heavy things.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="minds">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Thinking power</p>
+      <h2>From no model to many.</h2>
+      <p class="lead">Runesmith treats models as replaceable instruments. What it learns lives in organs, generations, memories and maps that it owns, so the learning stays when you change models.</p>
+    </div>
+    <div class="spectrum">
+      <div class="stop"><span class="dot" data-icon="eye"></span><b>None</b><p>Maps and watches. The living map, bands and ladders work without any model.</p></div>
+      <div class="stop"><span class="dot" data-icon="chat"></span><b>A chat window</b><p>No key needed. Copy each request into any chat, then paste the answer back.</p></div>
+      <div class="stop"><span class="dot" data-icon="laptop"></span><b>Your computer</b><p>Ollama, LM Studio or llama.cpp: free, private, found automatically.</p></div>
+      <div class="stop"><span class="dot" data-icon="key"></span><b>An API key</b><p>Kept on your machine and never shown again. Several providers have free tiers.</p></div>
+      <div class="stop"><span class="dot" data-icon="layers"></span><b>Many, routed</b><p>Fallbacks per role, or a router such as Milliner for whole fleets.</p></div>
+    </div>
+    <div class="roles">
+      <div class="role"><span class="who">Worker</span><h3>Repairs code</h3><p>Many small calls, so a cheap or local model is the right fit. SR7’s winning generation ran on a free-class model.</p></div>
+      <div class="role"><span class="who">Improver</span><h3>Improves Runesmith itself</h3><p>Only a few calls per campaign. A stronger model pays off here, even through a chat window.</p></div>
+      <div class="role"><span class="who">Planner</span><h3>Plans and drafts</h3><p>It turns your brief into milestones and first files. With no model of its own, it borrows the Improver’s.</p></div>
+    </div>
+    <p class="providers">Presets: Ollama · LM Studio · llama.cpp · OpenRouter · Groq · Google Gemini · Mistral · DeepSeek · OpenAI · Anthropic · Together · any OpenAI-compatible endpoint · Milliner · a chat window</p>
+  </div>
+</section>
+
+<section id="evidence" class="alt">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Evidence</p>
+      <h2>Receipts, not claims.</h2>
+      <p class="lead">Runesmith is built as a falsifiable research programme. A capability counts only when a preregistered experiment, sealed before any outcome is read, measures it. An independent recomputation must then agree. Results that did not hold are published with the same weight.</p>
+    </div>
+    <div class="ev-grid">
+      <div class="chart" aria-label="SR7 result chart">
+        <div><p class="eyebrow" style="margin:0 0 6px">SR7 · sealed 2026-09-25</p><h3>A generation Runesmith wrote for itself beat its predecessor on unseen work.</h3></div>
+        <div class="bar-row"><div class="lbl"><span>C7, the self-authored successor</span><b>57</b></div><div class="bar"><i style="width:35.2%;background:linear-gradient(90deg,var(--gold),var(--ember))"></i></div></div>
+        <div class="bar-row"><div class="lbl"><span>B, its frozen predecessor</span><b>35</b></div><div class="bar"><i style="width:21.6%;background:var(--ink-3)"></i></div></div>
+        <div class="axis"><span>0</span><span>fresh tasks repaired, of 162</span><span>162</span></div>
+        <div class="stat-line"><span>+13.6 pp</span><span>one-sided p = 0.00085</span><span>exact recomputation 0.000845</span><span>all guards held</span><span>~½ the time per repair</span></div>
+        <p class="faint" style="font-size:14px">54 unseen tasks in two repositories, three rounds each, with the same cheap repair model. The change was authored inside Runesmith’s own Kaizen loop, for a target chosen by a declared rule from its own telemetry.</p>
+      </div>
+      <div>
+        <div class="ledger">
+          <table>
+            <thead><tr><th>Study</th><th>Question</th><th>Verdict · receipt</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">SR7</td><td>Does a frontier-authored Kaizen successor repair more fresh tasks? <span class="faint">57 vs 35 of 162</span></td><td><span class="verdict pass">PASS</span><span class="rcpt">RESULT ed401486</span></td></tr>
+              <tr><td class="mono">SR6-W</td><td>Does the suit make a 2.6B free model beat a strong simple scaffold? <span class="faint">5 vs 12 of 68</span></td><td><span class="verdict null">NULL</span><span class="rcpt">RESULT 8056266d</span></td></tr>
+              <tr><td class="mono">SR6</td><td>Can a free-class author find a better successor? <span class="faint">4 attempts, none past the bar</span></td><td><span class="verdict null">CLOSED</span><span class="rcpt">FREEZE c1838c16</span></td></tr>
+              <tr><td class="mono">SR5</td><td>Did the first model-authored change help on large repositories? <span class="faint">36 vs 50 of 180; 58 vs 60 of 138</span></td><td><span class="verdict null">NOT SHOWN</span><span class="rcpt">RESULT 7eea6b60</span></td></tr>
+              <tr><td class="mono">Kernel</td><td>Do confined organs stay away from your files, the network, subprocesses and secrets?</td><td><span class="verdict test">UNIT-TESTED</span><span class="rcpt">tests/test_kernel.py</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul class="not-claims">
+          <li>not general coding skill</li><li>not natural, real-world bugs yet</li><li>not replication, which is still open</li><li>not economic value</li><li>not that weak models always gain</li><li>not a hardened security boundary</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">For one person or a whole company</p>
+      <h2>Trust that can be audited.</h2>
+    </div>
+    <div class="trust">
+      <div><span data-icon="lock"></span><h3>Local by default</h3><p>The Studio listens on 127.0.0.1 only. It opens through a one-time link, refuses other hosts and refuses changes that come from other sites.</p></div>
+      <div><span data-icon="key"></span><h3>Keys stay yours</h3><p>Keys are saved in the folder’s own home, outside your project files. They go only to their provider, and never back to the screen.</p></div>
+      <div><span data-icon="eye"></span><h3>Excluded means never read</h3><p>Mark a folder such as payroll or patient records as excluded, and Runesmith never opens it, copies it or sends it to a model.</p></div>
+      <div><span data-icon="inbox"></span><h3>Propose, never impose</h3><p>Nothing is written without your click. Every write is checked for conflicts, backed up and undoable.</p></div>
+      <div><span data-icon="shield"></span><h3>A ledger you can verify</h3><p>Every decision is hash-chained to the one before. One click in Activity verifies the whole history, and a snapshot exports it for review.</p></div>
+      <div><span data-icon="spark"></span><h3>Guarded self-improvement</h3><p>Organs run confined, candidates are tested on held-out work, and only a won trial or your explicit choice switches one on. Improvements others share are checked, frozen and put on trial the same way.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="get" class="alt">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Get Runesmith</p>
+      <h2>Double-click and name what you will create.</h2>
+      <p class="lead">You need Python 3.11 or newer. To measure and repair Python code, also install <code>pytest</code>. Nothing else.</p>
+    </div>
+    <div class="oses">
+      <div class="os"><h3>Windows</h3><p>Double-click <code>Runesmith.cmd</code>. Drop a folder on it to work in that folder.</p></div>
+      <div class="os"><h3>macOS</h3><p>Double-click <code>Runesmith.command</code>. The first time, macOS may ask you to allow it in Privacy &amp; Security.</p></div>
+      <div class="os"><h3>Linux</h3><p>Run <code>./runesmith.sh</code>, or <code>./runesmith.sh ~/projects/my-idea</code> for a specific folder.</p></div>
+    </div>
+    <div class="term" role="region" aria-label="Command line">
+      <div class="bar2"><span>or from a terminal, in any folder</span><button class="copy-btn" type="button" id="copy">Copy</button></div>
+<pre id="cmd"><span class="c"># open the Studio for this folder</span>
+<span class="k">python</span> -m runesmith
+
+<span class="c"># or for another folder, on a chosen port</span>
+<span class="k">python</span> -m runesmith up ~/work/northwind-freight --port 7400</pre>
+    </div>
+    <p class="note"><b>Status:</b> version 0.1, a research release. The public repository link will appear here with the open-source release.</p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <div class="head"><p class="eyebrow">Questions</p><h2>Plainly answered.</h2></div>
+    <div class="faq">
+      <details><summary>Do I need a GPU or a paid subscription?</summary><p>No. Without a model, Runesmith maps and watches. A small model on your own computer is enough to repair code, and a chat window you already use can serve as the Improver or the Planner.</p></details>
+      <details><summary>Will it change my files?</summary><p>Only when you click Apply on a fix or Write on a draft. It runs your tests on throwaway copies. Every write is checked against later changes, backed up and undoable, and folders you exclude are never read.</p></details>
+      <details><summary>Can a company use it on a large repository?</summary><p>Yes. Projects nested inside plain folders, such as <code>services/billing</code>, are found as objects of their own, and each suite runs on a throwaway copy, one job at a time. Folders such as payroll can be excluded, every fix waits for review, and the hash-chained ledger exports as a snapshot for audits. It is a research release, so keep your usual reviews.</p></details>
+      <details><summary>Does it only work on code?</summary><p>No. Websites get their own ladder (pages, styles, phone-ready, titles, working links), document collections are checked for an index and for internal links that resolve, and plain folders are mapped too. The link doctor proposes fixes for broken links without any model.</p></details>
+      <details><summary>What exactly does “improves itself” mean?</summary><p>Runesmith rewrites its own repair organ, the policy that decides what to read and how to ask the model. A rewrite is written by a model, tested on held-out work, frozen, and switched on only after it wins a live trial. In the sealed SR7 study, one such rewrite repaired 57 of 162 unseen tasks against its predecessor’s 35. That is one bounded result, and it has not been replicated yet.</p></details>
+      <details><summary>Can a weak model do real work in the suit?</summary><p>It can repair real code: a 2.6B free model did in exploratory runs. But the SR6-W study found no evidence that the suit made that model better than a strong simple scaffold: 5 against 12 of 68. We report that as clearly as the pass.</p></details>
+      <details><summary>Where are my keys?</summary><p>In <code>.runesmith/secrets.json</code> inside the folder you work in. That folder ignores itself for version control. Keys are sent only to their own provider and are never shown again.</p></details>
+      <details><summary>Is it ready for production?</summary><p>It is version 0.1, a research release. The kernel is small and tested, and every claim is tied to a receipt. Use it where a proposal-only assistant with undo is welcome, and keep your usual reviews.</p></details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="brand"><span data-logo></span>RUNESMITH</span>
+    <span>A research programme led by Lars O. Horpestad, built on the MillinerOS scientific blueprint.</span>
+    <span class="faint">Receipts cited here are SHA-256 prefixes of the sealed files.</span>
+  </div>
+</footer>
+
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Screenshot, full size">
+  <button class="lb-close" type="button" id="lb-close" aria-label="Close"><span data-icon="x"></span></button>
+  <div class="lb-scroll" id="lb-scroll"><img id="lb-img" alt=""></div>
+  <p class="lb-cap" id="lb-cap"></p>
+</div>
+
+<script type="application/json" id="shots-data">
+{
+  "bakery/home": "@SHOT:bakery/home@", "bakery/map-environment": "@SHOT:bakery/map-environment@", "bakery/map-self": "@SHOT:bakery/map-self@",
+  "bakery/map-development": "@SHOT:bakery/map-development@", "bakery/map-operations": "@SHOT:bakery/map-operations@", "bakery/work": "@SHOT:bakery/work@",
+  "bakery/goals": "@SHOT:bakery/goals@", "bakery/inference": "@SHOT:bakery/inference@", "bakery/improve": "@SHOT:bakery/improve@", "bakery/activity": "@SHOT:bakery/activity@",
+  "freight/home": "@SHOT:freight/home@", "freight/map-environment": "@SHOT:freight/map-environment@", "freight/map-self": "@SHOT:freight/map-self@",
+  "freight/map-development": "@SHOT:freight/map-development@", "freight/map-operations": "@SHOT:freight/map-operations@", "freight/work": "@SHOT:freight/work@",
+  "freight/goals": "@SHOT:freight/goals@", "freight/inference": "@SHOT:freight/inference@", "freight/improve": "@SHOT:freight/improve@", "freight/activity": "@SHOT:freight/activity@",
+  "clinics/home": "@SHOT:clinics/home@", "clinics/map-environment": "@SHOT:clinics/map-environment@", "clinics/map-self": "@SHOT:clinics/map-self@",
+  "clinics/map-development": "@SHOT:clinics/map-development@", "clinics/map-operations": "@SHOT:clinics/map-operations@", "clinics/work": "@SHOT:clinics/work@",
+  "clinics/goals": "@SHOT:clinics/goals@", "clinics/inference": "@SHOT:clinics/inference@", "clinics/improve": "@SHOT:clinics/improve@", "clinics/activity": "@SHOT:clinics/activity@"
+}
+</script>
+<script>
+/*@GENESIS_JS@*/
+</script>
+<script>
+(function () {
+  var S = window.RunesmithSite;
+  var SHOTS = JSON.parse(document.getElementById('shots-data').textContent);
+  var $ = function (id) { return document.getElementById(id); };
+  var icon = function (name) { return S.iconSvg(name); };
+  var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+  document.querySelectorAll('[data-logo]').forEach(function (el) { el.innerHTML = S.LOGO; });
+  document.querySelectorAll('[data-icon]').forEach(function (el) { el.insertAdjacentHTML('afterbegin', icon(el.getAttribute('data-icon'))); });
+
+  // ---- the three folders: what their owners typed, what was in them, what Runesmith did (all from the real demo runs)
+  var TYPES = { build: ['Build something new', 'wand'], improve: ['Improve my code', 'hammer'], docs: ['Tend my documents', 'doc'] };
+  var CASES = [
+    { id: 'bakery', name: 'Moonlight Bakery', who: 'A corner bakery', meta: 'one owner · an old laptop', type: 'build',
+      typed: 'A little website where our neighbours pre-order bread, and a weekly bake plan for us.',
+      folder: [['bakery-api', 'python_repository'], ['shop', 'website'], ['docs', 'document_collection'], ['recipes', 'document_collection'], ['blueprint.md'], ['menu.csv']],
+      objects: [['bakery-api', 'python_repository', 'bad'], ['shop', 'website', 'optimal'], ['docs', 'document_collection', 'bad'], ['recipes', 'document_collection', 'optimal'], ['moonlight-bakery', 'document_collection', 'optimal']],
+      steps: ['<b>Mapped the folder in seconds:</b> an order service in Python, the shop’s website, the docs and the recipes, each with its health band and its next rung.',
+        '<b>Found the discount bug.</b> The 10 % loyalty discount was added instead of taken off. The repair ran on a throwaway copy, a held-out judge accepted it, and it waits for one click.',
+        '<b>Planned from the blueprint.</b> Through a chat window, the Planner turned <code>blueprint.md</code> into tracks for the foundation, the shop, the kitchen and the docs.',
+        '<b>Drafted the missing prices page</b> from <code>menu.csv</code>, so every link in the docs resolves.',
+        '<b>Put an improved generation on trial.</b> C7, adopted from the library, must win on the bakery’s own work before it takes over.'],
+      safe: 'Nothing was written to the bakery’s files without a click, and everything ran one job at a time on an old laptop.',
+      models: 'Repairs: a small local model · Planning: a chat window' },
+    { id: 'freight', name: 'Northwind Freight', who: 'A freight company', meta: 'four services · a portal · compliance', type: 'improve',
+      typed: 'Shippers track every container in real time, and compliance can verify every change we make.', typedName: 'Northwind Freight Portal',
+      folder: [['services/ · 4 projects', 'python_repository'], ['web-portal', 'node_repository'], ['docs', 'document_collection'], ['infra', 'folder'], ['data-contracts', 'folder'], ['payroll', 'excluded']],
+      objects: [['services/tracking-api', 'python_repository', 'bad'], ['services/billing', 'python_repository', 'optimal'], ['services/notifications', 'python_repository', 'minimal'], ['services/customs', 'python_repository', 'minimal'],
+        ['web-portal', 'node_repository', 'minimal'], ['docs', 'document_collection', 'optimal'], ['infra', 'folder'], ['data-contracts', 'folder'], ['payroll', 'excluded'], ['northwind-freight', 'document_collection', 'bad']],
+      steps: ['<b>Found four services nested in <code>services/</code></b> and mapped each as a project of its own, beside the portal, the docs, the infrastructure and the data contracts.',
+        '<b>Measured every suite on throwaway copies.</b> Billing, notifications and customs pass. The tracking API fails.',
+        '<b>Repaired the ETA regression.</b> Arrival times came back in minutes, not hours. The held-out judge accepted the fix, and it waits for review, as the team’s note asked.',
+        '<b>Planned for Friday’s release</b> on three tracks, reliability, portal and compliance, through a chat window.',
+        '<b>Pointed the broken on-call link</b> at <code>docs/runbooks/on-call.md</code>, and exported the hash-chained ledger for the compliance review.'],
+      safe: '<code>payroll/</code> is excluded: never read, never sent to a model. Every change is a proposal, and every decision is in a ledger auditors can verify.',
+      models: 'Repairs: the team’s model · Planning: a chat window' },
+    { id: 'clinics', name: 'Helio Clinics', who: 'Three clinics', meta: 'a booking site · reminders · policies', type: 'build',
+      typed: 'Patients book at any of our three clinics, and get a reminder the day before.', typedName: 'Helio Booking',
+      folder: [['booking-app', 'website'], ['api', 'python_repository'], ['policies', 'document_collection'], ['staff-handbook', 'document_collection'], ['patient-records', 'excluded'], ['clinics.csv']],
+      objects: [['api', 'python_repository', 'optimal'], ['booking-app', 'website', 'minimal'], ['policies', 'document_collection', 'bad'], ['staff-handbook', 'document_collection', 'optimal'], ['patient-records', 'excluded'], ['helio-clinics', 'document_collection', 'optimal']],
+      steps: ['<b>Mapped a website, an API and two document collections.</b> The booking site’s ladder shows its next rung: a booking page that works on a phone.',
+        '<b>Fixed the reminder bug.</b> Reminders were due on the day of the visit, not the evening before. The fix was judged on held-out tests and applied by the owner, and the tests now pass.',
+        '<b>Found the policies’ dead link</b> and pointed it at the staff handbook’s data-retention page, as a draft to review.',
+        '<b>Planned three tracks</b> for booking, reminders and privacy, and drafted an accessibility statement for the booking site.'],
+      safe: '<code>patient-records/</code> is excluded: Runesmith never reads it, copies it or sends it anywhere.',
+      models: 'Repairs: a model on the clinic’s computer · Planning: a chat window' }
+  ];
+  var byId = {}; CASES.forEach(function (c) { byId[c.id] = c; });
+
+  // an illustrated map of each folder, drawn from its real objects: the workspace at the centre, each object on the orbit
+  function emblem(c) {
+    var n = c.objects.length, s = '<svg viewBox="0 0 236 152" aria-hidden="true">';
+    s += '<ellipse cx="118" cy="76" rx="88" ry="50" fill="none" stroke="rgba(255,255,255,.09)" stroke-dasharray="2 5"/>';
+    var nodes = '';
+    c.objects.forEach(function (o, i) {
+      var a = -Math.PI / 2 + (i / n) * Math.PI * 2 + 0.35, x = 118 + Math.cos(a) * 88, y = 76 + Math.sin(a) * 50;
+      var kind = (S.KIND[o[1]] || S.KIND.unknown).color, band = o[2] ? S.BAND_COLOR[o[2]] : 'rgba(255,255,255,.28)', ex = o[1] === 'excluded';
+      s += '<path d="M118 76 L' + x.toFixed(1) + ' ' + y.toFixed(1) + '" stroke="' + band + '" stroke-opacity="' + (ex ? '.25' : '.5') + '"' + (ex ? ' stroke-dasharray="3 3"' : '') + '/>';
+      nodes += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="9" fill="#0d1320" stroke="' + band + '" stroke-width="1.8"' + (ex ? ' stroke-dasharray="2.5 2.5"' : '') + '/>'
+        + '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="3.4" fill="' + (ex ? '#6c7791' : kind) + '"/>';
+    });
+    s += '<circle cx="118" cy="76" r="30" fill="url(#hub-' + c.id + ')" opacity=".35"/>' + nodes;
+    s += '<path d="M118 58 L133.6 67 L133.6 85 L118 94 L102.4 85 L102.4 67 Z" fill="#ff7a30"/><path d="M118 63 L129.3 69.5 L129.3 82.5 L118 89 L106.7 82.5 L106.7 69.5 Z" fill="#0d1320"/>';
+    s += '<defs><radialGradient id="hub-' + c.id + '"><stop offset="0" stop-color="#ff7a30"/><stop offset="1" stop-color="#ff7a30" stop-opacity="0"/></radialGradient></defs>';
+    return s + '</svg>';
+  }
+  var tabs = $('case-tabs');
+  CASES.forEach(function (c, i) {
+    var b = document.createElement('button');
+    b.className = 'case-tab'; b.type = 'button'; b.setAttribute('role', 'tab'); b.dataset.case = c.id;
+    b.innerHTML = '<span class="emblem">' + emblem(c) + '</span><span><b>' + esc(c.name) + '</b><span class="who">' + esc(c.who) + '</span><span class="meta">' + esc(c.meta) + '</span></span>';
+    b.addEventListener('click', function () { pickCase(c.id, true); });
+    tabs.appendChild(b);
+  });
+
+  var CASE_SCREENS = [['map-environment', 'Living map'], ['home', 'Overview'], ['work', 'Work'], ['goals', 'Goals & plan']];
+  var caseScreen = 'map-environment', current = 'bakery';
+  function pickCase(id, fromUser) {
+    var c = byId[id]; current = id;
+    tabs.querySelectorAll('.case-tab').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.case === id)); });
+    $('case-name').textContent = c.typedName || c.name;
+    $('case-desc').textContent = c.typed;
+    $('case-kind').innerHTML = icon(TYPES[c.type][1]) + esc(TYPES[c.type][0]);
+    $('case-folder').innerHTML = c.folder.map(function (f) {
+      if (f[1] === 'excluded') return '<span class="x">' + icon('lock') + esc(f[0]) + ' · never read</span>';
+      var color = f[1] ? (S.KIND[f[1]] || S.KIND.unknown).color : 'var(--ink-3)';
+      return '<span><i style="background:' + color + '"></i>' + esc(f[0]) + '</span>';
+    }).join('');
+    $('case-steps').innerHTML = c.steps.map(function (t) { return '<li>' + t + '</li>'; }).join('');
+    $('case-safe').innerHTML = c.safe;
+    $('case-models').textContent = c.models;
+    $('case-tour').innerHTML = esc('Every screen of ' + c.name + ', full size') + icon('down');
+    showCaseScreen(caseScreen);
+    if (fromUser) pickStudio(id);
+  }
+  var pills = $('case-pills');
+  CASE_SCREENS.forEach(function (p) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.setAttribute('role', 'tab'); b.dataset.screen = p[0]; b.textContent = p[1];
+    b.addEventListener('click', function () { showCaseScreen(p[0]); });
+    pills.appendChild(b);
+  });
+  function showCaseScreen(key) {
+    caseScreen = key;
+    var c = byId[current], label = CASE_SCREENS.filter(function (p) { return p[0] === key; })[0][1];
+    $('case-shot').src = SHOTS[c.id + '/' + key];
+    $('case-shot').alt = 'Runesmith Studio in ' + c.name + '’s folder: ' + label;
+    $('case-url').textContent = '127.0.0.1 · Runesmith Studio · ' + (c.typedName || c.name) + ' · ' + label;
+    pills.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.screen === key)); });
+  }
+
+  // ---- the Studio tour: every screen, in whichever folder you pick
+  var TOUR = [
+    ['home', 'Overview', function (c) { return c.name + ': the one thing to do next, what was found, what comes next, and how well Runesmith works on this folder. Capabilities without evidence say unknown.'; }],
+    ['map-environment', 'Living map', function (c) { return c.name + '’s folder as a world. Each object’s border shows its health band, the segments its build ladder, and the dot its latest test result. Click any part to see its objectives and what comes next.'; }],
+    ['map-self', 'Self', function () { return 'Runesmith’s anatomy, read from its own bytes: the ring of fixed kernel modules, the organs that can improve, the active generation and its lineage.'; }],
+    ['map-development', 'Development', function (c) { return 'Tracks of progress on one map: ' + c.name + '’s goals, the plan’s milestones, every object’s ladder, and Runesmith’s own generations.'; }],
+    ['work', 'Work & proposals', function (c) { return { bakery: 'The discount fix, accepted by the held-out judge, waits for one click; the prices page waits as a draft. Apply writes only to unchanged files, keeps a backup and undoes exactly.',
+      freight: 'The ETA fix waits for review with the tests it makes pass; the link doctor’s runbook fix waits as a draft. Nothing reaches the services until someone applies it.',
+      clinics: 'The reminder fix is applied and can still be undone; the link fix and the accessibility statement wait as drafts, unverified until reviewed.' }[c.id]; }],
+    ['goals', 'Goals & plan', function (c) { return { bakery: 'Goals in the owner’s words, the blueprint the Planner read, and the plan it drafted through a chat window: four tracks, each milestone ready for first files.',
+      freight: 'The release goal, the audit goal, and a plan on three tracks (reliability, portal, compliance), drafted through a chat window.',
+      clinics: 'Goals for booking and reminders, and a plan on three tracks. The reminder milestone is already done; the next ones are ready for first files.' }[c.id]; }],
+    ['inference', 'Thinking power', function (c) { return c.models + '. Each role has an ordered list of models to fall back on; the chat relay shows each request to copy and a box for the answer.'; }],
+    ['map-operations', 'Operations', function () { return 'The work loop, live: map, find work, repair, judge, propose, you apply. Who thinks what, how attention is spent, and the schedule.'; }],
+    ['improve', 'Self-improvement', function (c) { return c.id === 'bakery' ? 'Generations of Runesmith’s repair organ. C7, adopted from the library, is on trial here: it serves part of the work and takes over only if it wins.'
+      : 'Generations of Runesmith’s repair organ, and the library of improvements others shared. A candidate takes over only by winning a trial on this folder’s work.'; }],
+    ['activity', 'Activity', function () { return 'Everything that happened, in plain words, each entry hash-chained to the one before. One click verifies the whole history; a snapshot exports it for review.'; }]
+  ];
+  var studioTabs = $('studio-tabs'), studioWs = $('studio-ws'), tourKey = 'home', tourCase = 'bakery';
+  TOUR.forEach(function (t) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.setAttribute('role', 'tab'); b.dataset.shot = t[0]; b.textContent = t[1];
+    b.addEventListener('click', function () { showTour(t[0]); });
+    studioTabs.appendChild(b);
+  });
+  CASES.forEach(function (c) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.dataset.case = c.id; b.textContent = c.name;
+    b.addEventListener('click', function () { pickStudio(c.id); });
+    studioWs.appendChild(b);
+  });
+  function pickStudio(id) {
+    tourCase = id;
+    studioWs.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.case === id)); });
+    showTour(tourKey);
+  }
+  function showTour(key) {
+    tourKey = key;
+    var t = TOUR.filter(function (x) { return x[0] === key; })[0], c = byId[tourCase];
+    $('shot').src = SHOTS[c.id + '/' + key];
+    $('shot').alt = 'Runesmith Studio: ' + t[1] + ', in ' + c.name + '’s folder';
+    $('shot-cap').textContent = t[2](c);
+    $('shot-url').textContent = '127.0.0.1 · Runesmith Studio · ' + (c.typedName || c.name) + ' · ' + t[1];
+    studioTabs.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.shot === key)); });
+  }
+  $('case-tour').addEventListener('click', function () {
+    tourKey = caseScreen; pickStudio(current);
+    $('studio').scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  });
+  pickCase('bakery', false);
+  pickStudio('bakery');
+
+  // ---- any screenshot opens full size
+  var lb = $('lightbox'), lastFocus = null;
+  function openShot(img, caption) {
+    lastFocus = document.activeElement;
+    $('lb-img').src = img.src; $('lb-img').alt = img.alt; $('lb-cap').textContent = caption;
+    lb.hidden = false; document.body.style.overflow = 'hidden'; $('lb-close').focus();
+  }
+  function closeShot() { lb.hidden = true; document.body.style.overflow = ''; if (lastFocus) lastFocus.focus(); }
+  [['case-shot', function () { return $('case-url').textContent.replace('127.0.0.1 · ', ''); }], ['shot', function () { return $('shot-cap').textContent; }]].forEach(function (z) {
+    var img = $(z[0]);
+    img.classList.add('zoomable'); img.tabIndex = 0; img.setAttribute('role', 'button'); img.title = 'Open full size';
+    img.addEventListener('click', function () { openShot(img, z[1]()); });
+    img.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openShot(img, z[1]()); } });
+  });
+  $('lb-close').addEventListener('click', closeShot);
+  lb.addEventListener('click', function (e) { if (e.target === lb || e.target.id === 'lb-scroll') closeShot(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !lb.hidden) closeShot(); });
+
+  // ---- the ring on the "maps itself" card, and the loop icons
+  var ring = $('ring');
+  if (ring) {
+    var N = 30, R1 = 72, R2 = 96, out = '';
+    for (var i = 0; i < N; i++) {
+      var a0 = i / N * Math.PI * 2 - Math.PI / 2 + 0.03, a1 = (i + 1) / N * Math.PI * 2 - Math.PI / 2 - 0.03;
+      var p = function (r, a) { return (Math.cos(a) * r).toFixed(1) + ' ' + (Math.sin(a) * r).toFixed(1); };
+      out += '<path d="M ' + p(R2, a0) + ' A ' + R2 + ' ' + R2 + ' 0 0 1 ' + p(R2, a1) + ' L ' + p(R1, a1) + ' A ' + R1 + ' ' + R1 + ' 0 0 0 ' + p(R1, a0) + ' Z" fill="#22d3c5" fill-opacity="' + (0.25 + (i % 4) * 0.14).toFixed(2) + '"/>';
+    }
+    ring.innerHTML = out;
+  }
+  var li = $('loopicons');
+  if (li) {
+    var names = ['map', 'search', 'hammer', 'scale', 'inbox', 'user'], xs = [70, 154, 238, 322, 406, 490], html = '';
+    names.forEach(function (n, k) {
+      html += icon(n).replace('<svg ', '<svg x="' + (xs[k] - 11) + '" y="114" width="22" height="22" ').replace('stroke="currentColor"', 'stroke="' + (k === 5 ? '#ffb547' : '#22d3c5') + '"');
+    });
+    li.innerHTML = html;
+  }
+
+  // ---- the trailer: Runesmith's real opening sequence, embedded, cycling through the three stories
+  var stage = $('trailer'), stories = document.querySelectorAll('.story');
+  stage.addEventListener('genesis:story', function (e) {
+    stories.forEach(function (b) { b.setAttribute('aria-selected', String(Number(b.dataset.story) === e.detail.index)); });
+  });
+  stories.forEach(function (b) {
+    b.addEventListener('click', function () { stage.dispatchEvent(new CustomEvent('genesis:play', { detail: { story: Number(b.dataset.story) } })); });
+  });
+  S.runGenesis(stage, { cinema: true, embedded: true });
+  $('fs').addEventListener('click', function () { if (stage.requestFullscreen) stage.requestFullscreen().catch(function () {}); });
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) { entries.forEach(function (e) { stage.classList.toggle('paused', !e.isIntersecting); }); }, { threshold: 0.05 }).observe(stage);
+  }
+
+  // ---- copy the command
+  $('copy').addEventListener('click', function (e) {
+    var text = 'python -m runesmith', btn = e.currentTarget;
+    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
+    try { navigator.clipboard.writeText(text).then(done, function () { select(); }); } catch (err) { select(); }
+    function select() { var r = document.createRange(); r.selectNodeContents($('cmd')); var s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+  });
+})();
+</script>

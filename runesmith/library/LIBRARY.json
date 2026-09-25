@@ -1,0 +1,16 @@
+{
+ "schema": "runesmith.library.v1",
+ "generations": [
+  {
+   "file": "c7.zip",
+   "id": "gen-e12d76179a3d",
+   "name": "C7",
+   "title": "Reads what the failure says",
+   "summary": "Before it asks a model where to look, C7 ranks your files by what the failure itself names: the files the failing tests executed, test names that match module names, and the module paths and class names in the error text. It then makes sure the top files are actually read.",
+   "evidence": "SR7, a preregistered and sealed study (2026-09-25): on 54 unseen tasks in two Python repositories, C7 repaired 57 of 162 against its predecessor B's 35 of 162 with the same small model (p = 0.00085), with no more errors or false fixes and about half the time per repair.",
+   "caveat": "C7 was proven against B, not against the shipped g0, on synthetic single-line bugs with one model (gpt-oss-20b). On your work it must win an online trial before it becomes active.",
+   "authored_by": "Runesmith's Kaizen loop, with Claude Opus 4.5 as the author instrument",
+   "sha256": "d4cc3deda910423cbaad18880d0061af4585b32c7bf7badf8aba0c1c19c4c66e"
+  }
+ ]
+}

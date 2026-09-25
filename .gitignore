@@ -1,0 +1,17 @@
+# Local Runesmith homes and demo state: they hold machine-specific paths and your own workspace map.
+.runesmith/
+.demo-home/
+*-home/
+
+# Test and build scratch
+.tmp/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+build/
+dist/
+*.egg-info/
+
+# Patches written by `runesmith proposals --write`
+proposals/
