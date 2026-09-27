@@ -113,10 +113,11 @@ export default async function render(root, { app, navigate, refreshState }) {
       'Separate from Optimize. A self-made improvement becomes active only by winning a trial on your work.'),
     keep,
     h('div.list.mt-16', [
-      ['Executable build checks', s.settings.build_steps, 'Needed for the checked Build workflow, not installed by a mode switch.'],
-      ['Delegated build application', s.settings.build_apply, 'Also requires an explicit root/path grant, acceptance and unchanged source.'],
+      ['Check drafts by running their tests', s.settings.build_steps, 'Runs project code in a throwaway working copy. Set in Goals & plan → Build continuation.'],
+      ['Apply checked drafts automatically', s.settings.build_apply, 'Also needs your own acceptance checks, allowed folders and an unchanged source. Set in Goals & plan.'],
     ].map(([label,value,detail])=>h('div.item',h('div.body',h('div.title',label),h('div.meta',detail)),
-      h('span.badge',typeof value==='boolean'?(value?'On':'Off'):'Not reported')))),
+      h('span.badge',typeof value==='boolean'?(value?'On':'Off'):'Not reported'),
+      h('button.btn.sm',{onclick:()=>navigate('goals')},'Change')))),
     h('p.small.muted', 'API/local routes are needed for unattended transport. A chat-window instrument waits for your copied replies. Operations currently reads selected local reports; it is not a production deployment or messaging engine.'));
   const healthBody=h('div'); let closed=false,healthSerial=0;
   const checkLocal=async()=>{
@@ -153,7 +154,7 @@ export default async function render(root, { app, navigate, refreshState }) {
   const trialText = s.attention ? `attention ${humanize(s.attention.mode).toLowerCase()}` : 'no work observed yet';
   const kpis = h('div.grid.four',
     kpi('Objects mapped', String(s.objects.length), s.mapped_utc ? `mapped ${ago(s.mapped_utc)}` : 'not mapped yet', () => navigate('map'), 'map'),
-    kpi('Waiting for you', String(waiting), `${s.proposals.applied || 0} applied so far`, () => navigate('work'), 'inbox'),
+    kpi('Waiting for you', String(waiting), `${(s.proposals.applied || 0) + (s.drafts.applied || 0)} applied so far`, () => navigate('work'), 'inbox'),
     kpi('Repairs accepted', `${s.repairs.accepted}`, `of ${plural(s.repairs.judged, 'judged attempt')}`, () => navigate('work', 'attempts'), 'check'),
     kpi('Active generation', s.active_name || '—', `${(s.active_generation || '').replace('gen-', '')} · ${plural(s.generations, 'generation')} · ${trialText}`, () => navigate('improve'), 'branch'));
 

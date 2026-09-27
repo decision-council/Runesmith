@@ -226,6 +226,10 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .goals-page .card-head > *, .goals-page .row > *, .goals-page details, .goals-page .col { min-width: 0; max-width: 100%; }
 .goals-page .card p, .goals-page summary { overflow-wrap: anywhere; }
 .goals-page .item > .mt-8 { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+/* A milestone's extra blocks (checks, acceptance criteria) sit under its text, not beside it as more flex columns. */
+.goals-page .item { flex-wrap: wrap; }
+.goals-page .item > .body { flex: 1 1 240px; }
+.goals-page .item > .mt-8, .goals-page .item > .callout { flex: 1 1 100%; margin-left: 44px; }
 .goals-page .item .btn { white-space: normal; height: auto; min-height: 28px; }
 .work-page .card-head > *, .work-page .callout > div { min-width: 0; max-width: 100%; }
 .work-page .callout { flex-wrap: wrap; }

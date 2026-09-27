@@ -53,7 +53,7 @@ async function boot() {
   if (!app.session.settings.onboarded || location.hash.startsWith('#/genesis')) {
     const { runGenesis } = await import('./genesis.js');
     await runGenesis(root, { cinema: false });
-    location.hash = '#/map/environment';
+    location.hash = '#/home';                            // the Overview holds the next steps
   }
   renderShell(root);
   await refreshState();

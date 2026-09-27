@@ -202,10 +202,10 @@ export function modal({ title, text, body, actions = [], wide = false, onClose }
   setTimeout(() => { const f = box.querySelector('input, textarea, select, button.primary') || box.querySelector(FOCUSABLE); f && f.focus(); }, 30);
   return { close, el: box };
 }
-export function confirmDialog({ title, text, confirm = 'Confirm', danger = false, icon: ic }) {
+export function confirmDialog({ title, text, confirm = 'Confirm', cancel = 'Cancel', danger = false, icon: ic }) {
   return new Promise((resolve) => {
     modal({ title, text, onClose: (v) => resolve(v === true),
-      actions: [{ label: 'Cancel', kind: 'ghost', value: false }, { label: confirm, kind: danger ? 'danger' : 'primary', icon: ic, value: true }] });
+      actions: [{ label: cancel, kind: 'ghost', value: false }, { label: confirm, kind: danger ? 'danger' : 'primary', icon: ic, value: true }] });
   });
 }
 export function askText({ title, text, placeholder = '', value = '', confirm = 'Save', multiline = false }) {

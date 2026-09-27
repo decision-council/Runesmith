@@ -644,7 +644,7 @@ def _check_and_record(ws, draft, milestone, contract, *, checkpoint, allow_apply
     checkpoint()
     grant = status(ws)
     if not grant['enabled']:
-        return {'summary':f"Draft {draft['id']} is ready for review; executable build checks are off."}
+        return {'summary':f"Draft {draft['id']} is ready for review. Checking drafts is off: turn on 'Check drafts by running their tests' in Goals & plan → Build continuation, or use Recheck on the draft."}
     options={} if check_timeout_s is None else {'check_timeout_s':check_timeout_s}
     if project_timeout_s is not None:options['project_timeout_s']=project_timeout_s
     if owner_timeout_s is not None:options['owner_timeout_s']=owner_timeout_s

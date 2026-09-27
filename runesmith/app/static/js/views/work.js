@@ -289,15 +289,23 @@ function drawDrafts(body, w, reload, ctx) {
     }, icon('pencil'), 'Create one revision draft'));
     if (['waiting', 'needs_revision'].includes(d.state) && d.milestone) actions.append(h('button.btn', {
       onclick: (e) => withBusy(e.currentTarget, async () => {
+        const settings = await get('/api/settings');
+        if (!settings.build_steps) {        // say why nothing would run, and offer the one switch that makes it run
+          const on = await confirmDialog({ title: 'Checking drafts is off in this folder',
+            text: 'To check a draft, Runesmith runs its tests (Python unittest) in a throwaway working copy of your folder. That executes the project’s code, so it is off until you choose. You can also change it later in Goals & plan → Build continuation.',
+            confirm: 'Turn checking on and check this draft', icon: 'check' });
+          if (!on) return;
+          await post('/api/settings', { build_steps: true });
+        }
         await post('/api/worker/run', {job:'build', params:{draft_id:d.id}});
-        toast('Saved-candidate checks queued. No model call or automatic apply.');
+        toast('Checking this draft now: its tests run in a throwaway copy. No model call and nothing is written. Follow it in Activity.', 'good', 7000);
       })}, icon('check'), 'Recheck saved draft'));
     if (d.state !== 'applied') actions.append(h('button.btn.primary', { onclick: (e) => applyDraft(e.currentTarget, d, reload) }, icon('check'), 'Write these files'));
     if (d.state === 'waiting') actions.append(h('button.btn', { onclick: async (e) => { const reason = await askText({ title: 'Reject this draft', text: 'Optional: say why; the Planner reads it next time.', multiline: true, confirm: 'Reject' }); if (reason === null) return; withBusy(e.currentTarget, async () => { await post(`/api/drafts/${d.id}/reject`, { reason }); reload(); }); } }, icon('x'), 'Reject'));
     if (d.state === 'applied') actions.append(h('button.btn', { onclick: (e) => withBusy(e.currentTarget, async () => { const r = await post(`/api/drafts/${d.id}/undo`, {}); r.ok ? toast('Undone.', 'good') : toast(r.detail, 'warn'); reload(); }) }, icon('undo'), 'Undo'));
     const card = h('div.card.mt-16', { class: d.state === 'waiting' ? 'glow' : '' },
       h('div.card-head', h('div.grow', h('h3', icon('filePlus'), d.title), h('div.small.muted', `${plural(d.files.length, 'file')} · by ${d.drafted_by || 'a model'} · ${ago(d.utc)}${d.milestone ? ' · milestone ' + d.milestone : ''}`)),
-        h('span', {class:`badge ${d.verified ? 'good' : 'warn'}`}, d.verification?.status || 'unverified'), h('span', { class: `badge ${cls}` }, label)),
+        h('span', {class:`badge ${d.verified ? 'good' : 'warn'}`, title: d.verification?.status || 'unverified'}, checkBadge(d)), h('span', { class: `badge ${cls}` }, label)),
       d.review_reason || d.review_note || d.review_requested_by ? h('div.callout.warn.mt-8', h('div',
         h('b.small', 'Recorded review feedback — separate from check status'),
         h('p.small', d.review_reason || 'Review feedback is recorded in this draft’s notes.'),
@@ -448,10 +456,20 @@ function drawMemory(body, w) {
       h('pre.code', m.text), h('p.tiny.mono', `Evidence: ${s.evidence_dir || 'no executable receipt'}`)));
   }
 }
+// Check outcomes in plain words; the raw status stays in the badge's tooltip and the receipts.
+function checkBadge(d) {
+  const v = d.verification;
+  if (!v) return 'unverified';
+  return ({ acceptance_passed: 'its tests and your checks passed', self_checks_passed: 'its own tests passed',
+    failed: 'checks failed', inconclusive: 'checks did not finish' })[v.status] || humanize(v.status || 'unverified');
+}
+
 async function applyDraft(btn, d, reload) {
   const warning = draftWriteWarning(d);
+  const selfOnly = !warning && d.verification?.status === 'self_checks_passed';
+  const ran = d.verification?.project_checks?.ran;
   const ok = await confirmDialog({ title: warning ? 'Write files despite unresolved checks or review?' : 'Write these files?',
-    text: `${warning ? warning + '\n\n' : ''}${plural(d.files.length, 'file')} will be written into your folder. Anything replaced is backed up, and Undo removes what was added.`,
+    text: `${warning ? warning + '\n\n' : ''}${selfOnly ? `Its own tests passed${ran ? ` (${ran} ran)` : ''}. You have not added acceptance checks of your own for this milestone, so this rests on the author’s tests. Read the change before writing.\n\n` : ''}${plural(d.files.length, 'file')} will be written into your folder. Anything replaced is backed up, and Undo removes what was added.`,
     confirm: 'Write files', danger: Boolean(warning), icon: 'check' });
   if (!ok) return;
   await withBusy(btn, async () => {
@@ -462,12 +480,28 @@ async function applyDraft(btn, d, reload) {
     }
     if (r.ok) toast(`Written: ${r.files.join(', ')}${r.milestone_doing ? '. Its milestone is now in progress.' : ''}`, 'good', 6000);
     else if (r.detail) toast(r.detail, 'warn', 8000);
+    if (r.ok && d.milestone && ['self_checks_passed', 'acceptance_passed'].includes(d.verification?.status)) await offerMilestoneDone(d);
     reload();
   });
 }
 
+// Checks passing and files written do not finish a milestone by themselves: the owner decides, and is asked here.
+async function offerMilestoneDone(d) {
+  let milestone;
+  try { milestone = ((await get('/api/plan')).plan?.milestones || []).find((m) => m.id === d.milestone); } catch { return; }
+  if (!milestone || milestone.status === 'done') return;
+  const done = await confirmDialog({ title: `Is “${milestone.title}” done?`,
+    text: `The draft’s checks passed and its files are written.${milestone.done_when ? ` The milestone is done when: ${milestone.done_when}` : ''}\n\nMark it done, or keep it in progress if there is more to do. You can change this later in Goals & plan.`,
+    confirm: 'Mark done', cancel: 'Keep in progress', icon: 'check' });
+  if (!done) return;
+  await post(`/api/plan/milestones/${d.milestone}`, { status: 'done' });
+  toast(`“${milestone.title}” is done. Build next step in Goals & plan continues with the next milestone.`, 'good', 7000);
+}
+
 function draftWriteWarning(d) {
   if (d.verified === true && d.verification?.status === 'acceptance_passed' && !['needs_revision', 'rejected'].includes(d.state)) return '';
+  if (d.verification?.status === 'self_checks_passed' && d.verification?.project_checks?.status === 'passed'
+      && d.state === 'waiting' && !d.review_reason && !d.review_note && !d.review_requested_by) return '';
   return `Draft state: ${humanize(d.state || 'unknown')}. Verification: ${d.verification?.status || 'not run'}. ` +
     `Project checks: ${d.verification?.project_checks?.status || 'not run'}; owner acceptance: ${d.verification?.acceptance?.status || 'not run'}. ` +
     (d.review_reason ? `Recorded review: ${d.review_reason} ` : '') +

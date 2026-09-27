@@ -320,8 +320,8 @@ export default async function render(root, ctx) {
     })}, 'Save build settings');
     clear(buildCard).append(h('h3', icon('hammer'), 'Build continuation'),
       h('p.small.muted', 'Continue an existing milestone from real source and feedback. Review is the default. Delegated writes require an unchanged snapshot and owner acceptance, not only the author’s own tests.'),
-      h('label.row', checks, 'Enable executable Python unittest checks (local working copy)'),
-      h('label.row.mt-8', apply, 'Apply and advance automatically after acceptance'),
+      h('label.row', checks, 'Check drafts by running their tests (Python unittest, in a throwaway working copy)'),
+      h('label.row.mt-8', apply, 'Apply checked drafts automatically (needs your own acceptance checks for the milestone)'),
       h('div.label-text.mt-8', 'Allowed files or folders, comma separated'), paths,
       h('p.tiny.faint', `Owner acceptance files: ${build.acceptance_folder} / <milestone-id>.py (unittest). Working copies are not an OS sandbox.`),
       h('div.row.wrap', save, h('button.btn.primary', {onclick:async()=>{await post('/api/worker/run',{job:'build'});toast('Build step queued. Follow it under Work.', 'good');}}, icon('play'), 'Build next step')),

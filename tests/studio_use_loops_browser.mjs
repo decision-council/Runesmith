@@ -1781,6 +1781,8 @@ try{
     let posts=requests.slice(chooseStart).filter(r=>r.method==='POST');
     assert.equal(posts.length,1);assert.equal(posts[0].path,'/api/settings');
     assert.deepEqual((typeof posts[0].body==='string'?JSON.parse(posts[0].body):posts[0].body),{auto_work:true,policy_chosen:true});
+    // the page updates when the reply arrives, not when the request is sent: wait for the state itself
+    await page.waitForFunction(()=>!document.querySelector('[data-step="policy"] button')&&![...document.querySelectorAll('button')].some(b=>b.textContent.includes('Keep these choices')));
     assert.equal(await policy().getByRole('button',{name:'Keep these choices',exact:true}).count(),0);
     assert.equal(await page.locator('[data-step="policy"] button').count(),0);
     chooseStart=requests.length;await mount(base);
