@@ -50,13 +50,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "workspace_name": "",
     "use_type": "",                 # improve | build | docs | explore (chosen at onboarding; shapes the defaults)
     "autonomy": "propose",          # observe: map and watch only; propose: also work and propose fixes
-    "auto_work": True,              # run rounds on a schedule
+    # The next three are the owner's explicit first-run choices (Overview, Settings). Finishing the introduction turns
+    # none of them on: scheduled rounds spend model calls, running tests executes the project's code, and Kaizen
+    # rewrites Runesmith's own organ.
+    "auto_work": False,             # run rounds on a schedule
     "interval_minutes": 60,
-    "probe_tests": True,            # run objects' own tests (always on throwaway copies) while mapping
+    "probe_tests": False,           # run objects' own tests (always on throwaway copies) while mapping
     "exclude": [],                  # object names Runesmith must never probe or work on
     "max_objects": 50,
     "read_notes": True,             # give open notes to the model as the owner's guidance
-    "kaizen": True,                 # allow self-improvement steps
+    "kaizen": False,                # allow self-improvement steps
+    "policy_chosen": False,         # the owner has made the three choices above
     "min_experience": 8,
     "kaizen_every": 8,
     "theme": "auto",
@@ -64,10 +68,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "build_apply": False,          # only owner acceptance + unchanged source + a root-bound grant can apply
     "build_paths": [],
 }
+# Homes onboarded before the explicit choices existed keep the behaviour they were onboarded with, until their owner
+# chooses (``policy_chosen`` absent from the stored settings marks such a home).
+LEGACY_ONBOARDED: dict[str, Any] = {"auto_work": True, "probe_tests": True, "kaizen": True}
 SETTING_TYPES: dict[str, Any] = {
     "onboarded": bool, "workspace_name": str, "use_type": str, "autonomy": str, "auto_work": bool,
     "interval_minutes": (int, float), "probe_tests": bool, "exclude": list, "max_objects": int, "read_notes": bool,
-    "kaizen": bool, "min_experience": int, "kaizen_every": int, "theme": str,
+    "kaizen": bool, "min_experience": int, "kaizen_every": int, "theme": str, "policy_chosen": bool,
     "build_steps": bool, "build_apply": bool, "build_paths": list,
 }
 CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"},
@@ -183,8 +190,11 @@ class Workspace:
             return app["seed"]
 
     def settings(self) -> dict[str, Any]:
+        stored = {k: v for k, v in (self.config().get("app") or {}).items() if k in DEFAULT_SETTINGS}
         merged = dict(DEFAULT_SETTINGS)
-        merged.update({k: v for k, v in (self.config().get("app") or {}).items() if k in DEFAULT_SETTINGS})
+        if stored.get("onboarded") and "policy_chosen" not in stored:
+            merged.update(LEGACY_ONBOARDED)
+        merged.update(stored)
         if not merged["workspace_name"]:
             merged["workspace_name"] = self.root.name or str(self.root)
         return merged
@@ -215,6 +225,13 @@ class Workspace:
             clean[key] = value
         with self._lock:
             config = self.config()
+            if clean.get("policy_chosen"):
+                # Choosing keeps exactly what the owner was shown: a home onboarded before the explicit choices
+                # still runs on its legacy values, so those become stored choices rather than silently changing.
+                effective = self.settings()
+                for key in LEGACY_ONBOARDED:
+                    if key not in clean and key not in (config.get("app") or {}):
+                        clean[key] = effective[key]
             config["app"] = dict(config.get("app") or {}, **clean)
             self.save_config(config)
             if "build_apply" in clean or "build_paths" in clean:

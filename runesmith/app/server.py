@@ -888,6 +888,9 @@ def api_genesis_complete(s: Studio, q, body):
     name = str(body.get("name") or "").strip()
     description = str(body.get("description") or "").strip()
     patch: dict[str, Any] = {"onboarded": True}
+    stored = ws.config().get("app") or {}
+    if "policy_chosen" not in stored and not stored.get("onboarded"):
+        patch["policy_chosen"] = False          # a first onboarding: scheduling, test runs and Kaizen wait for the owner
     if name:
         patch["workspace_name"] = name[:80]
     if body.get("use_type") in ("improve", "build", "docs", "explore"):

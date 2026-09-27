@@ -1668,7 +1668,7 @@ try{
       {check:'instrument author',ok:null,detail:'not probed (offline)'}];
     healthFixture={checks:localChecks};healthUnavailable=false;
     const base={workspace:{name:'First project',path:'D:/fixture/new project',empty:true},
-      settings:{onboarded:false,auto_work:true,kaizen:true,build_steps:false,build_apply:false},
+      settings:{onboarded:false,auto_work:false,kaizen:false,probe_tests:false,policy_chosen:false,interval_minutes:60,build_steps:false,build_apply:false},
       ready:{any:false},worker:{paused:false,current:null,recovery:null},manual_waiting:0,
       proposals:{waiting:0,applied:0},drafts:{waiting:0},objects:[],plan:{milestones:0},
       goals:[],brief:'',round_utc:null,mapped_utc:null,repairs:{accepted:0,judged:0},generations:1};
@@ -1687,9 +1687,13 @@ try{
     await policy().getByText('Inspect local checks',{exact:true}).click();
     assert((await policy().innerText()).includes('Suggested next step: pip install pytest'));
     assert((await policy().innerText()).includes('Not checked'));
-    assert.equal(await policy().locator('.badge').getByText('On',{exact:true}).count(),2);
+    assert.equal(await policy().locator('.badge').getByText('On',{exact:true}).count(),0);
     assert.equal(await policy().locator('.badge').getByText('Off',{exact:true}).count(),2);
-    loops.push({id:'B19.01',case:'Fresh Overview shows real policy defaults, offline missing dependency and no invented map',result:'passed'});
+    for(const label of ['Work on a schedule','Run this project’s tests while mapping','Let Runesmith improve itself'])
+      assert.equal(await policy().getByLabel(label,{exact:true}).isChecked(),false,label);
+    assert((await policy().innerText()).includes('Nothing below runs until you choose'));
+    assert(await policy().getByRole('button',{name:'Keep these choices',exact:true}).isVisible());
+    loops.push({id:'B19.01',case:'Fresh Overview shows real policy defaults (schedule, test runs and Kaizen off until chosen), offline missing dependency and no invented map',result:'passed'});
 
     await mount({...base,manual_waiting:1,drafts:{waiting:1}});
     await hero().getByRole('button',{name:'Open the chat relay',exact:true}).click();
@@ -1750,7 +1754,7 @@ try{
     loops.push({id:'B19.08',case:'Diagnostic text is inert and no local failure is not provider or unattended qualification',result:'passed'});
 
     healthFixture={checks:localChecks};
-    await mount({...configured,settings:{...base.settings,onboarded:true},goals:[{id:'g1'}],round_utc:'2026-09-27T07:00:00Z',mapped_utc:'2026-09-27T06:00:00Z'});
+    await mount({...configured,settings:{...base.settings,onboarded:true,policy_chosen:true},goals:[{id:'g1'}],round_utc:'2026-09-27T07:00:00Z',mapped_utc:'2026-09-27T06:00:00Z'});
     assert.equal(await page.getByRole('heading',{name:'Getting set up',exact:true}).count(),0);
     assert(await policy().isVisible());
     for(const width of [1440,820,390]){
@@ -1768,6 +1772,23 @@ try{
     assert(observed.filter(r=>r.path==='/api/health').every(r=>r.method==='GET'&&r.query==='?network=0'));
     assert(observed.every(r=>r.method==='GET'));
     loops.push({id:'B19.10',case:'All Overview guidance/refresh loops are GET-only; no provider probes, work, install, settings or apply action',result:'passed'});
+
+    // B19.11: choosing is explicit, records only what was chosen, and marks the setup step done without navigating
+    const waitPosts=async(start,n)=>{for(let i=0;i<60&&requests.slice(start).filter(r=>r.method==='POST').length<n;i++)await page.waitForTimeout(50);};
+    let chooseStart=requests.length;await mount(base);
+    await policy().getByLabel('Work on a schedule',{exact:true}).locator('xpath=ancestor::label[1]').click();   // the visible switch
+    await waitPosts(chooseStart,1);
+    let posts=requests.slice(chooseStart).filter(r=>r.method==='POST');
+    assert.equal(posts.length,1);assert.equal(posts[0].path,'/api/settings');
+    assert.deepEqual((typeof posts[0].body==='string'?JSON.parse(posts[0].body):posts[0].body),{auto_work:true,policy_chosen:true});
+    assert.equal(await policy().getByRole('button',{name:'Keep these choices',exact:true}).count(),0);
+    assert.equal(await page.locator('[data-step="policy"] button').count(),0);
+    chooseStart=requests.length;await mount(base);
+    await policy().getByRole('button',{name:'Keep these choices',exact:true}).click();
+    await waitPosts(chooseStart,1);
+    posts=requests.slice(chooseStart).filter(r=>r.method==='POST');
+    assert.equal(posts.length,1);assert.deepEqual((typeof posts[0].body==='string'?JSON.parse(posts[0].body):posts[0].body),{policy_chosen:true});
+    loops.push({id:'B19.11',case:'Explicit first-run choices: a switch posts only its key with policy_chosen; Keep these choices posts only policy_chosen',result:'passed'});
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));

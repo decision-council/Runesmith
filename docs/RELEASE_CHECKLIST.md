@@ -7,7 +7,7 @@ Items marked **owner** are Lars's decisions. The rest are technical and can be d
 - [ ] **License.** Nothing is chosen yet. The README says so.
 - [ ] **Repository location and name.**
 - [ ] **What ships.** The Core only, or also the MillinerOS experiment harness (`scripts/sr*_run.py`, generators) as a reproducibility package.
-- [ ] **Organs shipped as generations.** g0 (the v1 port) ships. If SR5 confirms B, B could ship as the first generation written by Runesmith itself, with its provenance.
+- [x] **Organs shipped as generations.** g0 (the v1 port) ships as the default. SR5 did not show B, so B does not ship. C7 (SR7, shown once against B, not tested against g0) ships in the library and becomes active only by winning an online trial.
 
 ## Hygiene
 

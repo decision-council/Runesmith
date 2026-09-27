@@ -382,10 +382,10 @@ class Genesis {
     };
     bar(by, 57 / 162, EMBER, 'C7, written by Runesmith for itself', 57, 1900);
     bar(by + 92, 35 / 162, STEEL, 'B, its predecessor', 35, 2100);
-    S('text', { x: bx, y: by + 170, fill: '#7f8aa6', 'font-size': 13.5, text: 'fresh tasks repaired, of 162, same cheap model', class: 'fade-in', style: 'animation-delay:2.6s' }, l);
+    S('text', { x: bx, y: by + 170, fill: '#7f8aa6', 'font-size': 13.5, text: 'repairs out of 162 attempts at 54 unseen tasks, same cheap model', class: 'fade-in', style: 'animation-delay:2.6s' }, l);
     this.fit(l, [340, CY - 210, 1420, CY + 210], 1.35);
     this.say('It improves itself, only with evidence.',
-      'Candidates are tested on work their author never saw. In a sealed, preregistered test, a generation Runesmith wrote for itself repaired 57 of 162 unseen tasks. Its predecessor repaired 35.',
+      'Candidates are tested on work their author never saw. In a sealed, preregistered test, a generation Runesmith wrote for itself succeeded on 57 of 162 attempts at 54 unseen tasks. Its predecessor managed 35.',
       'SR7 · 2026 · synthetic single-line bugs · one cheap model · p = 0.00085 · a new generation must still win a live trial on your work');
     return 7600;
   }

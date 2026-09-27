@@ -199,6 +199,9 @@ def test_worker_can_queue_breakdown_without_executing_it(tmp_path):
 def test_build_cap_can_queue_replanning_but_not_adoption(tmp_path,monkeypatch):
     ws=setup(tmp_path);worker=Worker(ws,EventBus())
     monkeypatch.setattr(worker,'_job_build',lambda:{'summary':'Needs a smaller step','replan_needed':True,'milestone':'m2'})
+    worker._execute({'id':'cap-off','kind':'build','params':{},'by':'owner'})
+    assert list(worker._jobs)==[]                # scheduled work is off in a new home: no follow-up is queued
+    ws.update_settings({'auto_work':True,'policy_chosen':True})
     worker._execute({'id':'cap-test','kind':'build','params':{},'by':'owner'})
     assert [j['kind'] for j in worker._jobs]==['breakdown']
     assert len(ws.plan()['milestones'])==2

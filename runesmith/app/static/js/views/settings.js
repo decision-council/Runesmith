@@ -18,8 +18,10 @@ async function behaviour(body, ctx) {
     try { const r = await post('/api/settings', patch); Object.assign(s, r); toast(msg || 'Saved', 'good', 1800); ctx.refreshState(); }
     catch (e) { toast(e.message, 'bad'); }
   };
+  const POLICY = new Set(['auto_work', 'probe_tests', 'kaizen']);   // the owner's first-run choices (see Overview)
   const toggle = (key, label, text, onMsg) => h('div.setting', h('div.text', h('b', label), h('span', text)),
-    h('label.switch', h('input', { type: 'checkbox', checked: s[key], onchange: (e) => save({ [key]: e.target.checked }, onMsg && onMsg(e.target.checked)) }), h('span')));
+    h('label.switch', h('input', { type: 'checkbox', checked: s[key], 'aria-label': label, onchange: (e) => save(
+      { [key]: e.target.checked, ...(POLICY.has(key) ? { policy_chosen: true } : {}) }, onMsg && onMsg(e.target.checked)) }), h('span')));
   const seg = (key, options) => h('div.seg', options.map(([v, l, ic]) => h('button', { class: s[key] === v ? 'on' : '', onclick: async (e) => { await save({ [key]: v }); for (const b of e.currentTarget.parentNode.children) b.classList.toggle('on', b === e.currentTarget); } }, ic ? icon(ic) : null, l)));
   const name = h('input.input', { value: s.workspace_name, style: { maxWidth: '320px' } });
   name.addEventListener('change', () => save({ workspace_name: name.value }));
@@ -44,10 +46,10 @@ async function behaviour(body, ctx) {
         h('div.setting', h('div.text', h('b', 'How Runesmith may act'), h('span', 'Observe maps and watches only. Propose also works on what it finds and brings you fixes to approve. It never writes to your files by itself.')),
           seg('autonomy', [['observe', 'Observe', 'eye'], ['propose', 'Propose', 'hammer']]))),
       h('div.card', h('h3', icon('clock'), 'Rhythm'),
-        toggle('auto_work', 'Work on a schedule', 'Run rounds automatically while the Studio is open.'),
+        toggle('auto_work', 'Work on a schedule', 'Run rounds automatically while the Studio is open. Each round can spend model calls. Off until you choose.'),
         h('div.setting', h('div.text', h('b', 'How often'), h('span', 'A round maps, finds work, works on what is new, and reports.')), interval)),
       h('div.card', h('h3', icon('map'), 'Mapping'),
-        toggle('probe_tests', 'Measure code by running its tests', 'Tests always run on a throwaway copy; nothing is written into your folder. Turn off if tests are slow or need special set-up.'),
+        toggle('probe_tests', 'Measure code by running its tests', 'This executes the project’s own code, on a throwaway copy of the folder, so nothing is written into it. Only for projects you trust: the copy is not a security boundary. Off until you choose.'),
         num('max_objects', 'Most objects to map', 'For very large folders.', 1, 500),
         h('div.setting', h('div.text', h('b', 'Never touch'), h('span', 'Excluded folders are listed on the map but never read, probed or worked on.'), h('div.mt-8', exChips))))),
     h('div.col.gap-16',
@@ -104,7 +106,7 @@ async function about(body) {
     h('div.card', h('h3', icon('beaker'), 'What has been shown, and what has not'),
       h('p.small.muted', 'Runesmith is developed as a falsifiable research programme: a claim counts only when a preregistered, sealed experiment measured it. Negative results are reported with the same weight.'),
       h('table.table.small', h('tr', h('th', 'Claim'), h('th', 'Status')),
-        row('A self-authored generation repairs more fresh tasks than its predecessor (SR7: 57 vs 35 of 162, p = 0.00085; synthetic single-line bugs, one cheap model)', 'shown once', 'good'),
+        row('A self-authored generation repairs more fresh tasks than its predecessor (SR7: 57 vs 35 of 162 attempts at 54 unseen tasks, p = 0.00085; synthetic single-line bugs, one cheap model)', 'shown once', 'good'),
         row('Free-class models as the self-improvement author (SR5, SR6)', 'not shown', ''),
         row('The suit makes a 2.6B free model repair more than a strong simple scaffold (SR6-W: 5 vs 12 of 68)', 'not shown', ''),
         row('Organ confinement (no files, network, subprocesses or secrets)', 'unit-tested', 'rune'),

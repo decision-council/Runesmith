@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import textwrap
 from pathlib import Path
@@ -244,11 +245,23 @@ def test_trace_reports_the_lines_the_failing_test_executes(tmp_path):
 
 
 def test_sources_and_docs_use_lf_line_endings():
-    """Digests are over bytes, and the project is cross-platform: every text file uses LF."""
+    """Digests are over bytes, and the project is cross-platform: every text file uses LF.
+
+    Only project sources are walked. Scratch, homes, builds and fetched tools are skipped, and so is the field-training
+    evidence (training/, TRAINER_LOG.md, READ_ME_TRAINER_NOW.md), which is kept byte-exact on purpose (.gitattributes).
+    Skipped folders are pruned before they are entered: training scratch alone holds many thousands of files."""
     root = Path(__file__).resolve().parents[1]
-    offenders = [p.relative_to(root).as_posix() for p in sorted(root.rglob("*"))
-                 if p.is_file() and p.suffix in (".py", ".md", ".toml") and b"\r\n" in p.read_bytes()
-                 and not {".tmp", ".demo-home", "__pycache__"} & set(p.relative_to(root).parts)]
+    skip = {".git", ".tmp", ".demo-home", ".runesmith", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules",
+            "training", "build", "dist"}
+    evidence = {"TRAINER_LOG.md", "READ_ME_TRAINER_NOW.md"}
+    offenders = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in skip and not d.endswith((".egg-info", "-home")))
+        for name in sorted(files):
+            path = Path(folder) / name
+            rel = path.relative_to(root).as_posix()
+            if path.suffix in (".py", ".md", ".toml") and rel not in evidence and b"\r\n" in path.read_bytes():
+                offenders.append(rel)
     assert offenders == []
 
 

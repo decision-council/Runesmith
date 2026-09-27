@@ -531,3 +531,33 @@ def test_the_server_serves_the_app_and_its_api(studio):
     assert call(studio, "POST", "/api/settings", {"interval_minutes": -3})[0] == 400
     assert call(studio, "POST", "/api/proposals/nope/apply", {})[0] == 404
     assert call(studio, "GET", "/api/nothing")[0] == 404
+
+
+def test_a_new_home_waits_for_the_owners_choices(studio):
+    """Finishing the introduction starts no schedule, runs no project code and enables no Kaizen; the owner chooses."""
+    status, body, _ = call(studio, "POST", "/api/genesis", {"name": "First project", "use_type": "build"})
+    chosen = body["settings"]
+    assert status == 200 and chosen["onboarded"]
+    assert (chosen["auto_work"], chosen["probe_tests"], chosen["kaizen"], chosen["policy_chosen"]) == (False,) * 4
+    assert studio.worker._next_round_utc(studio.ws.settings()) is None               # nothing scheduled
+    status, chosen, _ = call(studio, "POST", "/api/settings", {"auto_work": True, "policy_chosen": True})
+    assert status == 200 and chosen["auto_work"] and chosen["policy_chosen"]
+    assert not chosen["probe_tests"] and not chosen["kaizen"]                          # only what was chosen
+    status, body, _ = call(studio, "POST", "/api/genesis", {"name": "First project"})  # replaying the introduction
+    assert status == 200 and body["settings"]["auto_work"] and body["settings"]["policy_chosen"]
+
+
+def test_a_home_onboarded_before_the_choices_keeps_its_behaviour(tmp_path):
+    """Homes onboarded by an earlier version keep their old defaults until the owner chooses, and choosing keeps
+    exactly what the owner was shown."""
+    ws = Workspace(tmp_path)
+    ws.update_settings({"onboarded": True})                  # how an earlier version stored an onboarded home
+    legacy = ws.settings()
+    assert legacy["auto_work"] and legacy["probe_tests"] and legacy["kaizen"] and not legacy["policy_chosen"]
+    kept = ws.update_settings({"policy_chosen": True})       # "Keep these choices"
+    assert kept["auto_work"] and kept["probe_tests"] and kept["kaizen"] and kept["policy_chosen"]
+    stored = Workspace(tmp_path).config()["app"]
+    assert stored["auto_work"] is True and stored["kaizen"] is True                  # stored choices, not defaults now
+    (tmp_path / "fresh").mkdir()
+    fresh = Workspace(tmp_path / "fresh")
+    assert not fresh.settings()["auto_work"] and not fresh.settings()["probe_tests"] and not fresh.settings()["kaizen"]

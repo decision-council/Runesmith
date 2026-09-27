@@ -60,7 +60,7 @@ python -m runesmith --home .runesmith run
   - 4 of 8 through the shipped repair organ g0;
   - 2 of 8 through a Kaizen-authored candidate.
   This was an exploratory probe on opened development tasks, not a preregistered result.
-- Whether the suit is what helps, compared with the same model's best plain scaffold at equal budget, is being tested in a preregistered study (SR6-W). Its result will be reported whichever way it goes.
+- Whether the suit helps, compared with the same model's best plain scaffold at equal budget, was tested in a preregistered study (SR6-W, sealed 2026-09-25): **not shown**. A 2.6B free model repaired 5 of 68 fresh tasks in the suit and 12 of 68 in the scaffold, so the direction favoured the scaffold. C7 was not tested with a small model.
 - Small models fail more often on large repositories. Runesmith's Kaizen loop is designed to find where your model struggles and improve the organs around it. It never raises the envelope: the gains must come from better use of the same calls.
 
 ## The envelope

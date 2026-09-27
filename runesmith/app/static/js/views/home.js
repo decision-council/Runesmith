@@ -1,5 +1,5 @@
 // Overview: where things stand, what needs you, and what comes next.
-import { h, icon, get, bus, toast, commentable, ago, plural, KIND, worstBand, BAND_COLOR, BAND_LABEL, humanize,
+import { h, icon, get, post, bus, toast, commentable, ago, plural, KIND, worstBand, BAND_COLOR, BAND_LABEL, humanize,
   withBusy, clock } from '../core.js';
 import { LOGO } from '../icons.js';
 
@@ -65,6 +65,8 @@ export default async function render(root, { app, navigate, refreshState }) {
     { done: s.settings.onboarded, label: 'Named what you build here', go: () => navigate('goals') },
     { done: !!s.mapped_utc, label: 'Folder mapped', go: () => navigate('map') },
     { done: s.ready.any, label: 'Thinking power configured (not tested)', go: () => navigate('inference') },
+    { id: 'policy', done: !!s.settings.policy_chosen, label: 'Chose how Runesmith may work here',
+      go: () => document.getElementById('work-policy')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) },
     { done: s.goals.length > 0 || s.brief, label: 'Goals or a brief written', go: () => navigate('goals') },
     { done: !!s.round_utc, label: 'Work history recorded (not a success verdict)', go: () => navigate('mission') },
   ];
@@ -72,17 +74,45 @@ export default async function render(root, { app, navigate, refreshState }) {
   const checklist = doneCount < steps.length ? h('div.card',
     h('div.card-head', h('h3', icon('flag'), 'Getting set up'), h('span.badge.accent', `${doneCount} of ${steps.length}`)),
     h('div.bar.mb-8', h('i', { style: { width: `${(doneCount / steps.length) * 100}%` } })),
-    h('div.list', steps.map((st) => h('div.item', h('div', { class: `ico ${st.done ? 'good' : ''}` }, icon(st.done ? 'check' : 'right')),
+    h('div.list', steps.map((st) => h('div.item', { 'data-step': st.id }, h('div', { class: `ico ${st.done ? 'good' : ''}` }, icon(st.done ? 'check' : 'right')),
       h('div.body', h('div.title', st.label)), st.done ? null : h('button.btn.sm', { onclick: st.go }, 'Do it'))))) : null;
 
+  // How Runesmith may work here: the owner's explicit choices. Finishing the introduction switches none of them on.
   // This is setup evidence, not an unattended-readiness score or a launch action.
-  const policy = h('section.card.mt-24', {'aria-label':'Setup and work policy'},
-    h('div.card-head', h('h3', icon('sliders'), 'Before you leave it working'),
+  const choose = async (patch, message) => {
+    try {
+      const saved = await post('/api/settings', { ...patch, policy_chosen: true });
+      Object.assign(s.settings, saved);
+      toast(message, 'good', 2200);
+      keep?.remove();
+      stepDone();
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  const choice = (key, label, detail) => h('div.setting', h('div.text', h('b', label), h('span', detail)),
+    h('label.switch', h('input', { type: 'checkbox', checked: !!s.settings[key], 'aria-label': label,
+      onchange: (e) => choose({ [key]: e.target.checked }, `${label}: ${e.target.checked ? 'on' : 'off'}`) }), h('span')));
+  const keep = s.settings.policy_chosen ? null : h('div.row.mt-8', h('button.btn.primary', {
+    onclick: (e) => withBusy(e.currentTarget, () => choose({}, 'Your choices are saved')) }, icon('check'), 'Keep these choices'));
+  const stepDone = () => {
+    const item = checklist?.querySelector('[data-step="policy"]');
+    if (!item) return;
+    item.querySelector('.ico')?.replaceWith(h('div', { class: 'ico good' }, icon('check')));
+    item.querySelector('button')?.remove();
+  };
+  const policy = h('section.card.mt-24', {'aria-label':'Setup and work policy', id:'work-policy'},
+    h('div.card-head', h('h3', icon('sliders'), 'How Runesmith may work here'),
       h('button.btn.sm', {onclick:()=>navigate('settings')}, 'Review settings')),
-    h('p.small.muted', 'Configuration and work status as of opening this page. Saving a mode, adding a key or finishing onboarding is not proof of a successful build.'),
-    h('div.list', [
-      ['Scheduled work', s.settings.auto_work, 'After onboarding; pause, mode guards and provider limits still apply.'],
-      ['Self-improvement', s.settings.kaizen, 'Separate from Optimize; requires eligible experience and its own checks.'],
+    h('p.small.muted', s.settings.policy_chosen
+      ? 'Your choices. Change them any time; every change is recorded in Activity.'
+      : 'Nothing below runs until you choose. Finishing the introduction does not switch any of it on.'),
+    choice('auto_work', 'Work on a schedule',
+      `Run a round every ${s.settings.interval_minutes} minutes while the Studio is open. Each round can spend model calls. Pause, mode guards and provider limits still apply.`),
+    choice('probe_tests', 'Run this project’s tests while mapping',
+      'This executes the project’s own code, on a throwaway copy of the folder. Only for projects you trust: the copy is not a security boundary.'),
+    choice('kaizen', 'Let Runesmith improve itself',
+      'Separate from Optimize. A self-made improvement becomes active only by winning a trial on your work.'),
+    keep,
+    h('div.list.mt-16', [
       ['Executable build checks', s.settings.build_steps, 'Needed for the checked Build workflow, not installed by a mode switch.'],
       ['Delegated build application', s.settings.build_apply, 'Also requires an explicit root/path grant, acceptance and unchanged source.'],
     ].map(([label,value,detail])=>h('div.item',h('div.body',h('div.title',label),h('div.meta',detail)),

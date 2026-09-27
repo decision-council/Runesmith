@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased: release hardening (2026-09-27)
+
+**First-run safety.**
+- A new home starts with scheduled work, running the project's tests while mapping, and self-improvement all **off**. Finishing the introduction switches none of them on.
+- The Overview's "How Runesmith may work here" panel asks for each choice in plain words, with the switch right there. "Getting set up" keeps a step open until the owner has chosen.
+- Settings now says that measuring code executes the project's own code, on a throwaway copy that is not a security boundary.
+- Homes onboarded by earlier versions keep their behaviour until their owner chooses. Choosing stores exactly the values the owner was shown.
+- Tests: two backend tests, and browser loop B19.11. B19.01 and B19.09 were updated for the new defaults.
+
+**Claims match the paper.**
+- SR7 is described as 57 of 162 *attempts*: 54 unseen tasks, 3 rounds each. Its speed is "about half the time per successful repair". This applies across the README, the website, the Genesis introduction, the Settings evidence panel, the library card and the Atlas.
+- C7's library card now says that its module-path step only recognises its two development repositories' package names, and that which steps carried the gain was not tested.
+- `LOCAL_MODELS.md` now reports SR6-W's sealed null, and `RELEASE_CHECKLIST.md` records that B does not ship.
+
+**Tests.** `test_sources_and_docs_use_lf_line_endings` walks project sources only. It prunes scratch, homes, fetched tools and the byte-exact field-training evidence before entering them. On the field-training tree it previously never finished, and it would have failed on the deliberately byte-exact logs.
+
 ## Unreleased: the Atlas (2026-09-25)
 
 - **`site/atlas/`: the Runesmith Atlas**, one page that tells how Runesmith was built, failures included (`python scripts/build_atlas.py`).
