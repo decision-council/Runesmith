@@ -658,7 +658,7 @@ class Worker:
         trial = {'fails_now': ' They fail on today’s project, as expected before it is built.',
                  'passes_now': ' Note: they already pass on today’s project.',
                  'broken': ' Note: they could not run on today’s project.'}.get((proposal.get('dry_run') or {}).get('verdict'), '')
-        revised = ' Revised once after a trial run.' if proposal.get('revision') and not proposal['revision'].get('error') else ''
+        revised = ' Revised once after Runesmith tried and read them.' if proposal.get('revision') and not proposal['revision'].get('error') else ''
         return {'summary': f"Proposed {len(proposal['checks'])} acceptance checks for {milestone}.{revised}{trial} Read and approve them under Goals & plan; nothing is used until you do."}
 
     def _job_build(self, draft_id: str | None = None, author_only: bool = False) -> dict[str, Any]:

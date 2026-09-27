@@ -3,6 +3,10 @@ import { h, icon, get, post, del, bus, toast, commentable, openNotes, clear, ago
   confirmDialog, askText, drawer, empty, debounce } from '../core.js';
 
 const STATUS = { open: ['', 'open'], doing: ['rune', 'in progress'], done: ['good', 'done'], dropped: ['', 'dropped'] };
+// Exact text a check's code requires that its sentence does not say (found by Runesmith, not by the model).
+const exactText = (c) => c.unstated?.length
+  ? h('div.tiny.warn', 'Also requires the exact text: ' + c.unstated.map((x) => `“${x}”`).join(', '))
+  : null;
 
 function editInterfaces(milestone, contract, reload) {
   // Freeze the reviewed revision even if a plan event refreshes behind this drawer.
@@ -226,30 +230,34 @@ export default async function render(root, ctx) {
         accBlock.append(h('b.small', '✓ Your acceptance checks'),
           h('div.tiny.muted', acc.approved.provenance === 'owner file' ? 'Your own checks file. Automatic apply for this milestone is judged by it.'
             : `Proposed by ${acc.approved.proposed_by || 'a model'}, approved by you. Automatic apply for this milestone is judged by them; builders see only their sentences, never the code.`),
-          acc.approved.checks ? h('ul.small', acc.approved.checks.map((c) => h('li', c.says))) : null);
+          acc.approved.checks ? h('ul.small', acc.approved.checks.map((c) => h('li', c.says, exactText(c)))) : null);
       } else if (acc?.proposal) {
         const p = acc.proposal;
         // A trial run on today's project: checks that already pass may not test what an unbuilt milestone adds.
         const dry = p.dry_run || {};
         const trial = dry.verdict === 'passes_now'
-          ? h('div.callout.warn.mt-8', h('div', 'These checks already pass on your project as it is today. If this milestone is not built yet, they may not test what it adds. Consider discarding them and asking again.'))
+          ? h('div.callout.warn.mt-8', h('div', 'These checks already pass on your project as it is today. If this milestone is not built yet, they may not test what it adds. ' + (p.revision && !p.revision.error
+              ? 'Runesmith already asked for a revision once. You can discard them and ask again, choose a stronger model for planning under Thinking power, or propose smaller steps for this milestone.'
+              : 'Consider discarding them and asking again.')))
           : dry.verdict === 'broken'
             ? h('div.callout.warn.mt-8', h('div', 'These checks could not run on your project as it is today, so they may be broken. Consider discarding them and asking again.'))
             : dry.verdict === 'fails_now'
               ? h('div.tiny.muted', `Tried on your project as it is today: ${dry.failures + dry.errors} of ${dry.ran} fail, as expected before the milestone is built.`)
               : dry.why ? h('div.tiny.muted', dry.why) : null;
-        const revised = p.revision && (p.revision.error
-          ? h('div.tiny.muted', `The first checks ${p.revision.after === 'broken' ? 'could not run' : 'already passed today'}; asking for a revision did not work (${p.revision.error}).`)
-          : h('div.tiny.muted', `Revised once: the first checks ${p.revision.after === 'broken' ? 'could not run' : 'already passed on today’s project'}.`));
+        const firstTry = { broken: 'could not run', passes_now: 'already passed on today’s project', unstated_text: 'required exact text their sentences did not say' }[p.revision?.after] || 'needed work';
+        const revised = p.revision && h('div.tiny.muted', p.revision.error
+          ? `The first checks ${firstTry}; asking for a revision did not work (${p.revision.error}).`
+          : `Revised once: the first checks ${firstTry}.`);
+        const unstated = p.checks.some((c) => c.unstated?.length);
         accBlock.append(h('b.small', 'Proposed acceptance checks: do these describe “done”?'),
-          h('ul.small', p.checks.map((c) => h('li', c.says))),
+          h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c)))),
           p.assumes?.length ? h('div.small.mt-8', h('b', 'They assume (your milestone does not say this):'), h('ul.small', p.assumes.map((a) => h('li', a)))) : null,
           trial, revised,
           h('details', h('summary.tiny', `Show the code (proposed by ${p.drafted_by || 'a model'})`), h('pre.code', p.code)),
           h('div.row.wrap.mt-8',
             h('button.btn.sm.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
               if (!(await confirmDialog({ title: `Use these checks for “${m.title}”?`,
-                text: (dry.verdict === 'passes_now' ? 'Note: they already pass on your project today. ' : '') + (p.assumes?.length ? 'They also assume what is listed under the checks. ' : '') + 'They decide when this milestone is done. Work is applied automatically only when they pass, and only if you allow automatic apply. Their sentences become the milestone’s public expectations, so whoever builds it knows what “done” means; the code stays private. You can replace them later, with a reason.',
+                text: (dry.verdict === 'passes_now' ? 'Note: they already pass on your project today. ' : '') + (unstated ? 'Some checks require exact text their sentences do not say (shown under them); whoever builds the milestone is told it too. ' : '') + (p.assumes?.length ? 'They also assume what is listed under the checks. ' : '') + 'They decide when this milestone is done. Work is applied automatically only when they pass, and only if you allow automatic apply. Their sentences become the milestone’s public expectations, so whoever builds it knows what “done” means; the code stays private. You can replace them later, with a reason.',
                 confirm: 'Use these checks', icon: 'check' }))) return;
               await post(`/api/plan/milestones/${m.id}/acceptance/approve`, { proposal: p.id });
               toast('Acceptance checks saved for this milestone.', 'good'); drawPlan(); }) }, icon('check'), 'Use these checks'),

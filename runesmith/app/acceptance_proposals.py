@@ -52,13 +52,18 @@ TASK = ("Write the owner's acceptance checks for ONE milestone of this project. 
         "format, name or behaviour your checks rely on that the milestone text does not state (an empty list means "
         "none). The feature may not exist yet: do not implement it. Return JSON with \"checks\", \"assumes\" and "
         "\"code\" (the complete file).")
-REVISE = ("Your checks were tried once on a copy of the project as it is today. {finding} Revise them so that each check "
-          "fails on a project that lacks what this milestone adds and passes once it is built. If the project already "
-          "does everything the milestone says, return the same checks and say so in \"assumes\". Same JSON shape.")
+REVISE = ("Runesmith tried your checks once on a copy of the project as it is today, and read them. {finding} Revise them "
+          "so that each check fails on a project that lacks what this milestone adds, passes once it is built, and says "
+          "in its sentence every exact text it requires. If the project already does everything the milestone says, "
+          "return the same checks and say so in \"assumes\". Same JSON shape.")
 FINDINGS = {'passes_now': 'They all passed, although this milestone is not built yet, so they may not test what it adds.',
             'broken': 'They could not run: no test ran, or they did not finish in time.'}
 NETWORK_MODULES = {'socket', 'ssl', 'urllib', 'http', 'requests', 'ftplib', 'smtplib', 'telnetlib', 'asyncio'}
 MAX_CODE = 20000
+# Assertion methods and how many leading arguments state the requirement (the rest are messages).
+ASSERT_ARGS = {'assertTrue': 1, 'assertFalse': 1, 'assertIn': 2, 'assertNotIn': 2, 'assertEqual': 2, 'assertNotEqual': 2,
+               'assertRegex': 2, 'assertNotRegex': 2, 'assertCountEqual': 2, 'assertListEqual': 2,
+               'assertMultiLineEqual': 2, 'assertStartsWith': 2, 'assertEndsWith': 2}
 MILESTONE_ID = re.compile(r'[A-Za-z0-9_-]+')
 CRITERION_ID = re.compile(r'[A-Za-z0-9_.-]{1,100}')
 
@@ -83,6 +88,50 @@ def _milestone(ws, milestone_id):
 def acceptance_file(ws, milestone_id):
     _record_path(ws, milestone_id)
     return ws.home / 'acceptance' / (milestone_id + '.py')
+
+
+def _literals(root):
+    """String constants an assertion compares against: direct operands, `in`/`==` operands, startswith/endswith."""
+    if isinstance(root, (ast.List, ast.Tuple, ast.Set)):
+        yield from (e for e in root.elts if isinstance(e, ast.Constant) and isinstance(e.value, str))
+    for node in ast.walk(root):
+        if node is root and isinstance(node, ast.Constant) and isinstance(node.value, str):
+            yield node
+        elif isinstance(node, ast.Compare):
+            yield from (s for s in (node.left, *node.comparators) if isinstance(s, ast.Constant) and isinstance(s.value, str))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ('startswith', 'endswith'):
+            for arg in node.args:
+                elements = arg.elts if isinstance(arg, ast.Tuple) else [arg]
+                yield from (e for e in elements if isinstance(e, ast.Constant) and isinstance(e.value, str))
+
+
+def required_texts(tree, tests) -> dict[str, list[str]]:
+    """Per test: the exact texts its assertions require, apart from its own input data and its failure messages.
+
+    A weak model may promise one thing in a sentence and require an exact layout or word in the code. The sentence is
+    all an owner reads and all a builder is shown, so Runesmith finds such texts itself instead of trusting the model.
+    """
+    required, marked = {}, set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in tests:
+            found = []
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr in ASSERT_ARGS:
+                    roots = inner.args[:ASSERT_ARGS[inner.func.attr]]
+                elif isinstance(inner, ast.Assert):
+                    roots = [inner.test]
+                else:
+                    continue
+                for root in roots:
+                    found.extend(_literals(root))
+            required[node.name] = found
+            marked |= {id(n) for n in found}
+    docstrings = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr)}
+    inputs = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+              and id(n) not in marked and id(n) not in docstrings]
+    return {name: sorted({n.value.strip() for n in nodes if len(n.value.strip()) >= 2
+                          and not any(n.value.strip() in data for data in inputs)})
+            for name, nodes in required.items()}
 
 
 def validate(data: Any) -> dict[str, Any]:
@@ -114,6 +163,7 @@ def validate(data: Any) -> dict[str, Any]:
             tests |= {f.name for f in node.body if isinstance(f, ast.FunctionDef) and f.name.startswith('test')}
     if not tests:
         raise WorkspaceError('The checks file defines no unittest test methods.')
+    texts = required_texts(tree, tests)
     checks = []
     for row in data['checks']:
         if not isinstance(row, dict) or not isinstance(row.get('test'), str) or not isinstance(row.get('says'), str):
@@ -123,7 +173,10 @@ def validate(data: Any) -> dict[str, Any]:
             raise WorkspaceError(f'"{row["test"]}" is not a test in the checks file.')
         if not says or len(says) > 300:
             raise WorkspaceError('Each plain sentence needs 1-300 characters.')
-        checks.append({'test': row['test'], 'says': says})
+        check = {'test': row['test'], 'says': says}
+        if unstated := [text for text in texts.get(row['test'], []) if text not in says]:
+            check['unstated'] = unstated                # required by the code, not said in the sentence
+        checks.append(check)
     if not 1 <= len(checks) <= 8:
         raise WorkspaceError('Propose 1-8 checks.')
     if missing := sorted(tests - {c['test'] for c in checks}):
@@ -198,7 +251,7 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
     clean = validate(out.data)
     clean['dry_run'] = dry_run(ws, clean['code'])
     drafted_by = out.receipt.get('answered_by') or out.receipt.get('model')
-    if clean['dry_run']['verdict'] in FINDINGS:
+    if findings(clean):
         clean, drafted_by = _revise_once(ws, router, data, clean, key, drafted_by, checkpoint)
     proposal = dict(clean, id=key, state='proposed', utc=_now(), milestone=milestone_id, input_sha256=digest,
                     drafted_by=drafted_by)
@@ -210,10 +263,21 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
     return proposal
 
 
+def findings(proposal) -> list[str]:
+    """What Runesmith itself found wrong with a proposal: its trial result, and texts its sentences do not say."""
+    found = [FINDINGS[proposal['dry_run']['verdict']]] if proposal['dry_run']['verdict'] in FINDINGS else []
+    for check in proposal['checks']:
+        if check.get('unstated'):
+            found.append(f"{check['test']} requires the exact text " + ', '.join(json.dumps(t, ensure_ascii=False)
+                         for t in check['unstated']) + ', which its sentence does not say: put it in the sentence, '
+                         'or stop requiring it.')
+    return found
+
+
 def _revise_once(ws, router, data, first, key, drafted_by, checkpoint):
-    """One more call, told what the trial found. The first proposal is kept (with its warning) if this fails."""
-    finding = first['dry_run']['verdict']
-    request = dict(data, revise=REVISE.format(finding=FINDINGS[finding]),
+    """One more call, told what Runesmith found. The first proposal is kept (with its warnings) if this fails."""
+    finding = first['dry_run']['verdict'] if first['dry_run']['verdict'] in FINDINGS else 'unstated_text'
+    request = dict(data, revise=REVISE.format(finding=' '.join(findings(first))),
                    your_first_proposal={k: first[k] for k in ('checks', 'assumes', 'code')})
     checkpoint()
     try:
@@ -279,7 +343,9 @@ def public_criteria(ws, milestone_id, proposal) -> list[dict[str, str]]:
     """The milestone's public expectations after approval: the owner's own criteria, plus these sentences."""
     kept = [c for c in (expectations(ws, milestone_id) or {}).get('criteria', [])
             if not c['id'].startswith(('check.', 'assumes.'))]
-    ours = [{'id': 'check.' + c['test'], 'description': c['says']} for c in proposal['checks']]
+    ours = [{'id': 'check.' + c['test'], 'description': (c['says'] + (' It requires the exact text: ' + ', '.join(
+                 f'“{text}”' for text in c['unstated']) + '.' if c.get('unstated') else ''))[:1200]}
+            for c in proposal['checks']]
     if proposal.get('assumes'):
         ours.append({'id': 'assumes.1', 'description': ('Also assumed: ' + '; '.join(proposal['assumes']))[:1200]})
     if any(not CRITERION_ID.fullmatch(c['id']) for c in ours):

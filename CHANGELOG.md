@@ -12,6 +12,9 @@
   - Each proposal also gets a **trial run** on a throwaway copy of today's project, but only when checking is on. Checks that already pass on an unbuilt milestone, or that cannot run at all, carry a warning before the owner decides.
   - When the trial finds that checks already pass or cannot run, the model is asked **once** to revise them, and told what the trial found. If the revision fails, the first proposal stands with its warning.
   - Any exact word, layout or value a check requires must appear in its sentence. When a milestone promises behaviour under a failure (an interruption, damaged input), the check must cause that failure itself.
+  - **Runesmith reads the checks itself** instead of trusting the model to follow that rule, because the weak free model ignored it. It finds every exact text a check's assertions require that its sentence does not say. Test input data and failure messages don't count.
+    - Such text triggers the one revision, with the test and the text named.
+    - Whatever remains is shown under the sentence ("Also requires the exact text: …") and published with it, so the builder is always told.
   - **On approval, the sentences become the milestone's public expectations.** Whoever builds the milestone now knows what "done" means, while the code stays private. A failing check is reported to the builder by its sentence, never by its assertion. Owner-written expectations are kept.
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.

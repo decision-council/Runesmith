@@ -175,3 +175,43 @@ def test_approval_publishes_the_sentences_and_maps_failures_to_them(tmp_path):
     ws.set_brief(text="# Reading log\n\nMonths too.\n")                  # a changed packet asks again
     approve(ws, "m1", propose(ws, router, "m1")["id"], replace=True, reason="months replace the add checks")
     assert [c["id"] for c in expectations(ws, "m1")["criteria"]] == ["quick", "check.test_months_are_counted"]
+
+
+HIDDEN = {"checks": [{"test": "test_counts", "says": "The months command shows how many books were finished each month."},
+                     {"test": "test_empty", "says": "With no books, the months command says “No books yet”."}],
+          "assumes": [], "code": '''import os, subprocess, sys, tempfile, unittest
+
+class Months(unittest.TestCase):
+    def run_cli(self, data, *args):
+        return subprocess.run([sys.executable, "-m", "readinglog", "--file", data, *args], capture_output=True, text=True)
+
+    def test_counts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = os.path.join(folder, "log.json")
+            self.run_cli(data, "add", "--title", "Dune", "--author", "Herbert", "--finished", "2025-01-05")
+            out = self.run_cli(data, "months").stdout
+            self.assertIn("Dune", self.run_cli(data, "list").stdout, "the book was not stored")
+            self.assertTrue(out.splitlines()[0].startswith("2025-01"))
+            self.assertIn("2025-01: 1", out, "missing month line")
+
+    def test_empty(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertIn("No books yet", self.run_cli(os.path.join(folder, "log.json"), "months").stdout)
+'''}
+
+
+def test_exact_text_a_check_requires_but_its_sentence_does_not_say_is_found():
+    checks = validate(HIDDEN)["checks"]
+    assert checks[0]["unstated"] == ["2025-01: 1"]                     # not the input data, not the failure message
+    assert "unstated" not in checks[1]                                  # stated in its sentence
+
+
+def test_unstated_text_asks_for_one_revision_and_is_published_if_it_stays(tmp_path):
+    from runesmith.app.acceptance_contracts import expectations
+    ws = workspace(tmp_path, [HIDDEN, HIDDEN])
+    proposal = propose(ws, ws.router(), "m1")                          # checking is off: no trial, yet text is found
+    assert proposal["dry_run"]["verdict"] == "not_run" and proposal["revision"]["after"] == "unstated_text"
+    assert status(ws)["m1"]["proposal"]["checks"][0]["unstated"] == ["2025-01: 1"]
+    approve(ws, "m1", proposal["id"])
+    counts = next(c for c in expectations(ws, "m1")["criteria"] if c["id"] == "check.test_counts")
+    assert counts["description"].endswith("It requires the exact text: “2025-01: 1”.")
