@@ -23,7 +23,7 @@ from typing import Any
 from runesmith import atomic
 from runesmith.app.acceptance_contracts import expectations, publish_expectations
 from runesmith.app.building import _run_checks
-from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, source_context
+from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, source_context, why_no_answer
 from runesmith.app.snapshots import SnapshotUnsupported, collect_snapshot
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 
@@ -242,7 +242,7 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
     except KeyError as error:
         raise PlannerUnavailable('no model is set up for planning or checking: add one under Thinking power') from error
     except Exception as error:
-        raise PlannerUnavailable(f'the acceptance-check call did not answer: {str(error)[:200]}') from error
+        raise PlannerUnavailable('no acceptance checks: ' + why_no_answer(error)) from error
     if isinstance(out.data, dict) and out.data.get('skipped_by_owner'):
         raise SkippedByOwner('you skipped the request, so nothing changed')
     if not out.ok:

@@ -274,13 +274,32 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
     return text
 
 
+def why_no_answer(error) -> str:
+    """Why a model call brought no answer, in plain words and with what to try; the gateway's words follow, short (F15)."""
+    raw = str(error)
+    low = raw.lower()
+    if 'unresolved' in low:
+        plain = 'the answer has not arrived yet; Runesmith kept the request and will not send it twice'
+    elif 'timeout' in low or 'timed out' in low:
+        plain = ('the model did not answer in time (a free service may be busy): try again later, '
+                 'or put another model first under Thinking power')
+    elif any(word in low for word in ('capacity', 'rate_limited', 'overloaded', 'daily_request_cap', '429')):
+        plain = ('the model is busy or at its free limit right now: try again later, '
+                 'or put another model first under Thinking power')
+    elif any(word in low for word in ('auth_failed', 'token unavailable', '401', '403')):
+        plain = 'the model service refused the key or token: check it under Thinking power'
+    else:
+        plain = 'the model did not answer'
+    return f'{plain} ({raw[:160]})'
+
+
 def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_tokens: int):
     try:
         outcome = router.call("plan", prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
     except KeyError as error:
-        raise PlannerUnavailable("no model is set up for planning: add one under Inference") from error
+        raise PlannerUnavailable("no model is set up for planning: add one under Thinking power") from error
     except TransportCensored as error:
-        failure=PlannerUnavailable(f"the model did not answer: {str(error)[:200]}")
+        failure=PlannerUnavailable(why_no_answer(error))
         failure.remote_receipt=error.receipt
         raise failure from error
     if isinstance(outcome.data, dict) and outcome.data.get("skipped_by_owner"):
