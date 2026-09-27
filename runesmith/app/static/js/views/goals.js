@@ -229,13 +229,24 @@ export default async function render(root, ctx) {
           acc.approved.checks ? h('ul.small', acc.approved.checks.map((c) => h('li', c.says))) : null);
       } else if (acc?.proposal) {
         const p = acc.proposal;
+        // A trial run on today's project: checks that already pass may not test what an unbuilt milestone adds.
+        const dry = p.dry_run || {};
+        const trial = dry.verdict === 'passes_now'
+          ? h('div.callout.warn.mt-8', h('div', 'These checks already pass on your project as it is today. If this milestone is not built yet, they may not test what it adds. Consider discarding them and asking again.'))
+          : dry.verdict === 'broken'
+            ? h('div.callout.warn.mt-8', h('div', 'These checks could not run on your project as it is today, so they may be broken. Consider discarding them and asking again.'))
+            : dry.verdict === 'fails_now'
+              ? h('div.tiny.muted', `Tried on your project as it is today: ${dry.failures + dry.errors} of ${dry.ran} fail, as expected before the milestone is built.`)
+              : dry.why ? h('div.tiny.muted', dry.why) : null;
         accBlock.append(h('b.small', 'Proposed acceptance checks: do these describe “done”?'),
           h('ul.small', p.checks.map((c) => h('li', c.says))),
+          p.assumes?.length ? h('div.small.mt-8', h('b', 'They assume (your milestone does not say this):'), h('ul.small', p.assumes.map((a) => h('li', a)))) : null,
+          trial,
           h('details', h('summary.tiny', `Show the code (proposed by ${p.drafted_by || 'a model'})`), h('pre.code', p.code)),
           h('div.row.wrap.mt-8',
             h('button.btn.sm.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
               if (!(await confirmDialog({ title: `Use these checks for “${m.title}”?`,
-                text: 'They decide when this milestone is done. Work is applied automatically only when they pass, and only if you allow automatic apply. Build authors never see them. You can replace them later, with a reason.',
+                text: (dry.verdict === 'passes_now' ? 'Note: they already pass on your project today. ' : '') + (p.assumes?.length ? 'They also assume what is listed under the checks. ' : '') + 'They decide when this milestone is done. Work is applied automatically only when they pass, and only if you allow automatic apply. Build authors never see them. You can replace them later, with a reason.',
                 confirm: 'Use these checks', icon: 'check' }))) return;
               await post(`/api/plan/milestones/${m.id}/acceptance/approve`, { proposal: p.id });
               toast('Acceptance checks saved for this milestone.', 'good'); drawPlan(); }) }, icon('check'), 'Use these checks'),

@@ -8,6 +8,8 @@
   - The owner reads the sentences (the code is one click away) and chooses "Use these checks" or "Discard".
   - Approval freezes the file with its provenance, *model-proposed, owner-approved*. Replacing approved checks needs a reason and keeps the old file.
   - Proposals are validated: unittest only, no network modules, and every test must carry a sentence.
+  - The first live proposals (journey Phase B) checked more, or less, than their sentences said. So each proposal now lists in plain words what it **assumes** that the milestone does not state, such as an exact output layout. The request asks the model not to invent formats.
+  - Each proposal also gets a **trial run** on a throwaway copy of today's project, but only when checking is on. Checks that already pass on an unbuilt milestone, or that cannot run at all, carry a warning before the owner decides.
 - **Windows-safe saves (B1).** Saving a draft could fail with "Access is denied" when the Studio page read the file at that moment. `runesmith/atomic.py` retries briefly on a Windows sharing violation.
 - **Keys in a local settings file.** An instrument whose key is read from a file at call time (`*_env_file` + `*_key`) now counts as ready, so an owner can keep keys in their own `.env` file rather than pasting them into the UI.
 - **Friction fixes:**

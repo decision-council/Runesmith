@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from runesmith.app.acceptance_proposals import acceptance_file, approve, discard, propose, status, validate
+from runesmith.app.acceptance_proposals import acceptance_file, approve, discard, dry_run, propose, status, validate
 from runesmith.app.worker import EventBus, Worker
 from runesmith.app.workspace import Workspace, WorkspaceError
 
@@ -28,7 +28,7 @@ class AddBook(unittest.TestCase):
 '''
 ANSWER = {"checks": [{"test": "test_a_book_can_be_added", "says": "You can add a book with its title, author and date."},
                      {"test": "test_an_impossible_date_is_refused", "says": "A date that does not exist is refused and nothing is saved."}],
-          "code": GOOD}
+          "assumes": ["The command is run as python -m readinglog with --file for the saved data."], "code": GOOD}
 
 
 def workspace(tmp_path, answers=()):
@@ -51,6 +51,8 @@ def test_validation_refuses_what_an_owner_should_not_have_to_catch():
         (dict(ANSWER, code=GOOD + "\n    def test_unexplained(self):\n        pass\n"), "plain sentence"),
         (dict(ANSWER, checks=ANSWER["checks"] + [{"test": "test_missing", "says": "x"}]), "not a test"),
         (dict(ANSWER, code="import unittest\nclass A(unittest.TestCase):\n    def test_a(self)\n        pass\n"), "not valid Python"),
+        (dict(ANSWER, assumes=["x" * 301]), "assumptions"),
+        (dict(ANSWER, assumes="the output format"), "assumptions"),
     ]:
         with pytest.raises(WorkspaceError, match=why):
             validate(broken)
@@ -105,3 +107,18 @@ def test_the_worker_accepts_the_job(tmp_path):
     ws = workspace(tmp_path)
     worker = Worker(ws, EventBus())
     assert worker.enqueue("propose_acceptance", milestone="m1")["kind"] == "propose_acceptance"
+
+
+def test_the_owner_sees_what_the_checks_assume_and_how_they_fare_on_todays_project(tmp_path):
+    ws = workspace(tmp_path, [ANSWER])
+    assert dry_run(ws, GOOD)["verdict"] == "not_run"                    # executing project code stays the owner's switch
+    ws.update_settings({"build_steps": True})
+    proposal = propose(ws, ws.router(), "m1")
+    assert proposal["assumes"] == ANSWER["assumes"]
+    assert proposal["dry_run"]["verdict"] == "fails_now"                # nothing is built yet, so a check fails
+    assert status(ws)["m1"]["proposal"]["dry_run"]["verdict"] == "fails_now"
+    (tmp_path / "readinglog.py").write_text(                            # a project that already does what is checked
+        "import sys\nsys.exit(2 if '2026-02-30' in sys.argv else 0)\n", encoding="utf-8")
+    assert dry_run(ws, GOOD)["verdict"] == "passes_now"
+    assert dry_run(ws, GOOD.replace("def test_", "def helper_"))["verdict"] == "broken"   # no test ran
+    assert not list((ws.home / "acceptance-proposals" / "dry-runs").iterdir())           # trial copies are removed

@@ -15,18 +15,23 @@ import ast
 import hashlib
 import json
 import re
+import tempfile
 import uuid
+from pathlib import Path
 from typing import Any
 
 from runesmith import atomic
 from runesmith.app.acceptance_contracts import expectations
+from runesmith.app.building import _run_checks
 from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, source_context
+from runesmith.app.snapshots import SnapshotUnsupported, collect_snapshot
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 
 SCHEMA = {'type': 'object', 'properties': {
     'checks': {'type': 'array', 'minItems': 1, 'maxItems': 8, 'items': {'type': 'object', 'properties': {
         'test': {'type': 'string'}, 'says': {'type': 'string'}}, 'required': ['test', 'says'], 'additionalProperties': False}},
-    'code': {'type': 'string'}}, 'required': ['checks', 'code'], 'additionalProperties': False}
+    'assumes': {'type': 'array', 'maxItems': 8, 'items': {'type': 'string'}},
+    'code': {'type': 'string'}}, 'required': ['checks', 'assumes', 'code'], 'additionalProperties': False}
 
 SYSTEM = ("You are Runesmith's acceptance-check instrument. You write the owner's checks for one milestone; "
           "you do not implement it. Return JSON only.")
@@ -36,8 +41,12 @@ TASK = ("Write the owner's acceptance checks for ONE milestone of this project. 
         "checks run) or the public functions the milestone names. Do not rely on private names the milestone does not "
         "mention, and do not require more than it says. Use Python unittest only (no pytest), temporary directories for "
         "any files, no network and deterministic data. Keep it small: 2 to 8 tests, each checking one thing a person "
-        "would recognise. For each test give its method name and one plain sentence a non-programmer understands. The "
-        "feature may not exist yet: do not implement it. Return JSON with \"checks\" and \"code\" (the complete file).")
+        "would recognise. For each test give its method name and one plain sentence a non-programmer understands, and make "
+        "the sentence say exactly what the code checks, no more. Do not require an exact output layout, wording or file "
+        "name unless the milestone states it: check the saved data, the exit status, or that the key facts (numbers, "
+        "titles) appear. In \"assumes\", list in plain words every exact format, name or behaviour your checks rely on "
+        "that the milestone text does not state (an empty list means none). The feature may not exist yet: do not "
+        "implement it. Return JSON with \"checks\", \"assumes\" and \"code\" (the complete file).")
 NETWORK_MODULES = {'socket', 'ssl', 'urllib', 'http', 'requests', 'ftplib', 'smtplib', 'telnetlib', 'asyncio'}
 MAX_CODE = 20000
 MILESTONE_ID = re.compile(r'[A-Za-z0-9_-]+')
@@ -108,7 +117,11 @@ def validate(data: Any) -> dict[str, Any]:
         raise WorkspaceError('Propose 1-8 checks.')
     if missing := sorted(tests - {c['test'] for c in checks}):
         raise WorkspaceError('Every test needs a plain sentence; missing: ' + ', '.join(missing))
-    return {'checks': checks, 'code': code, 'code_sha256': hashlib.sha256(code.encode('utf-8')).hexdigest()}
+    assumes = data.get('assumes', [])
+    if not isinstance(assumes, list) or len(assumes) > 8 or any(not isinstance(a, str) or not a.strip() or len(a) > 300 for a in assumes):
+        raise WorkspaceError('List 0-8 assumptions, each 1-300 characters.')
+    return {'checks': checks, 'assumes': [a.strip() for a in assumes], 'code': code,
+            'code_sha256': hashlib.sha256(code.encode('utf-8')).hexdigest()}
 
 
 def packet(ws, milestone_id) -> dict[str, Any]:
@@ -140,7 +153,8 @@ def status(ws) -> dict[str, Any]:
         waiting = next((p for p in reversed(record['proposals']) if p.get('state') == 'proposed'), None)
         if approved or waiting:
             out[mid] = {'approved': approved,
-                        'proposal': {k: waiting.get(k) for k in ('id', 'checks', 'code', 'drafted_by', 'utc')} if waiting else None}
+                        'proposal': {k: waiting.get(k) for k in ('id', 'checks', 'assumes', 'dry_run', 'code', 'drafted_by', 'utc')}
+                        if waiting else None}
     return out
 
 
@@ -170,6 +184,7 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
         raise PlannerUnavailable(f"the model's answer was not usable: {(out.error or 'no JSON')[:200]}")
     checkpoint()
     clean = validate(out.data)
+    clean['dry_run'] = dry_run(ws, clean['code'])
     proposal = dict(clean, id=key, state='proposed', utc=_now(), milestone=milestone_id, input_sha256=digest,
                     drafted_by=out.receipt.get('answered_by') or out.receipt.get('model'))
     record = _read_json(path, {'milestone': milestone_id, 'proposals': []})
@@ -178,6 +193,37 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
     ws.ledger.append('acceptance.proposed', {'milestone': milestone_id, 'proposal': key, 'checks': len(clean['checks']),
                                              'code_sha256': clean['code_sha256'], 'proposed_by': proposal['drafted_by']})
     return proposal
+
+
+def dry_run(ws, code: str) -> dict[str, Any]:
+    """Run proposed checks once against a throwaway copy of the project as it is today.
+
+    Checks that already pass on an unfinished milestone may not test what it adds; checks that cannot run at all are
+    broken. Runs only when the owner allows checks to execute project code (the same switch as build checks).
+    """
+    settings = ws.settings()
+    if settings.get('autonomy') == 'observe' or not settings.get('build_steps'):
+        return {'verdict': 'not_run', 'why': 'Checking drafts is off, so the checks were not tried.'}
+    try:
+        snapshot = collect_snapshot(ws)
+    except SnapshotUnsupported as error:
+        return {'verdict': 'not_run', 'why': f'The project could not be copied for a trial: {error}'}
+    folder = _folder(ws) / 'dry-runs'
+    folder.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='dry-', dir=folder, ignore_cleanup_errors=True) as directory:
+        stage = Path(directory) / 'project'
+        for rel, data in snapshot['files'].items():
+            target = stage / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        stage.mkdir(parents=True, exist_ok=True)
+        proposed = Path(directory) / 'proposed_acceptance.py'
+        proposed.write_text(code, encoding='utf-8')
+        result = _run_checks(stage, json.dumps([str(proposed)]), Path(directory) / 'dry-run.txt', timeout_s=120)
+    ran = result.get('ran') or 0
+    verdict = 'passes_now' if result['ok'] else 'fails_now' if result['status'] == 'failed' and ran else 'broken'
+    return {'verdict': verdict, 'ran': ran, 'failures': result.get('failures', 0), 'errors': result.get('errors', 0),
+            'snapshot_digest': snapshot['digest'], 'utc': _now()}
 
 
 def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str = '') -> dict[str, Any]:
