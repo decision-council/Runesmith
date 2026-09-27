@@ -5,6 +5,16 @@ Written 2026-09-27, after out-of-box journey R1 (`D:/oob/JOURNEY_LOG.md`). The o
 - the switches and modes exercised in any on/off configuration;
 - the results turned into an easy, IKEA-style Out-of-Box Manual, including where to get free inference and how to run it.
 
+## Status
+
+| Part | State |
+|---|---|
+| Layer 0: every switch combination | **Done (2026-09-27).** `tests/test_switch_matrix.py`: 16,640 combinations × 21 job kinds, plus the rules that need real work; part of the suite. It found that observe mode could still ask a model (fixed: `ObserveRouter`). |
+| Layer 1: every triple, real scenarios | **Done, first run (2026-09-28).** `tests/switch_sweep/sweep.py`: 45 rows, 45 hold every rule; see [journeys/LAYER1_SWEEP.md](journeys/LAYER1_SWEEP.md). Rerun before each release. |
+| Local servers and gateways (section 7) | **Docs-conformant (LS1).** Stand-ins in `tests/local_standins.py`; research in `journeys/local_servers_research_2026-09-27.json`. |
+| Prerequisites | R1 Phase B passed; G2 (Try it) and F4 (plain wording) done; removing the gate and J0 remain. |
+| Live journeys J1–J11 | Next. |
+
 ## 1. Where we start
 
 A read-only inventory of the product at `1c172ff` found **460 user-facing options, modes, paths and situations**. Five readers (models, setup, building, operating, evidence) did the inventory, and a completeness critic added 20 situations the readers missed. Every row, its current evidence and its planned coverage are in [journeys/COVERAGE.md](journeys/COVERAGE.md); the full rows are in `journeys/option_inventory_2026-09-27.json`.

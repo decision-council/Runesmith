@@ -24,6 +24,20 @@
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **Local model servers and free gateways work as their docs say (LS1).** The research (official docs, with sources and dates) is in `docs/journeys/local_servers_research_2026-09-27.json`. It is tested against faithful local stand-ins (`tests/local_standins.py`), because these servers cannot run on the development machine; the evidence level is recorded as "docs-conformant".
+  - **Ollama now uses its native chat API**, so Runesmith can ask for a context window that fits each request. Its OpenAI-style address cannot raise the small default (4,096 tokens on modest machines), and an overflowing prompt silently loses its beginning, where the instructions are. Existing Ollama instruments are upgraded automatically.
+    - Runesmith checks from Ollama's own count that the whole request was read.
+    - "Model not found" tells the owner the exact `ollama pull` command.
+    - An Ollama that is not running is named as such.
+  - **Refusals no retry can change fail at once, in plain words**, instead of minutes of retries: a context overflow (in the wordings of llama.cpp, LM Studio, vLLM and LocalAI), a request too large for a free tier, an unknown model or address. A server that rejects Runesmith's JSON mode gets one retry without it.
+  - **Presets:**
+    - LM Studio uses the JSON-schema mode it accepts; it refuses the old default.
+    - Groq requests are checked against its free 8,000-tokens-a-minute window before sending.
+    - A shut-down Groq model and a disputed Gemini free model are no longer suggested.
+    - LM Studio and llama.cpp setup hints say to load models with a large enough context.
+- **Every triple of switch values, as a real scenario (Layer 1).** `tests/switch_sweep/sweep.py` runs a 45-row covering array (every triple of values of 10 factors) through real Studio processes: build, flip one switch through the API, build, restart, build.
+  - The rules are checked from the receipts, phase by phase, with a liveness check so the harness cannot pass by seeing nothing.
+  - First run: 45 of 45 rows hold every rule (`docs/journeys/LAYER1_SWEEP.md`). It runs unattended before each release, not in the quick suite.
 - **Every switch combination is tested (Layer 0 of the coverage plan).** `tests/test_switch_matrix.py` asks every job kind whether it may start, under all 16,640 combinations of the owner's switches and the work modes, and compares the answer with an independent statement of the rules. That is 349,440 decisions in seconds, all matching.
   - Exhaustive tests also cover the rules that need real work: nothing is scheduled unless scheduled work is on; no project code runs with checks off or in observe mode; files change only with checks, automatic apply *and* passing owner checks; notes reach a model only when allowed.
   - **Found and fixed:** in observe mode ("read and report only") a model could still be asked, for example when proposing acceptance checks, because observe was enforced separately in some twenty places. `Workspace.router()`, which every Studio model call passes through, now refuses all calls in observe mode, in plain words.
