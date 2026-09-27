@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import pytest
 
-from runesmith.app.building import (build_step, status, verify_draft, build_escalation_status,
+from runesmith.app.building import (build_step, recheck_draft, status, verify_draft, build_escalation_status,
                                     escalate_build, review_current_files, current_file_reviews)
 from runesmith.app.planner import draft_files
 from runesmith.app.planner import PlannerUnavailable
@@ -161,6 +161,24 @@ def test_self_tests_are_not_owner_acceptance(tmp_path):
     assert ws.plan()['milestones'][0]['status']=='open'
 
 
+def test_an_unchanged_waiting_draft_is_not_checked_again_until_its_inputs_change(tmp_path,monkeypatch):
+    # F14: scheduled rounds used to recheck the same waiting draft every interval, forever.
+    import runesmith.app.building as building
+    ws=setup(tmp_path); enable(ws); router=ws.router()
+    first=build_step(ws,router)
+    assert first['verification']['status']=='self_checks_passed'
+    def forbidden(*args,**kwargs):
+        raise AssertionError('An unchanged draft must not be checked again')
+    monkeypatch.setattr(building,'verify_draft',forbidden)
+    again=build_step(ws,router)
+    assert again['unchanged'] and again['draft']==first['draft'] and 'waiting for you' in again['summary']
+    monkeypatch.undo()
+    path=ws.home/'acceptance'/'m1.py'; path.parent.mkdir(parents=True)
+    path.write_text('import unittest\nfrom app import answer\nclass Acceptance(unittest.TestCase):\n    def test_contract(self): self.assertEqual(answer(),42)\n')
+    after=build_step(ws,router)                       # the owner's new checks mean checking again, then applying
+    assert after['draft']==first['draft'] and after.get('advanced') is True
+
+
 def test_scoped_build_applies_advances_and_undo_reopens(tmp_path):
     ws=setup(tmp_path,acceptance=True); enable(ws)
     result=build_step(ws,ws.router())
@@ -299,8 +317,9 @@ def test_each_verification_keeps_its_own_receipt(tmp_path):
     first=build_step(ws,ws.router())
     first_path=ws.home/first['verification']['evidence_dir']/'VERIFICATION.json'
     original=first_path.read_bytes()
-    # The pending draft is reused; no second model response is needed.
-    second=build_step(ws,ws.router())
+    # An explicit recheck reuses the saved draft; no second model response is needed.
+    # (A scheduled build of the unchanged draft keeps its verdict instead: F14.)
+    second=recheck_draft(ws,first['draft'])
     second_path=ws.home/second['verification']['evidence_dir']/'VERIFICATION.json'
     assert first_path != second_path and second_path.is_file()
     assert first_path.read_bytes()==original

@@ -19,6 +19,10 @@
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **No endless rechecking (F14).** With scheduled work on, every round used to check the same waiting draft again, writing new evidence each time, although nothing had changed. That is hundreds of identical checks a day at a 5-minute interval.
+  - A waiting draft whose source, public expectations and owner acceptance are unchanged now keeps its last verdict.
+  - If it passed only its own checks, the round says it is waiting for the owner and needs acceptance checks.
+  - New or changed acceptance checks (for example, just approved) mean checking again, then applying if they pass. An explicit Recheck always checks.
 - **Windows-safe saves (B1).** Saving a draft could fail with "Access is denied" when the Studio page read the file at that moment. `runesmith/atomic.py` retries briefly on a Windows sharing violation.
 - **Keys in a local settings file.** An instrument whose key is read from a file at call time (`*_env_file` + `*_key`) now counts as ready, so an owner can keep keys in their own `.env` file rather than pasting them into the UI.
 - **Friction fixes:**

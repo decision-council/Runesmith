@@ -226,15 +226,8 @@ def verify_draft(ws, draft, *, check_timeout_s=None, project_timeout_s=None, own
         return value
     acceptance = ws.home / 'acceptance' / (milestone['id'] + '.py')
     acceptance_bytes = acceptance.read_bytes() if acceptance.is_file() else None
-    acceptance_bundle = {}
-    public_contracts = []
-    for item in ws.plan()['milestones']:
-        file = ws.home/'acceptance'/(item['id']+'.py')
-        if (item['id']==milestone['id'] or item.get('status')=='done') and file.is_file():
-            acceptance_bundle[file.name] = file.read_bytes()
-            public_contract = expectations(ws, item['id'])
-            if public_contract:
-                public_contracts.append(public_contract)
+    acceptance_bundle = _acceptance_files(ws, milestone['id'])
+    public_contracts = [c for c in (expectations(ws, name[:-len('.py')]) for name in acceptance_bundle) if c]
     with tempfile.TemporaryDirectory(prefix='stage-', dir=results) as directory:
         stage = Path(directory)
         for rel, content in candidate.items():
@@ -297,6 +290,40 @@ def verify_draft(ws, draft, *, check_timeout_s=None, project_timeout_s=None, own
                 'acceptance_sha256':hashlib.sha256(acceptance_bytes).hexdigest() if acceptance_bytes else None,
                 'acceptance_bundle':{name:hashlib.sha256(data).hexdigest() for name,data in acceptance_bundle.items()},
                 'scope':'local executable checks; not business-outcome evidence or OS confinement'})
+
+
+def _acceptance_files(ws, milestone_id):
+    """The owner acceptance a candidate is judged by: its milestone's file and those of done milestones, in plan order."""
+    files = {}
+    for item in ws.plan()['milestones']:
+        file = ws.home/'acceptance'/(item['id']+'.py')
+        if (item['id']==milestone_id or item.get('status')=='done') and file.is_file():
+            files[file.name] = file.read_bytes()
+    return files
+
+
+def _unchanged_verdict(ws, draft, milestone, contract, context, checkpoint):
+    """The last verdict of a waiting draft whose inputs have not changed since it was checked, or None (F14).
+
+    Rechecking identical inputs on every scheduled round only repeats the answer. A changed source, public
+    expectation or owner acceptance file (for example, checks the owner has just approved) means checking again.
+    """
+    verification = draft.get('verification') or {}
+    if (verification.get('status') not in ('self_checks_passed', 'acceptance_passed')
+            or verification.get('snapshot_digest') != context['snapshot_digest']
+            or verification.get('acceptance_bundle') != {name: hashlib.sha256(data).hexdigest()
+                                                         for name, data in _acceptance_files(ws, milestone['id']).items()}):
+        return None
+    checkpoint()
+    result = {'draft': draft['id'], 'milestone': milestone['id'], 'verification': verification, 'unchanged': True,
+              'summary': f"{draft['id']}: {verification['status']}, unchanged since its last check. Nothing applied."}
+    if verification['status'] == 'acceptance_passed':
+        with ws._lock:
+            _apply_if_current(ws, draft, milestone, contract, status(ws), verification, result)
+    else:
+        result['summary'] = (f"{draft['id']} passed its own checks and is waiting for you. Applying it automatically "
+                             f"needs acceptance checks for {milestone['id']}: propose them in Goals & plan.")
+    return result
 
 
 def _within_scope(path, paths):
@@ -363,6 +390,8 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False):
         try:_ordinary_revision_lineage(ws,previous,context['snapshot_digest'])
         except (WorkspaceError,ValueError,KeyError,TypeError,OSError) as error:
             return {'summary':str(error),'allowance_blocked':True,'milestone':milestone['id']}
+    if pending is not None and (unchanged := _unchanged_verdict(ws, pending, milestone, contract, context, checkpoint)):
+        return unchanged
     if not pending and not allowance['remaining']:
         return {'summary':'Ordinary author allowance exhausted on this source and milestone. Review retained evidence; changing feedback does not grant more calls.',
                 'replan_needed':True,'milestone':milestone['id']}
