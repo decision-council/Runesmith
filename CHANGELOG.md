@@ -10,6 +10,12 @@
   - Proposals are validated: unittest only, no network modules, and every test must carry a sentence.
   - The first live proposals (journey Phase B) checked more, or less, than their sentences said. So each proposal now lists in plain words what it **assumes** that the milestone does not state, such as an exact output layout. The request asks the model not to invent formats.
   - Each proposal also gets a **trial run** on a throwaway copy of today's project, but only when checking is on. Checks that already pass on an unbuilt milestone, or that cannot run at all, carry a warning before the owner decides.
+  - When the trial finds that checks already pass or cannot run, the model is asked **once** to revise them, and told what the trial found. If the revision fails, the first proposal stands with its warning.
+  - Any exact word, layout or value a check requires must appear in its sentence. When a milestone promises behaviour under a failure (an interruption, damaged input), the check must cause that failure itself.
+  - **On approval, the sentences become the milestone's public expectations.** Whoever builds the milestone now knows what "done" means, while the code stays private. A failing check is reported to the builder by its sentence, never by its assertion. Owner-written expectations are kept.
+- **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
+  - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
+  - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
 - **Windows-safe saves (B1).** Saving a draft could fail with "Access is denied" when the Studio page read the file at that moment. `runesmith/atomic.py` retries briefly on a Windows sharing violation.
 - **Keys in a local settings file.** An instrument whose key is read from a file at call time (`*_env_file` + `*_key`) now counts as ready, so an owner can keep keys in their own `.env` file rather than pasting them into the UI.
 - **Friction fixes:**
@@ -19,7 +25,8 @@
   - the owner is asked whether a checked milestone is done;
   - "applied so far" counts drafts;
   - milestone cards no longer squeeze to one word per line;
-  - the introduction ends on the Overview.
+  - the introduction ends on the Overview;
+  - sidebar links without a keyboard shortcut no longer end in "(undefined)" (F13).
 
 **First-run safety.**
 - A new home starts with scheduled work, running the project's tests while mapping, and self-improvement all **off**. Finishing the introduction switches none of them on.

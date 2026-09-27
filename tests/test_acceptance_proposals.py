@@ -122,3 +122,56 @@ def test_the_owner_sees_what_the_checks_assume_and_how_they_fare_on_todays_proje
     assert dry_run(ws, GOOD)["verdict"] == "passes_now"
     assert dry_run(ws, GOOD.replace("def test_", "def helper_"))["verdict"] == "broken"   # no test ran
     assert not list((ws.home / "acceptance-proposals" / "dry-runs").iterdir())           # trial copies are removed
+
+
+REVISED = {"checks": [{"test": "test_months_are_counted", "says": "The months command lists 2026-01 for a book finished in January 2026."}],
+           "assumes": [], "code": '''import os, subprocess, sys, tempfile, unittest
+
+class Months(unittest.TestCase):
+    def test_months_are_counted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = os.path.join(folder, "log.json")
+            subprocess.run([sys.executable, "-m", "readinglog", "--file", data, "add", "--title", "T", "--author", "A",
+                            "--finished", "2026-01-05"], cwd=os.getcwd())
+            result = subprocess.run([sys.executable, "-m", "readinglog", "--file", data, "months"], cwd=os.getcwd(),
+                                    capture_output=True, text=True)
+            self.assertIn("2026-01", result.stdout)
+'''}
+
+
+def built_already(tmp_path, answers):
+    ws = workspace(tmp_path, answers)
+    ws.update_settings({"build_steps": True})
+    (tmp_path / "readinglog.py").write_text("import sys\nsys.exit(2 if '2026-02-30' in sys.argv else 0)\n", encoding="utf-8")
+    return ws
+
+
+def test_checks_that_already_pass_are_revised_once_with_what_the_trial_found(tmp_path):
+    ws = built_already(tmp_path, [ANSWER, REVISED])
+    proposal = propose(ws, ws.router(), "m1")
+    assert [c["test"] for c in proposal["checks"]] == ["test_months_are_counted"]
+    assert proposal["dry_run"]["verdict"] == "fails_now"
+    assert proposal["revision"]["after"] == "passes_now" and len(proposal["revision"]["first_checks"]) == 2
+
+
+def test_a_failed_revision_keeps_the_first_proposal_and_its_warning(tmp_path):
+    ws = built_already(tmp_path, [ANSWER, {"checks": [], "code": "not python ("}])
+    proposal = propose(ws, ws.router(), "m1")
+    assert proposal["dry_run"]["verdict"] == "passes_now" and proposal["checks"] == ANSWER["checks"]
+    assert "not valid Python" in proposal["revision"]["error"]
+
+
+def test_approval_publishes_the_sentences_and_maps_failures_to_them(tmp_path):
+    from runesmith.app.acceptance_contracts import expectations, publish_expectations
+    ws = workspace(tmp_path, [ANSWER, REVISED])
+    publish_expectations(ws, "m1", [{"id": "quick", "description": "Adding a book takes under a second."}], "owner")
+    router = ws.router()
+    approve(ws, "m1", propose(ws, router, "m1")["id"])
+    ids = [c["id"] for c in expectations(ws, "m1")["criteria"]]
+    assert ids == ["quick", "check.test_a_book_can_be_added", "check.test_an_impossible_date_is_refused", "assumes.1"]
+    namespace = {"__name__": "owner_acceptance_0"}
+    exec(acceptance_file(ws, "m1").read_text(encoding="utf-8"), namespace)
+    assert namespace["AddBook"].PUBLIC_CRITERIA["test_a_book_can_be_added"] == ["check.test_a_book_can_be_added"]
+    ws.set_brief(text="# Reading log\n\nMonths too.\n")                  # a changed packet asks again
+    approve(ws, "m1", propose(ws, router, "m1")["id"], replace=True, reason="months replace the add checks")
+    assert [c["id"] for c in expectations(ws, "m1")["criteria"]] == ["quick", "check.test_months_are_counted"]

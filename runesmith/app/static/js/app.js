@@ -80,7 +80,7 @@ function renderShell(root) {
   const nav = h('nav.nav');
   for (const item of NAV) {
     if (item.section) { nav.append(h('div.section', item.section)); continue; }
-    nav.append(h('a', { href: `#/${item.id}`, dataset: { view: item.id }, title: `${item.label}  (${item.key})` },
+    nav.append(h('a', { href: `#/${item.id}`, dataset: { view: item.id }, title: item.key ? `${item.label}  (${item.key})` : item.label },
       icon(item.icon), h('span.label', item.label), item.count ? h('span.count.hidden', { dataset: { count: item.count } }) : null));
   }
   const ws = h('button.ws-switch', { type: 'button', title: 'Switch folder', onclick: () => import('./views/settings.js').then((m) => m.openFolderPicker()) },

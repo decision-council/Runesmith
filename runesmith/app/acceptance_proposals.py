@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from runesmith import atomic
-from runesmith.app.acceptance_contracts import expectations
+from runesmith.app.acceptance_contracts import expectations, publish_expectations
 from runesmith.app.building import _run_checks
 from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, source_context
 from runesmith.app.snapshots import SnapshotUnsupported, collect_snapshot
@@ -42,14 +42,25 @@ TASK = ("Write the owner's acceptance checks for ONE milestone of this project. 
         "mention, and do not require more than it says. Use Python unittest only (no pytest), temporary directories for "
         "any files, no network and deterministic data. Keep it small: 2 to 8 tests, each checking one thing a person "
         "would recognise. For each test give its method name and one plain sentence a non-programmer understands, and make "
-        "the sentence say exactly what the code checks, no more. Do not require an exact output layout, wording or file "
-        "name unless the milestone states it: check the saved data, the exit status, or that the key facts (numbers, "
-        "titles) appear. In \"assumes\", list in plain words every exact format, name or behaviour your checks rely on "
-        "that the milestone text does not state (an empty list means none). The feature may not exist yet: do not "
-        "implement it. Return JSON with \"checks\", \"assumes\" and \"code\" (the complete file).")
+        "the sentence say exactly what the code checks, no more: any exact word, layout, name or value a check requires "
+        "must appear in its sentence, because the sentences are all a builder is shown. Do not require an exact output "
+        "layout, wording or file name unless the milestone states it: check the saved data, the exit status, or that the "
+        "key facts (numbers, titles) appear. When the milestone promises behaviour under a failure (an interruption, "
+        "damaged or missing input), the test must cause that failure itself; a check that would also pass on a project "
+        "that ignores the failure checks nothing. When it asks for a clear message, check that the message is shown and "
+        "that the program did not stop with a Python traceback. In \"assumes\", list in plain words every exact "
+        "format, name or behaviour your checks rely on that the milestone text does not state (an empty list means "
+        "none). The feature may not exist yet: do not implement it. Return JSON with \"checks\", \"assumes\" and "
+        "\"code\" (the complete file).")
+REVISE = ("Your checks were tried once on a copy of the project as it is today. {finding} Revise them so that each check "
+          "fails on a project that lacks what this milestone adds and passes once it is built. If the project already "
+          "does everything the milestone says, return the same checks and say so in \"assumes\". Same JSON shape.")
+FINDINGS = {'passes_now': 'They all passed, although this milestone is not built yet, so they may not test what it adds.',
+            'broken': 'They could not run: no test ran, or they did not finish in time.'}
 NETWORK_MODULES = {'socket', 'ssl', 'urllib', 'http', 'requests', 'ftplib', 'smtplib', 'telnetlib', 'asyncio'}
 MAX_CODE = 20000
 MILESTONE_ID = re.compile(r'[A-Za-z0-9_-]+')
+CRITERION_ID = re.compile(r'[A-Za-z0-9_.-]{1,100}')
 
 
 def _folder(ws):
@@ -153,7 +164,8 @@ def status(ws) -> dict[str, Any]:
         waiting = next((p for p in reversed(record['proposals']) if p.get('state') == 'proposed'), None)
         if approved or waiting:
             out[mid] = {'approved': approved,
-                        'proposal': {k: waiting.get(k) for k in ('id', 'checks', 'assumes', 'dry_run', 'code', 'drafted_by', 'utc')}
+                        'proposal': {k: waiting.get(k) for k in ('id', 'checks', 'assumes', 'dry_run', 'revision', 'code',
+                                                                      'drafted_by', 'utc')}
                         if waiting else None}
     return out
 
@@ -185,14 +197,41 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
     checkpoint()
     clean = validate(out.data)
     clean['dry_run'] = dry_run(ws, clean['code'])
+    drafted_by = out.receipt.get('answered_by') or out.receipt.get('model')
+    if clean['dry_run']['verdict'] in FINDINGS:
+        clean, drafted_by = _revise_once(ws, router, data, clean, key, drafted_by, checkpoint)
     proposal = dict(clean, id=key, state='proposed', utc=_now(), milestone=milestone_id, input_sha256=digest,
-                    drafted_by=out.receipt.get('answered_by') or out.receipt.get('model'))
+                    drafted_by=drafted_by)
     record = _read_json(path, {'milestone': milestone_id, 'proposals': []})
     record['proposals'] = (record['proposals'] + [proposal])[-10:]
     _write_json(path, record)
     ws.ledger.append('acceptance.proposed', {'milestone': milestone_id, 'proposal': key, 'checks': len(clean['checks']),
                                              'code_sha256': clean['code_sha256'], 'proposed_by': proposal['drafted_by']})
     return proposal
+
+
+def _revise_once(ws, router, data, first, key, drafted_by, checkpoint):
+    """One more call, told what the trial found. The first proposal is kept (with its warning) if this fails."""
+    finding = first['dry_run']['verdict']
+    request = dict(data, revise=REVISE.format(finding=FINDINGS[finding]),
+                   your_first_proposal={k: first[k] for k in ('checks', 'assumes', 'code')})
+    checkpoint()
+    try:
+        out = router.call('plan', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False), system=SYSTEM,
+                          schema=SCHEMA, max_tokens=6000, key='acceptance-' + key + '-revise')
+    except Exception as error:
+        return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by
+    checkpoint()
+    try:
+        if not out.ok or not isinstance(out.data, dict) or out.data.get('skipped_by_owner'):
+            raise WorkspaceError((out.error or 'no usable answer')[:200])
+        revised = validate(out.data)
+    except WorkspaceError as error:
+        return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by
+    revised['dry_run'] = dry_run(ws, revised['code'])
+    revised['revision'] = {'after': finding, 'first_code_sha256': first['code_sha256'],
+                           'first_checks': first['checks']}
+    return revised, out.receipt.get('answered_by') or out.receipt.get('model') or drafted_by
 
 
 def dry_run(ws, code: str) -> dict[str, Any]:
@@ -226,6 +265,30 @@ def dry_run(ws, code: str) -> dict[str, Any]:
             'snapshot_digest': snapshot['digest'], 'utc': _now()}
 
 
+# Appended to an approved file: a failing check is reported to the builder by its sentence, never by its assertion.
+FOOTER = '''
+
+import unittest as _acceptance_unittest
+for _case in [v for v in list(globals().values()) if isinstance(v, type) and v.__module__ == __name__
+              and issubclass(v, _acceptance_unittest.TestCase)]:
+    _case.PUBLIC_CRITERIA = {_name: ["check." + _name] for _name in dir(_case) if _name.startswith("test")}
+'''
+
+
+def public_criteria(ws, milestone_id, proposal) -> list[dict[str, str]]:
+    """The milestone's public expectations after approval: the owner's own criteria, plus these sentences."""
+    kept = [c for c in (expectations(ws, milestone_id) or {}).get('criteria', [])
+            if not c['id'].startswith(('check.', 'assumes.'))]
+    ours = [{'id': 'check.' + c['test'], 'description': c['says']} for c in proposal['checks']]
+    if proposal.get('assumes'):
+        ours.append({'id': 'assumes.1', 'description': ('Also assumed: ' + '; '.join(proposal['assumes']))[:1200]})
+    if any(not CRITERION_ID.fullmatch(c['id']) for c in ours):
+        raise WorkspaceError('A test name is too long to become a public expectation; ask for the checks again.')
+    if len(kept) + len(ours) > 20:
+        raise WorkspaceError('This milestone has too many public expectations to add these checks; remove some first.')
+    return kept + ours
+
+
 def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str = '') -> dict[str, Any]:
     _milestone(ws, milestone_id)
     path = _record_path(ws, milestone_id)
@@ -238,10 +301,11 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
         raise WorkspaceError('This milestone already has acceptance checks. Replacing them needs a reason.')
     if target.is_file() and not reason.strip():
         raise WorkspaceError('Say why the existing checks are replaced; the old file is kept.')
+    criteria = public_criteria(ws, milestone_id, proposal)
     header = (f"# Owner acceptance for milestone {milestone_id}. Proposed by {proposal.get('drafted_by') or 'a model'} "
               f"({proposal['utc']}), approved by the owner ({_now()}).\n"
-              "# Builds of this milestone are judged by this file; build authors never see it.\n")
-    body = (header + proposal['code'].rstrip('\n') + '\n').encode('utf-8')
+              "# Builds of this milestone are judged by this file; build authors never see it, only its sentences.\n")
+    body = (header + proposal['code'].rstrip('\n') + '\n' + FOOTER).encode('utf-8')
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_file():
         keep = target.with_name(f"{target.stem}.replaced-{uuid.uuid4().hex[:6]}.py.txt")
@@ -250,7 +314,10 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
     temporary.write_bytes(body)
     atomic.replace(temporary, target)
     file_sha = hashlib.sha256(body).hexdigest()
-    proposal.update(state='approved', approved_utc=_now(), file_sha256=file_sha, replace_reason=reason.strip() or None)
+    published = publish_expectations(ws, milestone_id, criteria, 'The owner approved these acceptance checks in plain words.',
+                                     by='owner (approved acceptance checks)')
+    proposal.update(state='approved', approved_utc=_now(), file_sha256=file_sha, replace_reason=reason.strip() or None,
+                    expectations_version=published['version'])
     for other in record['proposals']:
         if other is not proposal and other.get('state') == 'proposed':
             other.update(state='superseded')
