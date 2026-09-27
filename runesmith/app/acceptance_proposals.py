@@ -60,6 +60,9 @@ FINDINGS = {'passes_now': 'They all passed, although this milestone is not built
             'broken': 'They could not run: no test ran, or they did not finish in time.'}
 NETWORK_MODULES = {'socket', 'ssl', 'urllib', 'http', 'requests', 'ftplib', 'smtplib', 'telnetlib', 'asyncio'}
 MAX_CODE = 20000
+# Room for the answer: a checks file is a few thousand characters. Keeping prompt + answer small lets the request fit
+# free per-minute windows (Groq's free gpt-oss-120b allows 8,000 tokens a minute; 6,000 here made it impossible).
+ANSWER_TOKENS = 3000
 # Assertion methods and how many leading arguments state the requirement (the rest are messages).
 ASSERT_ARGS = {'assertTrue': 1, 'assertFalse': 1, 'assertIn': 2, 'assertNotIn': 2, 'assertEqual': 2, 'assertNotEqual': 2,
                'assertRegex': 2, 'assertNotRegex': 2, 'assertCountEqual': 2, 'assertListEqual': 2,
@@ -238,7 +241,7 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
     checkpoint()
     key = 'a' + uuid.uuid4().hex[:12]
     try:
-        out = router.call('acceptance', prompt=text, system=SYSTEM, schema=SCHEMA, max_tokens=6000, key='acceptance-' + key)
+        out = router.call('acceptance', prompt=text, system=SYSTEM, schema=SCHEMA, max_tokens=ANSWER_TOKENS, key='acceptance-' + key)
     except KeyError as error:
         raise PlannerUnavailable('no model is set up for planning or checking: add one under Thinking power') from error
     except Exception as error:
@@ -282,7 +285,7 @@ def _revise_once(ws, router, data, first, key, drafted_by, checkpoint):
     checkpoint()
     try:
         out = router.call('acceptance', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False), system=SYSTEM,
-                          schema=SCHEMA, max_tokens=6000, key='acceptance-' + key + '-revise')
+                          schema=SCHEMA, max_tokens=ANSWER_TOKENS, key='acceptance-' + key + '-revise')
     except Exception as error:
         return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by
     checkpoint()

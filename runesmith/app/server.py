@@ -458,6 +458,25 @@ def api_acceptance_expectations(s: Studio,q,body,milestone_id):
     return result
 
 
+@route('GET', r'/api/try')
+def api_try(s: Studio, q, body):
+    from runesmith.app.try_it import status
+    return status(_ws(s))
+
+
+@route('POST', r'/api/try/run')
+def api_try_run(s: Studio, q, body):
+    """The owner runs the project's own program (G2): practice copy unless ``real`` is exactly true."""
+    from runesmith.app.try_it import run
+    return run(_ws(s), str(body.get('command') or ''), real=body.get('real') is True)
+
+
+@route('POST', r'/api/try/reset')
+def api_try_reset(s: Studio, q, body):
+    from runesmith.app.try_it import reset_practice
+    return reset_practice(_ws(s))
+
+
 @route('POST', r'/api/plan/milestones/([A-Za-z0-9_-]+)/acceptance/approve')
 def api_acceptance_approve(s: Studio,q,body,milestone_id):
     from runesmith.app.acceptance_proposals import approve

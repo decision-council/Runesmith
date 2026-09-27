@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const dependencies=process.env.RUNESMITH_TEST_NODE_MODULES;
 const {chromium}=require(dependencies?path.join(dependencies,'playwright'):'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20').split(','));
+const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21').split(','));
 const artifacts=path.join(root,'training','.tmp','studio-use-loops-'+new Date().toISOString().replace(/[:.]/g,'-'));
 mkdirSync(artifacts,{recursive:true});
 const executable=[chromium.executablePath(),'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -50,7 +50,7 @@ const fixtureWork={counts:{},draft_counts:{waiting:1},proposals:[],drafts:[recov
   build_memory:{total:0,items:[]},pending_authors:[],build_corrections:[],
   build_escalation:{eligible:false,milestone:'m1',attempts:1,used:false,
     allowance:{known:true,can_draft:true,used:1,remaining:2,limit:3,blockers:[]}}};
-let ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={};
+let ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30};
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
 const planningBlocks=()=>[
@@ -266,6 +266,9 @@ await context.route('**/*',async route=>{
     const id=p.split('/')[3];manualRequests=manualRequests.filter(r=>r.id!==id);data={skipped:true};
   }
   else if(/^\/api\/plan\/milestones\/[^/]+\/acceptance\/(approve|discard)$/.test(p))data={ok:true,fixture_only:true};
+  else if(p==='/api/try')data=tryFixture;
+  else if(p==='/api/try/run')data={command:body.command,real:body.real===true,exit_code:0,timed_out:false,seconds:0.2,stdout:'2026-01-30  Dune by Frank Herbert',stderr:'',utc:'2026-09-27T22:00:00Z'};
+  else if(p==='/api/try/reset')data={created_utc:'2026-09-27T22:00:00Z',files:6};
   else if(p==='/api/inference/discover')data={found:[]};
   else if(p==='/api/worker/run'||/^\/api\/measurements\/[^/]+\/report$/.test(p)){
     if(body?.job==='revise'&&authorRevisionConflict){await route.fulfill({status:409,json:{error:'Revision quote unavailable or stale.'}});return;}
@@ -1844,6 +1847,50 @@ try{
     assert.deepEqual(replaced.body,{proposal:'p2',replace:true,reason:'A correct README failed the old example check.'});
     loops.push({id:'B20.04',case:'New checks next to approved ones replace them only with a reason; an empty reason sends nothing',result:'passed'});
     fixtureAcceptance={};fixturePlan=null;
+  }
+  if(selected.has('B21')){
+    // Try what was built (G2): documented commands, a practice copy by default, the real folder only after a confirm.
+    const start=requests.length;
+    tryFixture={suggestions:[{command:'python -m readinglog add --title "Dune" --author "Frank Herbert" --finished 2026-01-30',source:'README',placeholders:false},
+      {command:'python -m readinglog add --title TITLE --author AUTHOR --finished YYYY-MM-DD',source:'README',placeholders:true},
+      {command:'python -m readinglog list',source:'README',placeholders:false}],practice:null,timeout_s:30};
+    const base={workspace:{name:'Reading Log',path:'D:/fixture/reading log',empty:false},
+      settings:{onboarded:true,auto_work:false,kaizen:false,probe_tests:false,policy_chosen:true,interval_minutes:60,build_steps:true,build_apply:false},
+      ready:{any:true},worker:{paused:false,current:null,recovery:null},manual_waiting:0,
+      proposals:{waiting:0,applied:0},drafts:{waiting:0,applied:3},objects:[],plan:{milestones:6},
+      goals:[],brief:'Reading log',round_utc:null,mapped_utc:null,repairs:{accepted:0,judged:0},generations:1};
+    await page.setViewportSize({width:1440,height:1100});
+    await page.evaluate(async state=>{window.homeState=state;window.navigation=null;await window.mount('home');},base);
+    const card=page.getByRole('region',{name:'Try what was built',exact:true});
+    await card.waitFor();
+    const input=card.getByLabel('Command to try',{exact:true});
+    assert.equal(await input.inputValue(),tryFixture.suggestions[0].command);
+    assert((await card.innerText()).includes('fill in the capitals'));
+    await card.getByRole('button',{name:/python -m readinglog list/}).click();
+    assert.equal(await input.inputValue(),'python -m readinglog list');
+    await card.getByRole('button',{name:'Run',exact:true}).click();
+    await card.getByText('Finished normally',{exact:false}).waitFor();
+    assert((await card.innerText()).includes('2026-01-30  Dune by Frank Herbert'));
+    assert((await card.innerText()).includes('on the practice copy'));
+    const runs=()=>requests.slice(start).filter(r=>r.path==='/api/try/run');
+    assert.deepEqual(runs().at(-1).body,{command:'python -m readinglog list',real:false});
+    loops.push({id:'B21.01',case:'Try it suggests documented commands, marks placeholders, runs on the practice copy and shows the output',result:'passed'});
+    await card.getByLabel('Use my real folder (changes are kept)',{exact:true}).check();
+    await card.getByRole('button',{name:'Run',exact:true}).click();
+    assert((await page.getByRole('dialog').innerText()).includes('what it changes is kept'));
+    await page.getByRole('dialog').getByRole('button',{name:'Cancel',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('[role=dialog]'));
+    assert.equal(runs().length,1);
+    await card.getByRole('button',{name:'Run',exact:true}).click();
+    await page.getByRole('dialog').getByRole('button',{name:'Run for real',exact:true}).click();
+    await card.getByText('in your real folder',{exact:false}).waitFor();
+    assert.deepEqual(runs().at(-1).body,{command:'python -m readinglog list',real:true});
+    loops.push({id:'B21.02',case:'The real folder is used only after a plain confirm; Cancel runs nothing',result:'passed'});
+    await card.getByRole('button',{name:'Start the practice copy again',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('button.busy'));
+    assert(requests.slice(start).some(r=>r.path==='/api/try/reset'&&r.method==='POST'));
+    loops.push({id:'B21.03',case:'The practice copy can be started again from the real folder',result:'passed'});
+    tryFixture={suggestions:[],practice:null,timeout_s:30};
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));

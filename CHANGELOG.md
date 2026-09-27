@@ -24,6 +24,13 @@
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **Try what was built (G2).** The Overview now offers "Try what was built": the program's own commands, taken from its README and milestones. The owner picks or edits one and runs it, and sees its output and whether it finished normally.
+  - It runs on a practice copy of the folder that lasts between runs, until the owner starts it again. The real folder is used only after a plain confirmation.
+  - Only the project's own Python program runs: no shell and no other programs. Input is closed, output is capped, and each run has a time limit and a ledger entry. Browser loop B21 covers the card.
+- **Plain words on milestone cards (F4).**
+  - "Public acceptance expectations" is now "What builders are told", with the sentences only, no internal IDs. When approved checks already show their sentences, it folds into a "for experts" section.
+  - The automatic-apply confirmation and the build description say what happens in everyday words ("Allow automatic apply").
+- **Smaller requests for acceptance checks.** They leave room for a 3,000-token answer instead of 6,000, so they fit free per-minute windows such as Groq's 8,000 tokens a minute.
 - **Honest receipts and a clear pause (F16–F18).**
   - Builds the schedule chains after an applied milestone are now recorded as started by the schedule, not the owner.
   - The top-bar Pause says what it does: it holds *all* work, scheduled rounds and the jobs you start. While paused, the status shows how many jobs are waiting ("Paused · 1 waiting until you resume"), so a job requested during a pause no longer waits silently.

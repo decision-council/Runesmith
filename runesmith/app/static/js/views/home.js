@@ -1,6 +1,6 @@
 // Overview: where things stand, what needs you, and what comes next.
 import { h, icon, get, post, bus, toast, commentable, ago, plural, KIND, worstBand, BAND_COLOR, BAND_LABEL, humanize,
-  withBusy, clock } from '../core.js';
+  withBusy, clock, confirmDialog } from '../core.js';
 import { LOGO } from '../icons.js';
 
 function greeting() {
@@ -192,6 +192,10 @@ export default async function render(root, { app, navigate, refreshState }) {
     return item;
   })));
 
+  // ---- try what was built (G2): the owner runs the project's own program, on a practice copy unless they choose
+  const tryCard = h('section.card.mt-24', { 'aria-label': 'Try what was built', hidden: true });
+  get('/api/try').then((t) => { if (!closed && t.suggestions?.length) drawTry(tryCard, t); }).catch(() => {});
+
   // ---- live
   const live = h('div.card', h('div.card-head', h('h3', icon('activity'), 'Live'), h('div.actions', h('button.btn.sm', { onclick: () => navigate('activity') }, 'Full log', icon('right')))));
   const consoleBox = h('div.console');
@@ -216,9 +220,41 @@ export default async function render(root, { app, navigate, refreshState }) {
   caps.append(h('p.tiny.faint.mt-8', 'Bands: bad · minimal · optimal. "Unknown" means there is no evidence yet, not that things are fine.'));
 
   root.append(hero, policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
-    h('div.grid.two.mt-24', objects, next), h('div.grid.two.mt-24', live, caps));
+    h('div.grid.two.mt-24', objects, next), tryCard, h('div.grid.two.mt-24', live, caps));
   function kpisWrap(k) { k.classList.remove('four'); k.classList.add('two'); return k; }
   return () => {closed=true;healthSerial++;offs.forEach((off) => off());};
+}
+
+function drawTry(card, t) {
+  let realConfirmed = false;
+  const usable = t.suggestions.find((x) => !x.placeholders) || t.suggestions[0];
+  const command = h('input.input.mono', { value: usable.command, 'aria-label': 'Command to try', spellcheck: 'false' });
+  const real = h('input', { type: 'checkbox', 'aria-label': 'Use my real folder (changes are kept)' });
+  const output = h('pre.code.mt-8', { hidden: true, 'aria-live': 'polite' });
+  const verdict = h('div.small.mt-8', { hidden: true });
+  const chips = h('div.pillbox.mt-8', t.suggestions.map((x) => h('button.chip', { type: 'button', title: `From ${x.source}`,
+    onclick: () => { command.value = x.command; command.focus(); } }, x.command, x.placeholders ? h('span.faint', ' · fill in the capitals') : null)));
+  const runBtn = h('button.btn.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
+    if (real.checked && !realConfirmed) {
+      if (!(await confirmDialog({ title: 'Run it in your real folder?', confirm: 'Run for real', icon: 'play',
+        text: 'Your program runs in your own folder, so what it changes is kept, for example a book you add. The practice copy is the safe way to try things first.' }))) return;
+      realConfirmed = true;
+    }
+    const r = await post('/api/try/run', { command: command.value, real: real.checked });
+    verdict.hidden = false; output.hidden = false;
+    verdict.textContent = r.timed_out ? `Stopped after ${t.timeout_s} s: a program that keeps running or waits for typing cannot be tried here.`
+      : r.exit_code === 0 ? `Finished normally in ${r.seconds} s${r.real ? ', in your real folder' : ', on the practice copy'}.`
+        : `Ended with an error (exit status ${r.exit_code}) in ${r.seconds} s.`;
+    verdict.className = `small mt-8 ${r.exit_code === 0 ? 'good' : 'warn'}`;
+    output.textContent = [r.stdout, r.stderr].filter((x) => x && x.trim()).join('\n') || '(no output)';
+  }) }, icon('play'), 'Run');
+  const resetBtn = h('button.btn.ghost', { onclick: (e) => withBusy(e.currentTarget, async () => {
+    await post('/api/try/reset', {}); toast('The practice copy starts again from your real folder.', 'good'); }) }, icon('refresh'), 'Start the practice copy again');
+  card.append(h('div.card-head', h('h3', icon('play'), 'Try what was built'), h('span.badge', 'runs your program')),
+    h('p.small.muted', 'Pick a command from your project’s own instructions, change it if you like, and run it. It runs on a practice copy of your folder, so nothing real changes, unless you choose your real folder.'),
+    chips, h('div.row.wrap.mt-8', command), h('label.row.mt-8', real, 'Use my real folder (changes are kept)'),
+    h('div.row.wrap.mt-8', runBtn, resetBtn), verdict, output);
+  card.hidden = false;
 }
 
 function fmtCap(key, v) {

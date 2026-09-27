@@ -297,14 +297,18 @@ export default async function render(root, ctx) {
         h('div.tiny.muted',`${currentCheck.utc} · project ${currentCheck.verification?.project_checks?.status || 'not run'} · owner acceptance ${currentCheck.verification?.acceptance?.status || 'not run'}`),
         h('div.tiny.mono',currentCheck.verification?.evidence_dir || 'No executable receipt'),
         h('div.tiny.muted','Historical check of the recorded snapshot. Review freshness before marking a milestone done.'))));
-      item.append(h('div.mt-8', h('b.small','Public acceptance expectations'),
-        expectations ? h('div',h('div.tiny.muted',`Revision ${expectations.version} · ${expectations.by} · ${expectations.reason}`),
-          h('ul.small',expectations.criteria.map(c=>h('li',`${c.id}: ${c.description}`)))) : h('div.small.muted','No separate public criteria yet.'),
+      // What builders are told (F4: plain words). With approved checks their sentences already show above, so the
+      // expert view folds away; without them it stays open.
+      const told = h(acc?.approved ? 'details.mt-8' : 'div.mt-8');
+      item.append(told);
+      told.append(acc?.approved ? h('summary.small', 'What builders are told (for experts)') : h('b.small','What builders are told'),
+        expectations ? h('div',h('div.tiny.muted',`Version ${expectations.version} · ${expectations.by} · ${expectations.reason}`),
+          h('ul.small',expectations.criteria.map(c=>h('li',{title:c.id},c.description)))) : h('div.small.muted','Only the milestone’s own words so far. When you approve acceptance checks, their sentences are added here.'),
         expectations?.interfaces?.length ? h('details.mt-8',h('summary.small',`${expectations.interfaces.length} public JSON response interface(s)`),
           expectations.interfaces.map(row=>h('div.card.flat.mt-8',h('b.small',row.invocation),h('p.tiny',row.description),
             h('p.tiny.muted',`${row.response_type}; criteria: ${row.criterion_ids.join(', ')}`),
             h('ul.small',row.fields.map(f=>h('li',`${f.name}: ${f.type} · ${f.required?'required':'optional'}${f.nullable?' · nullable':''}${f.unit?' · '+f.unit:''} — ${f.description}`)))))) : null,
-        h('div.tiny.muted','Criteria are shown to authors. Private assertions stay in verification receipts. Clarification does not reset spent author attempts.'),
+        h('div.tiny.muted','Builders see these sentences, never the code of your checks. Changing them does not give a builder extra attempts.'),
         h('div.row.wrap.mt-8',h('button.btn.sm.ghost',{onclick:async()=>{
           const value=await askText({title:'Public acceptance criteria',text:'JSON array of {id, description}. Describe behavior, not private fixture values.',
             value:JSON.stringify(expectations?.criteria || [{id:`${m.id}.behavior`,description:m.done_when || ''}],null,2),multiline:true,confirm:'Continue'});
@@ -313,8 +317,8 @@ export default async function render(root, ctx) {
           const reason=await askText({title:'Why clarify this requirement?',text:'The reason and previous revisions are retained; no budget is reset.',confirm:'Publish'});
           if(!reason?.trim())return;
           await post(`/api/plan/milestones/${m.id}/expectations`,{criteria,reason,expected_digest:expectations?.digest ?? null});drawPlan();
-        }},icon('pencil'),'Edit expectations'),
-        h('button.btn.sm.ghost',{disabled:!expectations?.criteria?.length,onclick:()=>editInterfaces(m,expectations,drawPlan)},icon('code'),'JSON response interfaces'))));
+        }},icon('pencil'),'Edit (JSON)'),
+        h('button.btn.sm.ghost',{disabled:!expectations?.criteria?.length,onclick:()=>editInterfaces(m,expectations,drawPlan)},icon('code'),'JSON response interfaces')));
       commentable(item, 'milestone', m.id, m.title);
       list.append(item);
     }
@@ -384,14 +388,14 @@ export default async function render(root, ctx) {
     const apply = h('input', {type:'checkbox', checked:build.apply});
     const paths = h('input.input.mono', {value:(settings.build_paths || []).join(', '), placeholder:'src, tests, pyproject.toml'});
     const save = h('button.btn', {onclick: () => withBusy(save, async () => {
-      if (apply.checked && !build.apply && !(await confirmDialog({title:'Delegate checked builds in this folder?',
-        text:'Only the paths below may be written. The owner-maintained acceptance test for the milestone must pass, alongside project tests. You can revoke this here. Existing backups and Undo remain available.',confirm:'Delegate'}))) return;
+      if (apply.checked && !build.apply && !(await confirmDialog({title:'Apply checked drafts automatically in this folder?',
+        text:'Runesmith may then write only the files and folders listed below, and only when a draft passes both its own tests and your acceptance checks for the milestone. You can turn this off here at any time; backups and Undo stay available.',confirm:'Allow automatic apply'}))) return;
       await post('/api/settings', {build_steps:checks.checked, build_apply:apply.checked,
         build_paths:paths.value.split(',').map(x=>x.trim()).filter(Boolean)});
       toast('Build settings saved for this folder.', 'good'); drawBuild();
     })}, 'Save build settings');
     clear(buildCard).append(h('h3', icon('hammer'), 'Build continuation'),
-      h('p.small.muted', 'Continue an existing milestone from real source and feedback. Review is the default. Delegated writes require an unchanged snapshot and owner acceptance, not only the author’s own tests.'),
+      h('p.small.muted', 'Builds the next milestone from your project as it is now. By default you review each draft yourself. Automatic apply needs your acceptance checks to pass, not only the draft’s own tests, and nothing may have changed in the meantime.'),
       h('label.row', checks, 'Check drafts by running their tests (Python unittest, in a throwaway working copy)'),
       h('label.row.mt-8', apply, 'Apply checked drafts automatically (needs your own acceptance checks for the milestone)'),
       h('div.label-text.mt-8', 'Allowed files or folders, comma separated'), paths,
