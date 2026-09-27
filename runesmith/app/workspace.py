@@ -89,6 +89,20 @@ GENERIC_NAMES = {"readme.md", "readme", "readme.txt", "readme.rst", "index.md", 
 MAX_DRAFT_FILES, MAX_DRAFT_FILE_BYTES = 12, 60_000
 
 
+OBSERVE_NO_CALLS = ("Observe mode reads and reports only, so no model was asked. Choose “propose” in Settings to let "
+                    "Runesmith think and draft.")
+
+
+class ObserveRouter:
+    """What ``Workspace.router()`` returns in observe mode: the same call shape, and every call refused."""
+
+    roles: dict[str, list[str]] = {}
+    instruments: dict[str, Any] = {}
+
+    def call(self, role: str, **_: Any):
+        raise WorkspaceError(OBSERVE_NO_CALLS)
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -397,7 +411,13 @@ class Workspace:
                 "instruments": len(config["instruments"])}
 
     def router(self, *, on_call=None, backoff_s: tuple[float, ...] | None = None, skip: set[str] | None = None):
-        """A router over the usable instruments only (minus ``skip``); the planner borrows another role's instruments."""
+        """A router over the usable instruments only (minus ``skip``); the planner borrows another role's instruments.
+
+        In observe mode every Studio model call is refused here, where they all pass (rule I1 of the coverage plan),
+        instead of relying on each job to check.
+        """
+        if self.settings()["autonomy"] == "observe":
+            return ObserveRouter()
         config = self.config()
         ready = self.ready()
         roles = {role: [n for n in names if n not in (skip or set())] for role, names in ready["usable"].items()}

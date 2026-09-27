@@ -230,6 +230,9 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
     milestone = _milestone(ws, milestone_id)
     if milestone.get('status') not in ('open', 'doing'):
         raise WorkspaceError('Propose acceptance checks for an unfinished milestone.')
+    if ws.settings().get('autonomy') == 'observe':
+        from runesmith.app.workspace import OBSERVE_NO_CALLS
+        raise WorkspaceError(OBSERVE_NO_CALLS)
     data = packet(ws, milestone_id)
     text = json.dumps(data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
