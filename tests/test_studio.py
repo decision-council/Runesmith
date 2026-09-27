@@ -209,7 +209,7 @@ def test_keys_are_saved_but_never_listed_and_roles_decide_readiness(tmp_path):
     assert saved["key"]["saved"] and "sk-secret-value" not in json.dumps(ws.inference())
     assert "sk-secret-value" not in (ws.home / "runesmith.json").read_text(encoding="utf-8")
     assert ws.ready()["repair"] and ws.ready()["plan_source"] == "repair"             # the planner borrows a model
-    assert set(ws.router().roles) == {"repair", "plan"}
+    assert set(ws.router().roles) == {"repair", "plan", "acceptance"}                   # and the checker, the planner's
     ws.keys.delete("router")
     assert not ws.ready()["repair"]                                                     # a missing key is not ready
     ws.remove_instrument("router")

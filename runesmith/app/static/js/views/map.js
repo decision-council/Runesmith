@@ -541,9 +541,10 @@ async function operationsLens(body, ctx) {
     const roles = h('div.card', h('div.card-head', h('h3', icon('cpu'), 'Who thinks what'), h('div.actions', h('button.btn.sm', { onclick: () => ctx.navigate('inference') }, 'Thinking power', icon('right')))));
     for (const [role, label] of Object.entries(d.role_labels)) {
       const names = d.roles[role] || [];
-      const row = h('div.item', h('div', { class: `ico ${names.length ? 'rune' : 'warn'}` }, icon(role === 'repair' ? 'hammer' : role === 'kaizen' ? 'spark' : 'wand')),
+      const row = h('div.item', h('div', { class: `ico ${names.length ? 'rune' : 'warn'}` }, icon(role === 'repair' ? 'hammer' : role === 'kaizen' ? 'spark' : role === 'acceptance' ? 'check' : 'wand')),
         h('div.body', h('div.title', label), h('div.meta', names.length ? names.map((n) => { const st = d.stats[n]; return `${n}${st ? ` (${st.calls} calls, ${st.errors} errors, ~${(st.latency_s / Math.max(1, st.calls)).toFixed(1)} s)` : ''}`; }).join(' → ')
-          : role === 'plan' && d.ready.plan ? `borrows the ${d.ready.plan_source} role's model` : 'no model yet')));
+          : role === 'plan' && d.ready.plan ? `borrows the ${d.ready.plan_source} role's model`
+          : role === 'acceptance' && d.ready.acceptance ? 'uses the Planner’s model' : 'no model yet')));
       roles.append(row);
     }
     const att = d.attention;

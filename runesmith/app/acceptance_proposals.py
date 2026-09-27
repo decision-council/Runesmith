@@ -238,9 +238,9 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
     checkpoint()
     key = 'a' + uuid.uuid4().hex[:12]
     try:
-        out = router.call('plan', prompt=text, system=SYSTEM, schema=SCHEMA, max_tokens=6000, key='acceptance-' + key)
+        out = router.call('acceptance', prompt=text, system=SYSTEM, schema=SCHEMA, max_tokens=6000, key='acceptance-' + key)
     except KeyError as error:
-        raise PlannerUnavailable('no model is set up for planning: add one under Thinking power') from error
+        raise PlannerUnavailable('no model is set up for planning or checking: add one under Thinking power') from error
     except Exception as error:
         raise PlannerUnavailable(f'the acceptance-check call did not answer: {str(error)[:200]}') from error
     if isinstance(out.data, dict) and out.data.get('skipped_by_owner'):
@@ -281,7 +281,7 @@ def _revise_once(ws, router, data, first, key, drafted_by, checkpoint):
                    your_first_proposal={k: first[k] for k in ('checks', 'assumes', 'code')})
     checkpoint()
     try:
-        out = router.call('plan', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False), system=SYSTEM,
+        out = router.call('acceptance', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False), system=SYSTEM,
                           schema=SCHEMA, max_tokens=6000, key='acceptance-' + key + '-revise')
     except Exception as error:
         return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by

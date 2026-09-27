@@ -215,3 +215,15 @@ def test_unstated_text_asks_for_one_revision_and_is_published_if_it_stays(tmp_pa
     approve(ws, "m1", proposal["id"])
     counts = next(c for c in expectations(ws, "m1")["criteria"] if c["id"] == "check.test_counts")
     assert counts["description"].endswith("It requires the exact text: “2025-01: 1”.")
+
+
+def test_the_checker_role_can_use_its_own_model_and_otherwise_borrows_the_planners(tmp_path):
+    ws = workspace(tmp_path, [])                                       # the planner has no answers to give
+    config = ws.config()
+    config["instruments"]["checker"] = {"kind": "scripted", "answers": [ANSWER]}
+    config["roles"]["acceptance"] = ["checker"]
+    ws.save_config(config)
+    assert ws.ready()["acceptance"] and propose(ws, ws.router(), "m1")["checks"] == ANSWER["checks"]
+    config["roles"]["acceptance"] = []
+    ws.save_config(config)
+    assert ws.ready()["acceptance"] and ws.router().roles["acceptance"] == ws.router().roles["plan"]

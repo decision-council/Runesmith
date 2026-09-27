@@ -5,7 +5,9 @@ import {gatewayUsage} from '../gateway-usage.js';
 
 const MONO_COLORS = { ollama: '#111827', lmstudio: '#4f46e5', llamacpp: '#0f766e', openrouter: '#6d28d9', groq: '#f55036', gemini: '#1a73e8',
   mistral: '#fa520f', deepseek: '#4d6bfe', openai: '#10a37f', anthropic: '#d97757', together: '#0f6fff', custom: '#475569', milliner: '#b45309', manual: '#22d3c5' };
-const ROLE_ICON = { repair: 'hammer', kaizen: 'spark', plan: 'wand' };
+const ROLE_ICON = { repair: 'hammer', kaizen: 'spark', plan: 'wand', acceptance: 'check' };
+// The roles this Studio's server reports, in a fixed order (an older server has no Checker).
+const shownRoles = (data) => ['repair', 'kaizen', 'plan', 'acceptance'].filter((r) => data.role_labels[r]);
 // In-memory only; keep a pending typed reply across redraws/panel navigation.
 const relayReplies = new Map();
 
@@ -32,7 +34,7 @@ export default async function render(root, ctx) {
     for (const i of data.instruments) inst.append(instrumentRow(i, data, load));
     // ---- roles
     const roles = h('div.card', h('div.card-head', h('h3', icon('layers'), 'Who does what'), h('span.badge', 'first = preferred, then fallbacks')));
-    for (const role of ['repair', 'kaizen', 'plan']) roles.append(roleLane(role, data, load));
+    for (const role of shownRoles(data)) roles.append(roleLane(role, data, load));
     roles.append(h('p.tiny.faint', 'Ready means configured, not available quota. The Planner borrows the Improver’s (or the Worker’s) model when it has none of its own. Qualify each route for its role: a connection test is not an authoring test.'));
     const local = h('div.card', h('div.card-head', h('h3', icon('laptop'), 'On this computer'), h('div.actions', h('button.btn.sm', { onclick: (e) => withBusy(e.currentTarget, () => scan(localList)) }, icon('refresh'), 'Look again'))));
     const localList = h('div');
@@ -91,8 +93,9 @@ export default async function render(root, ctx) {
       const key = h('input.input.mono', { type: 'password', placeholder: p.key === 'required' ? 'paste your key' : 'optional', autocomplete: 'off' });
       const showKey = h('button.btn.icon', { type: 'button', title: 'Show or hide', onclick: () => { key.type = key.type === 'password' ? 'text' : 'password'; } }, icon('eye'));
       // Prefer author roles for manual relay; any role can require several human-relayed calls.
-      const defaultOn = (r) => (p.kind === 'manual' ? r !== 'repair' : firstModel || (r === 'repair' && !data.ready.repair));
-      const roleBoxes = ['repair', 'kaizen', 'plan'].map((r) => { const cb = h('input', { type: 'checkbox', checked: defaultOn(r), value: r });
+      // The Checker follows the Planner until the owner picks a model for it on purpose.
+      const defaultOn = (r) => r !== 'acceptance' && (p.kind === 'manual' ? r !== 'repair' : firstModel || (r === 'repair' && !data.ready.repair));
+      const roleBoxes = shownRoles(data).map((r) => { const cb = h('input', { type: 'checkbox', checked: defaultOn(r), value: r });
         return { r, cb, el: h('label.chip', cb, icon(ROLE_ICON[r]), data.role_labels[r].split(':')[0]) }; });
       const listBtn = h('button.btn', { type: 'button', onclick: () => withBusy(listBtn, async () => {
         const r = await post('/api/inference/models', { preset: p.id, base_url: base.value, key: key.value,
@@ -113,7 +116,7 @@ export default async function render(root, ctx) {
         h('span.hint', 'Milliner tries this explicit chain after the primary fails. Only add free models here if this is a free-only fallback. Their quotas still apply.')));
       if (p.key !== 'none') fields.push(h('div.field', h('label', p.kind === 'milliner' ? 'Agent token' : 'API key'), h('div.row', key, showKey),
         h('span.hint', 'Saved in this folder’s .runesmith/secrets.json, never in your project, never shown again.', p.key_url ? [' ', h('a', { href: p.key_url, target: '_blank', rel: 'noopener' }, 'Get a key')] : null)));
-      fields.push(h('div.field', h('label', 'Roles'), h('div.pillbox', roleBoxes.map((x) => x.el)), h('span.hint', 'Worker repairs code · Improver improves Runesmith itself · Planner drafts plans and first files.')));
+      fields.push(h('div.field', h('label', 'Roles'), h('div.pillbox', roleBoxes.map((x) => x.el)), h('span.hint', 'Worker repairs code · Improver improves Runesmith itself · Planner drafts plans and first files · Checker proposes acceptance checks (a few calls that decide what “done” means: your best model pays off here).')));
       if (p.kind === 'manual') fields.push(h('div.callout', icon('chat'), h('div', 'Requests appear here and in the top bar. Copy the whole packet into your chat, then paste its reply back. Useful for Planner/Improver work; every call requires a person to relay it. Keep Studio running while waiting. Saving this instrument does not make a model call.')));
       if (p.setup) fields.push(h('div.callout', icon('info'), h('div', 'First time? Install it, then run ', h('code', p.setup))));
       const save = h('button.btn.primary', icon('check'), p.kind === 'manual' ? 'Save chat instrument' : 'Save and test');
@@ -158,6 +161,7 @@ function authorGuidance() {
   return h('div.card', h('h3', icon('info'), 'Choosing authors and workers'),
     h('p.small', 'There is no established minimum model size or price. Planner authors integrate requirements and draft plans/files; Improver authors change Runesmith itself. These roles usually need broader design and integration ability than a bounded Worker task.'),
     h('p.small', 'A cheaper or smaller worker can be useful with focused source, a narrow contract and real checks. Complex repairs may still need a stronger model. A free model can be a good author; qualify the task, not the price tag.'),
+    h('p.small', 'The Checker proposes each milestone’s acceptance checks: a few calls that decide what “done” means for automatic apply. In the out-of-box journey a small free model built well but wrote weak checks, so give the Checker your best model (a chat window works well), and let a free API model build.'),
     h('details', h('summary', 'What is strong enough?'),
       h('ul.small', h('li', 'Follows the actual packet and required format; does not invent unseen source or permission.'),
         h('li', 'Produces a complete, applicable change while preserving interfaces and unrelated behavior.'),
@@ -272,7 +276,8 @@ function roleLane(role, data, reload) {
   const lane = h('div.role-lane.mt-8');
   const save = (list) => post('/api/inference/roles', { roles: { [role]: list } }).then(reload);
   lane.append(h('h4', icon(ROLE_ICON[role]), data.role_labels[role], h('span.spacer'),
-    role === 'plan' && !names.length && data.ready.plan ? h('span.badge', `uses ${data.ready.plan_source}`) : names.length && !usable.size ? h('span.badge.warn', 'not ready') : names.length ? h('span.badge.good', 'ready') : h('span.badge', 'empty')));
+    role === 'plan' && !names.length && data.ready.plan ? h('span.badge', `uses ${data.ready.plan_source}`) :
+    role === 'acceptance' && !names.length && data.ready.acceptance ? h('span.badge', 'uses the Planner’s model') : names.length && !usable.size ? h('span.badge.warn', 'not ready') : names.length ? h('span.badge.good', 'ready') : h('span.badge', 'empty')));
   const box = h('div.pillbox');
   names.forEach((n, idx) => {
     const tag = h('span.tag', { draggable: 'true', title: idx ? 'fallback' : 'preferred' }, idx ? h('span.faint.tiny', `${idx + 1}.`) : icon('check'), n,

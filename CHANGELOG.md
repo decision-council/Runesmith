@@ -15,6 +15,8 @@
   - **Runesmith reads the checks itself** instead of trusting the model to follow that rule, because the weak free model ignored it. It finds every exact text a check's assertions require that its sentence does not say. Test input data and failure messages don't count.
     - Such text triggers the one revision, with the test and the text named.
     - Whatever remains is shown under the sentence ("Also requires the exact text: …") and published with it, so the builder is always told.
+  - **A Checker role.** Proposing checks takes only a few calls, and they decide what "done" means. So Thinking power now has a Checker role. It uses the Planner's model unless the owner picks another, for example their chat window, while a free API model keeps building.
+    - In the journey, the free model built well but wrote weak checks across four rounds. The stronger free route (Kimi K3 through NVIDIA) timed out after 211 s on every call.
   - **On approval, the sentences become the milestone's public expectations.** Whoever builds the milestone now knows what "done" means, while the code stays private. A failing check is reported to the builder by its sentence, never by its assertion. Owner-written expectations are kept.
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.

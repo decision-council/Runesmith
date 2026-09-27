@@ -41,9 +41,10 @@ from runesmith.objects.code import encode_like
 from runesmith import atomic
 
 LIBRARY = Path(__file__).resolve().parent.parent / "library"
-ROLES = ("repair", "kaizen", "plan")
+ROLES = ("repair", "kaizen", "plan", "acceptance")
 ROLE_LABELS = {"repair": "Worker: repairs code", "kaizen": "Improver: improves Runesmith itself",
-               "plan": "Planner: drafts plans and first files"}
+               "plan": "Planner: drafts plans and first files",
+               "acceptance": "Checker: proposes acceptance checks"}
 PLAN_FALLBACK = ("plan", "kaizen", "repair")          # the planner borrows another role's instruments if it has none
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -390,8 +391,9 @@ class Workspace:
         usable = {role: [n for n in (config["roles"].get(role) or []) if self._usable(n, config["instruments"].get(n))]
                   for role in ROLES}
         plan_source = next((r for r in PLAN_FALLBACK if usable[r]), None)
+        # The checker writes few, decisive calls; it uses the planner's instruments unless the owner picks its own.
         return {"repair": bool(usable["repair"]), "kaizen": bool(usable["kaizen"]), "plan": plan_source is not None,
-                "plan_source": plan_source, "usable": usable, "any": any(usable.values()),
+                "plan_source": plan_source, "acceptance": bool(usable["acceptance"]) or plan_source is not None, "usable": usable, "any": any(usable.values()),
                 "instruments": len(config["instruments"])}
 
     def router(self, *, on_call=None, backoff_s: tuple[float, ...] | None = None, skip: set[str] | None = None):
@@ -404,6 +406,8 @@ class Workspace:
             source = next((r for r in PLAN_FALLBACK if roles.get(r)), None)
             if source:
                 roles["plan"] = list(roles[source])
+        if not roles.get("acceptance") and roles.get("plan"):
+            roles["acceptance"] = list(roles["plan"])
         instruments = {n: config["instruments"][n] for names in roles.values() for n in names}
         kwargs: dict[str, Any] = {"on_call": on_call}
         if backoff_s is not None:

@@ -77,7 +77,7 @@ let supportInbox={available:true,revision:'reports-1',items:[],targets:[{name:'c
   scope:'Pasted excerpts only. Saving does not share, queue work or grant authority. Reports alone are not repair opportunities.',
   limit:30,max_excerpt_chars:6000,budget_bytes:12000,max_included:3};
 mission.support_reports=supportInbox;
-const role_labels={repair:'Worker: repairs code',kaizen:'Improver: improves Runesmith itself',plan:'Planner: drafts plans and first files'};
+const role_labels={repair:'Worker: repairs code',kaizen:'Improver: improves Runesmith itself',plan:'Planner: drafts plans and first files',acceptance:'Checker: proposes acceptance checks'};
 const dashboardPanels=['progress','modes','measurements','activity','inference'];
 function dashboardProject(id,name,root='D:/fixture',home='D:/fixture/.runesmith'){
   return {id,name,root,home,panels:[...dashboardPanels],available:true,observed_at:'2026-09-26T23:20:00Z',errors:[],
@@ -92,8 +92,8 @@ function dashboardProject(id,name,root='D:/fixture',home='D:/fixture/.runesmith'
 }
 let dashboardData={revision:'dashboard-1',panels:dashboardPanels,projects:[dashboardProject('current','Current project')],
   scope:'Adding/removing a view never starts a worker or deletes a project. Live API/webhook connectors are not implemented.'};
-const inference={instruments:[],roles:{repair:[],kaizen:[],plan:[]},role_labels,keys:[],stats:{},
-  ready:{repair:false,kaizen:false,plan:false,usable:{repair:[],kaizen:[],plan:[]}},
+const inference={instruments:[],roles:{repair:[],kaizen:[],plan:[],acceptance:[]},role_labels,keys:[],stats:{},
+  ready:{repair:false,kaizen:false,plan:false,acceptance:false,usable:{repair:[],kaizen:[],plan:[],acceptance:[]}},
   presets:[{id:'manual',label:'A chat window (copy and paste)',group:'No key needed',kind:'manual',key:'none',blurb:'Copy requests and paste replies.'}]};
 const capacityFixture={name:'capacity-author',observed_at:'2026-09-27T03:00:00Z',unresolved_requests:1,
   coverage:{scanned:100,matching:4,omitted:7,unreadable:1},inference_calls:0,
@@ -375,6 +375,7 @@ try{
     assert(await wizard.getByRole('checkbox',{name:'Improver',exact:true}).isChecked());
     assert(await wizard.getByRole('checkbox',{name:'Planner',exact:true}).isChecked());
     assert(!(await wizard.getByRole('checkbox',{name:'Worker',exact:true}).isChecked()));
+    assert(!(await wizard.getByRole('checkbox',{name:'Checker',exact:true}).isChecked()));   // follows the Planner until chosen
     await page.screenshot({path:path.join(artifacts,'B2-manual-setup.png')});
     await wizard.getByRole('button',{name:'Save chat instrument',exact:true}).click();await wizard.waitFor({state:'hidden'});
     const saved=requests.find(r=>r.path==='/api/inference/instruments');
