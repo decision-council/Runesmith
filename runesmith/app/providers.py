@@ -9,6 +9,7 @@ names are starting points, not requirements; the owner can type any model id, an
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -98,14 +99,46 @@ def discover_local(timeout: float = 0.8) -> list[dict[str, Any]]:
     return found
 
 
-def list_models(base_url: str, key: str = "", *, timeout: float = 8.0) -> dict[str, Any]:
-    """Ask an OpenAI-compatible endpoint which models it serves."""
+def list_models(base_url: str, key: str = "", *, kind: str = "openai", provider: str = "",
+                timeout: float = 8.0) -> dict[str, Any]:
+    """Read the selected endpoint's catalog, without generating or probing models."""
     headers = {"Authorization": f"Bearer {key}"} if key else {}
-    status, body = _get_json(base_url.rstrip("/") + "/models", headers=headers, timeout=timeout)
+    base = base_url.rstrip("/")
+    if kind == "milliner":
+        if not isinstance(provider, str) or (provider and not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", provider)):
+            return {"ok": False, "models": [], "detail": "Use a bare provider name, such as opencode or cline."}
+        # Milliner is not an OpenAI /models endpoint: it returns `models`,
+        # with provider-qualified call_name values. Keep this selector free-only.
+        url = base + ("/models" if base.endswith("/v1") else "/v1/models")
+        url += "?free=true&profiles=false&limit=500"
+        if provider:
+            url += "&provider=" + provider
+    else:
+        url = base + "/models"
+    status, body = _get_json(url, headers=headers, timeout=timeout)
     if status != 200 or not isinstance(body, dict):
         return {"ok": False, "status": status, "models": []}
-    ids = sorted({m.get("id") for m in body.get("data", []) if isinstance(m, dict) and m.get("id")})
-    return {"ok": True, "status": status, "models": ids[:500], "count": len(ids)}
+    rows = body.get("models" if kind == "milliner" else "data")
+    if not isinstance(rows, list):
+        return {"ok": False, "status": status, "models": [], "detail": "Unrecognized catalog response."}
+    ids = set()
+    for model in rows:
+        if not isinstance(model, dict):
+            continue
+        model_id = model.get("call_name" if kind == "milliner" else "id")
+        if kind == "milliner" and not model_id:
+            provider, bare = model.get("provider"), model.get("model_id")
+            if isinstance(provider, str) and provider and isinstance(bare, str) and bare:
+                model_id = provider + ":" + bare
+        if isinstance(model_id, str) and model_id.strip():
+            ids.add(model_id.strip())
+    result = {"ok": True, "status": status, "models": sorted(ids)[:500], "count": len(ids)}
+    if kind == "milliner":
+        result['provider'] = provider
+        result['detail'] = ('Up to 500 free-catalog entries. Listing does not confirm routing permission, '
+                            'remaining quota or authoring quality. Filter by provider to narrow large catalogs, '
+                            'or enter an exact model ID.')
+    return result
 
 
 def test_instrument(name: str, spec: dict[str, Any], home) -> dict[str, Any]:

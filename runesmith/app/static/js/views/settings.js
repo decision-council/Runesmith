@@ -3,7 +3,7 @@ import { h, icon, get, post, bus, toast, clear, ago, plural, humanize, withBusy,
 
 export default async function render(root, ctx) {
   const tab = ['behaviour', 'health', 'data', 'about'].includes(ctx.sub[0]) ? ctx.sub[0] : 'behaviour';
-  const head = h('div.page-head', h('div', h('h2', 'Settings'), h('p', 'How Runesmith behaves in this folder. Everything here is saved in the folder’s own .runesmith home, so every folder can be set up differently.')));
+  const head = h('div.page-head', h('div', h('h2', 'Settings'), h('p', 'How Runesmith behaves in this folder. Settings and history live in its registered Runesmith home, which can be separate from the project.')));
   const tabs = h('div.tabs', [['behaviour', 'Behaviour', 'sliders'], ['health', 'Health', 'shield'], ['data', 'Folder & data', 'folder'], ['about', 'About & evidence', 'info']]
     .map(([id, l, ic]) => h('button', { class: id === tab ? 'on' : '', onclick: () => ctx.navigate('settings', id) }, icon(ic), l)));
   const body = h('div');
@@ -88,7 +88,7 @@ async function data(body, ctx) {
   body.append(h('div.grid.two',
     h('div.card', h('h3', icon('folder'), 'The folder'), h('p.mono.small', s.workspace.path),
       h('div.row.wrap', h('button.btn.primary', { onclick: () => openFolderPicker() }, icon('folder'), 'Work in another folder'), h('button.btn', { onclick: () => reveal('workspace') }, icon('external'), 'Open in file manager')),
-      h('div.divider'), h('h3', icon('rune'), 'Runesmith’s home in this folder'), h('p.mono.small', s.workspace.home),
+      h('div.divider'), h('h3', icon('rune'), 'Runesmith’s home for this folder'), h('p.mono.small', s.workspace.home),
       h('p.small.muted', 'Everything Runesmith learns about this folder lives here: settings, the ledger, maps, generations, notes and saved keys. It ignores itself for version control, so it is never committed by accident.'),
       h('div.row.wrap', h('button.btn', { onclick: () => reveal('home') }, icon('external'), 'Open the home'), snap)),
     h('div.card', h('h3', icon('power'), 'Session'), h('p.small.muted', `Runesmith ${s.version}. The Studio runs on this computer only (127.0.0.1) and opens through a private link.`), quit)));
@@ -114,32 +114,104 @@ async function about(body) {
 // ------------------------------------------------------------ folder picker --
 export async function openFolderPicker() {
   const list = h('div.folder-list');
-  const pathInput = h('input.input.mono', { placeholder: 'Type or paste a folder path' });
+  const pathInput = h('input.input.mono', { placeholder: 'Type or paste a folder path', 'aria-label': 'Workspace folder path' });
+  const homeInput = h('input.input.mono', { placeholder: 'Automatic: registered home, otherwise <folder>/.runesmith', 'aria-label': 'Runesmith home path (optional)' });
+  const pairNotice = h('div.small.muted.mt-8', { 'aria-live': 'polite' }, 'The exact folder and home will be shown for confirmation before anything opens.');
   const recentBox = h('div.pillbox.mb-8');
-  let current = '';
+  const notice = h('div.callout.mt-8', { role: 'status', 'aria-live': 'polite' });
+  let switching = false, uncertain = false, active = true, guard = null, m;
+  const paintGuard = () => {
+    clear(notice);
+    notice.append(h('div', guard?.policy || 'Waiting jobs stay in their original home. A different home opens paused; review it before Resume.'));
+    for (const reason of guard?.blockers || []) notice.append(h('div', reason));
+    if (guard?.warning) notice.append(h('div', guard.warning));
+    if (guard?.waiting) notice.append(h('div', `${guard.waiting} waiting job(s) will remain saved here.`));
+    if (uncertain) notice.append(h('div', 'The switch outcome is uncertain. Reload Studio to inspect its selected folder; do not resubmit.'));
+    for (const button of m?.el.querySelectorAll('[data-switch-action]') || []) {
+      button.disabled = switching || uncertain || !guard?.allowed;
+    }
+    pathInput.disabled = homeInput.disabled = switching || uncertain;
+  };
+  const refreshGuard = async () => {
+    try { guard = (await get('/api/workspaces')).switch; }
+    catch (error) { guard = { allowed: false, blockers: [error.message] }; }
+    paintGuard();
+  };
+  const switchTo = async (path, create, close) => {
+    if (!active || switching || uncertain || !guard?.allowed) return false;
+    if (!path?.trim()) { toast('Choose an explicit folder path.', 'warn'); return false; }
+    const requestedHome = homeInput.value.trim();
+    ++browseVersion;
+    switching = true; paintGuard();
+    let submitted = false;
+    try {
+      const pair = await get(`/api/workspaces/resolve?path=${encodeURIComponent(path.trim())}${requestedHome ? '&home=' + encodeURIComponent(requestedHome) : ''}`);
+      if (!active) return false;
+      clear(pairNotice).append(h('div', `Folder: ${pair.path}`), h('div', `Home: ${pair.home}`));
+      const confirmed = await confirmDialog({ title: 'Open this folder and home?',
+        text: h('div.workspace-pair', h('p', create ? 'Create this project folder:' : 'Project folder:'), h('p.mono.small', pair.path),
+          h('p', `${pair.registered ? 'Registered' : pair.basis === 'explicit' ? 'Separate' : 'Default'} Runesmith home:`), h('p.mono.small', pair.home),
+          h('p.small.muted', 'Settings, saved keys, queues and history belong to this home. This does not move them or rebind an existing home. A different home opens paused.')),
+        confirm: create ? 'Create and open this pair' : 'Open this pair' });
+      if (!confirmed || !active) return false;
+      submitted = true;
+      const result = await post('/api/workspaces/open', { path: pair.path, home: pair.home, create });
+      close(); toast(result.warning || 'Folder selected. Review its settings before resuming work.', result.warning ? 'warn' : 'good');
+      bus.emit('workspace', { path: result.path, reload: true });
+    } catch (error) {
+      uncertain = submitted && (error.status === 0 || error.status >= 500);
+      guard = { allowed: false, blockers: [error.message] };
+      toast(error.message, 'bad');
+    } finally { switching = false; paintGuard(); }
+    return false;
+  };
+  let current = '', browseVersion = 0;
   const browse = async (path) => {
+    const version = ++browseVersion;
     try {
       const r = await get(`/api/browse?path=${encodeURIComponent(path || '')}`);
+      if (version !== browseVersion || switching || !active) return;
       current = r.path; pathInput.value = r.path;
       clear(list);
       if (r.parent !== null && r.path) list.append(h('div.f', { onclick: () => browse(r.parent) }, icon('up'), h('span', '.. (up)')));
       for (const d of r.dirs) list.append(h('div.f', { onclick: () => browse(d.path) }, icon('folder'), h('span', d.name)));
       if (!r.dirs.length) list.append(h('div.f.faint', 'No sub-folders here.'));
-    } catch (e) { toast(e.message, 'bad'); }
+    } catch (e) { if (version === browseVersion) toast(e.message, 'bad'); }
   };
+  const edited = () => { browseVersion++; clear(pairNotice).append('Selection edited; the folder and home will be reviewed again before opening.'); };
+  pathInput.addEventListener('input', edited);
+  homeInput.addEventListener('input', edited);
   const ws = await get('/api/workspaces');
-  for (const r of ws.recent.slice(0, 8)) recentBox.append(h('button', { class: `chip${r.path === ws.current ? ' on' : ''}`, title: r.path, onclick: () => browse(r.path) }, icon('clock'), r.name || r.path));
+  guard = ws.switch;
+  for (const r of ws.recent.slice(0, 8)) recentBox.append(h('button', { class: `chip${r.path === ws.current ? ' on' : ''}`, title: r.path + (r.home ? '\nHome: ' + r.home : ''), onclick: () => browse(r.path) }, icon('clock'), r.name || r.path));
   pathInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') browse(pathInput.value); });
-  const m = modal({ title: 'Choose a folder', text: 'Runesmith works in any folder: empty, half-built or full. It creates a .runesmith home inside it and changes nothing else without your say-so.',
-    body: h('div', ws.recent.length ? [h('div.label-text', 'Recent'), recentBox] : null, h('div.row', pathInput, h('button.btn', { onclick: () => browse(pathInput.value) }, 'Go')), h('div.mt-8', list)),
+  m = modal({ title: 'Choose a folder', onClose: () => { active = false; ++browseVersion; }, text: 'Select one active workspace. Switching waits for idle work, transfers home ownership and opens a different home paused. It does not run two projects concurrently.',
+    body: h('div', ws.recent.length ? [h('div.label-text', 'Recent'), recentBox] : null,
+      h('div.label-text', 'Project folder'), h('div.row', pathInput, h('button.btn', { onclick: () => browse(pathInput.value) }, 'Go')), h('div.mt-8', list),
+      h('div.label-text.mt-8', 'Runesmith home — optional separate location'), homeInput,
+      h('p.small.muted.mt-8', 'Leave blank to reuse the registered home. A new project defaults to .runesmith inside its folder. Existing bindings cannot be changed here.'), pairNotice,
+      h('p.small.faint.mt-8', 'Participating Studio and one-shot workers in this user profile exclude overlapping folders and homes. This is not a sandbox for other apps or legacy direct writers.'), notice,
+      h('button.btn.mt-8', { onclick: refreshGuard }, 'Refresh switch readiness'),
+      h('button.btn.ghost.mt-8', { onclick: () => bus.emit('workspace', { reload: true }) }, 'Reload selected workspace')),
     actions: [{ label: 'Cancel', kind: 'ghost' },
       { label: 'New folder here…', icon: 'plus', onClick: async (close) => {
-        const name = await askText({ title: 'A new folder', text: `Inside ${pathInput.value || current}`, placeholder: 'e.g. moonlight-bakery', confirm: 'Create and open' });
-        if (!name || !name.trim() || /[\\/:*?"<>|]/.test(name)) { if (name) toast('A folder name cannot contain \\ / : * ? " < > |', 'warn'); return false; }
-        const base = (pathInput.value || current).replace(/[\\/]+$/, '');
+        if (switching || uncertain || !guard?.allowed) return false;
+        if (!pathInput.value.trim()) { toast('Choose an explicit folder path.', 'warn'); return false; }
+        const parent = pathInput.value.trim();
+        ++browseVersion; // Outstanding navigation cannot retarget this confirmation.
+        switching = true; paintGuard();
+        const name = await askText({ title: 'A new folder', text: `Inside ${parent}`, placeholder: 'e.g. moonlight-bakery', confirm: 'Create and open' });
+        switching = false; paintGuard();
+        if (!name || !name.trim() || ['.', '..'].includes(name.trim()) || /[\\/:*?"<>|]/.test(name)) { if (name) toast('Use a new folder name, without \\ / : * ? " < > | or . / ..', 'warn'); return false; }
+        const base = parent.replace(/[\\/]+$/, '');
         const target = base + (base.includes('\\') ? '\\' : '/') + name.trim();
-        await post('/api/workspaces/open', { path: target, create: true }); close(); toast('Opening…', 'good'); } },
-      { label: 'Work here', kind: 'primary', icon: 'check', onClick: async (close) => { await post('/api/workspaces/open', { path: pathInput.value || current }); close(); toast('Opening…', 'good'); } }] });
+        return switchTo(target, true, close); } },
+      { label: 'Work here', kind: 'primary', icon: 'check', onClick: async (close) => switchTo(pathInput.value, false, close) }] });
+  m.el.classList.add('workspace-picker');
+  for (const button of m.el.querySelectorAll('footer button')) {
+    if (['Work here', 'New folder here…'].some(label => button.textContent.trim() === label)) button.dataset.switchAction = 'true';
+  }
+  paintGuard();
   browse(ws.current);
   return m;
 }

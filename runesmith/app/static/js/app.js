@@ -6,9 +6,11 @@ import { LOGO } from './icons.js';
 const NAV = [
   { section: 'Workspace' },
   { id: 'home', label: 'Overview', icon: 'home', key: '1' },
+  { id: 'dashboards', label: 'Dashboards', icon: 'gauge' },
   { id: 'map', label: 'Living map', icon: 'map', key: '2' },
   { id: 'work', label: 'Work & proposals', icon: 'inbox', key: '3', count: 'work' },
   { id: 'goals', label: 'Goals & plan', icon: 'target', key: '4' },
+  { id: 'mission', label: 'Modes & measurements', icon: 'sliders' },
   { section: 'Runesmith' },
   { id: 'improve', label: 'Self-improvement', icon: 'spark', key: '5', count: 'improve' },
   { id: 'inference', label: 'Thinking power', icon: 'cpu', key: '6', count: 'inference' },
@@ -19,7 +21,7 @@ const NAV = [
 const TITLES = Object.fromEntries(NAV.filter((n) => n.id).map((n) => [n.id, n.label]));
 const VIEWS = { home: './views/home.js', map: './views/map.js', work: './views/work.js', goals: './views/goals.js',
   improve: './views/improve.js', inference: './views/inference.js', notes: './views/notes.js', activity: './views/activity.js',
-  settings: './views/settings.js' };
+  settings: './views/settings.js', mission: './views/mission.js', dashboards: './views/dashboards.js' };
 
 export const app = { state: null, session: null, current: null, cleanup: null, navigate };
 let shell = null;
@@ -177,7 +179,7 @@ function updatePill() {
 
 function wireEvents() {
   const later = debounce(refreshState, 350);
-  for (const k of ['worker', 'round', 'work', 'notes', 'manual', 'map', 'settings', 'improve', 'inference', 'goals', 'plan', 'job'])
+  for (const k of ['worker', 'round', 'work', 'notes', 'manual', 'map', 'settings', 'improve', 'inference', 'goals', 'plan', 'job', 'mission'])
     bus.on(k, later);
   bus.on('worker', (w) => { if (app.state) { app.state.worker = w; updatePill(); } });
   bus.on('needs', (d) => {

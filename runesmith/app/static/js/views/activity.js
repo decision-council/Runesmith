@@ -1,5 +1,6 @@
 // Activity: the live log, the hash-chained ledger (everything Runesmith did, provably in order), and jobs.
 import { h, icon, get, post, bus, clear, ago, clock, datetime, humanize, empty, debounce, withBusy, toast } from '../core.js';
+import {recoveryPanel} from '../worker-recovery.js';
 
 const KIND_ICON = [['proposal', 'check'], ['draft', 'filePlus'], ['generation', 'branch'], ['trial', 'scale'], ['kaizen', 'spark'], ['loop.subject', 'spark'],
   ['loop.object', 'hammer'], ['opportunity', 'search'], ['environment', 'map'], ['instrument', 'cpu'], ['roles', 'layers'], ['note', 'note'], ['goal', 'target'],
@@ -53,11 +54,39 @@ export default async function render(root, ctx) {
     (w.lines || []).forEach(add);
     if (!w.lines?.length) box.append(h('div.l', 'Quiet. Lines appear as Runesmith works.'));
     offs.push(bus.on('log', add));
-    const status = h('span', { class: `badge ${w.current ? 'rune' : ''}` }, w.current ? w.detail || w.status : 'idle');
-    const stop = h('button.btn.sm', { class: w.current ? '' : 'hidden', title: 'The step in progress finishes; nothing after it starts' }, icon('stop'), 'Stop after this step');
-    stop.addEventListener('click', () => withBusy(stop, async () => { await post('/api/worker/stop', {}); toast('Stopping after the current step.', 'good'); }));
-    offs.push(bus.on('worker', (s) => { status.textContent = s.current ? (s.detail || s.status) : 'idle'; status.className = `badge ${s.current ? 'rune' : ''}`; stop.classList.toggle('hidden', !s.current); }));
-    body.append(h('div.card', h('div.card-head', h('h3', icon('activity'), 'Live'), status, h('div.actions', stop)), box));
+    let worker = w, changingControl = false;
+    const status = h('span.badge', { 'aria-live': 'polite' });
+    const queue = h('p.small.muted', { 'aria-live': 'polite' });
+    const pause = h('button.btn.sm', { title: 'Pause holds queued work and persists across Studio restart.' });
+    const stop = h('button.btn.sm', { title: 'Stop this job at the next checkpoint. Other queued jobs are not paused.' }, icon('stop'), 'Stop current job');
+    const recovery = recoveryPanel(s => update(s));
+    const update = (s) => {
+      worker = s;
+      status.textContent = s.recovery ? 'Recovery review required' : s.current ? s.stop_requested ? 'Finishing current step before stopping' :
+        s.paused ? 'Paused · finishing current step' : (s.detail || s.status) : s.paused ? 'Paused' : 'Idle';
+      status.className = `badge ${s.current ? 'rune' : ''}`;
+      queue.textContent = `${(s.queue || []).length} queued · one job at a time in this workspace${s.recovery ? ' · restart review required before Resume' : s.paused ? ' · queue held until Resume' : ''}`;
+      pause.replaceChildren(icon(s.paused ? 'play' : 'pause'), s.paused ? 'Resume queue' : 'Pause queue');
+      pause.disabled = changingControl || !!s.recovery;
+      stop.classList.toggle('hidden', !s.current); stop.disabled = changingControl || !!s.stop_requested;
+      recovery.update(s);
+    };
+    const control = async (button, action) => {
+      if (changingControl) return;
+      changingControl = true; update(worker);
+      try {
+        await withBusy(button, async () => {
+          await post(`/api/worker/${action}`, {});
+          update(await get('/api/worker'));
+          if (action === 'stop') toast('This job stops at the next checkpoint. Pause the queue to hold other jobs.', 'good');
+        });
+      } finally { changingControl = false; update(worker); }
+    };
+    pause.addEventListener('click', () => control(pause, worker.paused ? 'resume' : 'pause'));
+    stop.addEventListener('click', () => control(stop, 'stop'));
+    update(w); offs.push(bus.on('worker', update));
+    body.append(recovery.root, h('div.card', h('div.card-head', h('h3', icon('activity'), 'Live'), status, h('div.actions', pause, stop)),
+      queue, h('p.small.faint', 'Pause and Stop let an active model call or test phase finish within its limit. Build checks recheck controls before owner acceptance and application. Unrun phases are not passes; inspect saved receipts before continuing.'), box));
   } else if (tab === 'ledger') {
     let kinds = '';
     const filterRow = h('div.row.wrap.mb-8');
@@ -84,12 +113,19 @@ export default async function render(root, ctx) {
     await load();
     offs.push(bus.on('job', debounce(load, 400)), bus.on('work', debounce(load, 400)));
   } else {
-    const w = await get('/api/worker');
-    const rows = [...(w.current ? [dictJob(w.current, 'running')] : []), ...w.queue.map((j) => dictJob(j, 'queued')), ...w.history.map((j) => dictJob(j, j.result))];
-    body.append(h('div.card.pad-0', rows.length ? h('table.table', h('tr', ['Job', 'By', 'State', 'Started', 'Took', 'Outcome'].map((t) => h('th', t))),
+    const queueStatus = h('p.small.muted', { 'aria-live': 'polite' }), table = h('div.card.pad-0', { style: { overflowX: 'auto' } });
+    const recovery = recoveryPanel(w => draw(w));
+    const draw = (w) => {
+      recovery.update(w);
+      queueStatus.textContent = `${w.recovery ? 'Restart review required; nothing is replayed.' : w.paused ? 'Paused; queued work is held until Resume.' : 'One job at a time in this workspace.'} Job completion is not project acceptance; read the outcome.`;
+      const rows = [...(w.current ? [dictJob(w.current, 'running')] : []), ...(w.queue || []).map((j) => dictJob(j, 'queued')), ...(w.history || []).map((j) => dictJob(j, j.result))];
+      clear(table).append(rows.length ? h('table.table', h('tr', ['Job', 'By', 'State', 'Started', 'Took', 'Outcome'].map((t) => h('th', t))),
       rows.map((j) => h('tr', h('td', h('b', j.kind)), h('td', j.by || 'owner'), h('td', h('span', { class: `badge ${j.state === 'done' ? 'good' : j.state === 'failed' ? 'bad' : j.state === 'running' ? 'rune' : ''}` }, j.state)),
         h('td', j.started ? ago(j.started) : j.queued ? `queued ${ago(j.queued)}` : '—'), h('td', j.seconds != null ? `${j.seconds} s` : '—'), h('td.small.muted', j.outcome ? (j.outcome.error || j.outcome.summary || '') : ''))))
-      : empty('clock', 'No jobs yet', 'Maps, rounds, plans and drafts appear here.')));
+      : empty('clock', 'No jobs yet', 'Maps, rounds, plans and drafts appear here.'));
+    };
+    body.append(recovery.root, queueStatus, table); draw(await get('/api/worker'));
+    offs.push(bus.on('worker', draw));
   }
   return () => offs.forEach((f) => f());
 }

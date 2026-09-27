@@ -26,13 +26,15 @@ import time
 import traceback
 import uuid
 from collections import deque
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from runesmith.app.planner import SkippedByOwner
-from runesmith.app.workspace import Workspace, _read_json, _write_json
+from runesmith.app.workspace import Workspace, WorkspaceError, _read_json, _write_json
+from runesmith.app.worker_journal import Record, MAX_JOBS, validate_job, validate_queue
 
 
 KIND_WORDS = {"python_repository": ("Python project", "Python projects"), "node_repository": ("Node project", "Node projects"),
@@ -120,10 +122,38 @@ class Worker:
         self._cv = threading.Condition()
         self._closing = False
         self._stop_after_step = False
-        self.paused = bool(_read_json(ws.home / "STUDIO_STATE.json", {}).get("paused"))
+        self._records = {}
+        self._storage_error = ''
+        for name in ('STUDIO_STATE.json', 'STUDIO_JOBS.json', 'STUDIO_QUEUE.json', 'STUDIO_CURRENT.json'):
+            try:
+                self._records[name] = Record(ws.home / name)
+            except (OSError, ValueError, WorkspaceError) as error:
+                self._storage_error += f'{name}: {error}. '
+        state = self._records.get('STUDIO_STATE.json')
+        state = state.value if state and state.value is not None else {}
+        if not isinstance(state, dict) or ('paused' in state and type(state['paused']) is not bool):
+            self._storage_error += 'Invalid STUDIO_STATE.json. '
+            state = {}
+        history = self._records.get('STUDIO_JOBS.json')
+        history = history.value if history and history.value is not None else []
+        if not isinstance(history, list) or not all(isinstance(row, dict) and isinstance(row.get('id'), str) for row in history):
+            self._storage_error += 'Invalid STUDIO_JOBS.json. '
+            history = []
+        self._recovery = None
+        try:
+            queued = self._records.get('STUDIO_QUEUE.json')
+            jobs, self._recovery = validate_queue(queued.value if queued else None, ws.root)
+            self._jobs.extend(jobs)
+        except (ValueError, WorkspaceError) as error:
+            self._storage_error += str(error)
+        marker = self._records.get('STUDIO_CURRENT.json')
+        if self._jobs or (marker and marker.digest) or self._storage_error:
+            self._add_recovery('Saved work needs review after restart. Nothing has been replayed.')
+        self.paused = bool(state.get('paused')) or bool(self._recovery)
         self.current: dict[str, Any] | None = None
         self.status, self.detail, self.since = "idle", "", _now()
-        self.history: deque[dict[str, Any]] = deque(_read_json(ws.home / "STUDIO_JOBS.json", [])[-30:], maxlen=30)
+        self.history: deque[dict[str, Any]] = deque(history[-30:], maxlen=30)
+        self._recovered = False
         self.lines: deque[dict[str, Any]] = deque(maxlen=300)
         self._manual_seen = -1
         self._thread = threading.Thread(target=self._run, name="runesmith-worker", daemon=True)
@@ -133,24 +163,143 @@ class Worker:
 
     def start(self) -> None:
         self._recover()
-        self._thread.start()
         self._watch.start()
+        self._thread.start()
 
     def _recover(self) -> None:
         """After the Studio was closed mid-job: record the interrupted job, and set aside relay requests nobody waits for."""
-        marker = self.ws.home / "STUDIO_CURRENT.json"
-        interrupted = _read_json(marker, None)
+        try:
+            self._recover_records()
+        except (OSError, ValueError, WorkspaceError) as error:
+            self._block_storage(error)
+
+    def _recover_records(self):
+        if self._recovered:
+            return
+        if self._storage_error:
+            self.paused = True
+            self.say(self._storage_error + 'Recovery is blocked; no control evidence was overwritten.', 'warn')
+            return
+        for receipt in self.ws.recover_writes():
+            self.say(f"Write recovery: {receipt['key']} — {receipt['state']}", "warn")
+            if receipt['state'] == 'conflict':
+                self._add_recovery('A write-recovery conflict needs inspection before continuing.')
+        marker = self._records['STUDIO_CURRENT.json']
+        interrupted = marker.value
+        try:
+            marker.check()
+            if marker.digest:
+                validate_job(interrupted)
+                same_id = next((job for job in self._jobs if job['id'] == interrupted['id']), None)
+                if same_id and (same_id['kind'] != interrupted['kind'] or
+                        same_id.get('params', {}) != interrupted.get('params', {})):
+                    raise WorkspaceError('Current marker and waiting intention disagree; neither was discarded.')
+                self._add_recovery('Studio closed with a current-job marker. Inspect saved outcomes and provider receipts.')
+            if self._recovery:
+                self.pause()  # Persist the hold before clearing any current marker.
+                self._save_queue(list(self._jobs))
+        except (OSError, ValueError, WorkspaceError) as error:
+            self._block_storage(error)
+            return
         if interrupted:
-            self.history.append(dict(interrupted, finished=_now(), result="interrupted",
-                                     outcome={"summary": "the Studio was closed while this ran; run it again"}))
-            _write_json(self.ws.home / "STUDIO_JOBS.json", list(self.history))
-            marker.unlink(missing_ok=True)
-            self.say(f"The last {interrupted['kind']} was interrupted when the Studio closed. Run it again when you like.",
+            guidance = ('Studio closed while this job ran. Inspect Work & proposals and its saved receipts before continuing. '
+                        'An author call may already have been processed: retrieve its saved response rather than submit it again. '
+                        'Spent check allocations remain spent; no job was automatically replayed.')
+            # A crash after history was committed but before marker removal is
+            # not another interrupted outcome, and must never replay that job.
+            previous = next((row for row in self.history if row['id'] == interrupted['id']), None)
+            if previous and (previous.get('kind') != interrupted['kind'] or
+                    previous.get('params', {}) != interrupted.get('params', {}) or
+                    previous.get('result') not in {'done', 'failed', 'stopped', 'skipped', 'interrupted'}):
+                raise WorkspaceError('Current job and saved outcome disagree; inspect records before continuing.')
+            if not previous:
+                self.history.append(dict(interrupted, finished=_now(), result="interrupted",
+                                         outcome={"summary": guidance}))
+                self._records['STUDIO_JOBS.json'].write(list(self.history))
+            remaining = [job for job in self._jobs if job['id'] != interrupted['id']]
+            self._save_queue(remaining)
+            self._jobs = deque(remaining)
+            marker.remove()
+            self.say(f"Recovered the last {interrupted['kind']} marker; its saved outcome is retained. {guidance}",
                      "warn")
+        if self._recovery:
+            # A park decision is written before changing the queue/history. A
+            # crash between those writes must not make those intentions runnable
+            # again, even when there were more jobs than the history window.
+            decision = Record(self.ws.home / 'studio-recovery' / (self._recovery['revision'] + '.json')).value
+            if decision is not None:
+                if (not isinstance(decision, dict) or decision.get('revision') != self._recovery['revision'] or
+                        decision.get('decision') not in {'keep', 'park'} or decision.get('jobs') != list(self._jobs)):
+                    raise WorkspaceError('Interrupted recovery decision differs from the saved queue; inspect both records.')
+                if decision['decision'] == 'park':
+                    self._add_recovery('A saved set-aside decision was recovered; its intentions remain archived, not queued.')
+                    # A new review identity preserves the previous immutable receipt.
+                    self._recovery['revision'] = uuid.uuid4().hex
+                    self._save_queue([])
+                    self._jobs.clear()
         orphaned = self.ws.set_aside_orphaned_requests()
         if orphaned:
             self.say(f"Set aside {orphaned} chat-relay request(s) from before the restart: nothing waits for them now.",
                      "warn")
+        self._recovered = True
+
+    def _add_recovery(self, reason):
+        if not self._recovery:
+            self._recovery = {'revision': uuid.uuid4().hex, 'created': _now(), 'reasons': []}
+        if reason not in self._recovery['reasons']:
+            self._recovery['reasons'].append(reason)
+
+    def _block_storage(self, error):
+        self._storage_error = str(error)
+        self._add_recovery('Control storage could not be committed. Inspect records; no automatic retry.')
+        self.paused = True
+        self.say(self._storage_error, 'error')
+        self._set('blocked', 'Recovery review required; control storage is uncertain.')
+
+    def _save_queue(self, jobs, *, recovery=...):
+        value = {'version': 1, 'root': str(self.ws.root), 'jobs': jobs,
+                 'recovery': self._recovery if recovery is ... else recovery}
+        validate_queue(value, self.ws.root)
+        self._records['STUDIO_QUEUE.json'].write(value)
+
+    def _require_ready(self):
+        if self._recovery or self._storage_error:
+            raise WorkspaceError('Recovery review is required. Inspect Activity; no job has been replayed.')
+
+    def review_recovery(self, *, revision, decision, reviewed):
+        """Acknowledge inspected evidence; keep paused and never replay a current job."""
+        with self._cv:
+            if (not self._recovery or revision != self._recovery['revision'] or reviewed is not True or not isinstance(decision, str)
+                    or decision not in {'keep', 'park'}):
+                raise WorkspaceError('Recovery review changed or was not acknowledged; refresh Activity.')
+            if self._storage_error or self.current or self._records['STUDIO_CURRENT.json'].digest:
+                raise WorkspaceError('Recovery records still need reconciliation; nothing resumed.')
+            for record in self._records.values():
+                record.check()
+            self.pause()
+            receipt = {'revision': revision, 'decision': decision, 'reviewed_by': 'owner', 'utc': _now(),
+                       'jobs': list(self._jobs), 'recovery': self._recovery,
+                       'scope': 'Review acknowledgement only. Queue stays paused; no job, call, check or apply was run. '
+                                'This does not reconcile provider outcomes or restore spent allocations.'}
+            saved = Record(self.ws.home / 'studio-recovery' / (revision + '.json'))
+            if saved.value is not None:
+                if not isinstance(saved.value, dict) or saved.value.get('decision') != decision or saved.value.get('jobs') != receipt['jobs']:
+                    raise WorkspaceError('A different recovery decision is already recorded; inspect it first.')
+            else:
+                saved.write(receipt)
+            if decision == 'park':
+                for job in self._jobs:
+                    if not any(row['id'] == job['id'] for row in self.history):
+                        self.history.append(dict(job, finished=_now(), result='not_started',
+                                                 outcome={'summary': 'Waiting intention set aside after restart review; no work run.'}))
+                self._records['STUDIO_JOBS.json'].write(list(self.history))
+            jobs = list(self._jobs) if decision == 'keep' else []
+            self._save_queue(jobs, recovery=None)
+            self._jobs = deque(jobs)
+            self._recovery = None
+        self.say('Recovery review recorded. Queue remains paused; Resume is a separate decision.')
+        self._publish_state()
+        return self.snapshot()
 
     def close(self) -> None:
         with self._cv:
@@ -158,29 +307,76 @@ class Worker:
             self._stop_after_step = True
             self._cv.notify_all()
 
-    def enqueue(self, kind: str, **params: Any) -> dict[str, Any]:
-        if kind not in ("map", "round", "plan", "draft", "health"):
-            raise ValueError(f"unknown job {kind!r}")
+    @contextmanager
+    def switch_guard(self):
+        """Prevent a new claim while Studio prepares an idle-home handoff."""
         with self._cv:
+            if self.current:
+                raise WorkspaceError('The current job is still running. Wait for it to finish before switching folders.')
+            marker = self._records.get('STUDIO_CURRENT.json')
+            if marker is None:
+                raise WorkspaceError('Current-job custody is unreadable; inspect recovery before switching folders.')
+            marker.check()
+            if marker.digest:
+                raise WorkspaceError('A current-job marker needs recovery before switching folders.')
+            yield
+
+    def wait_stopped(self, timeout: float = 2.0) -> bool:
+        """A stop request is not proof of completion. Never join while holding _cv."""
+        deadline = time.monotonic() + timeout
+        for thread in (self._thread, self._watch):
+            if thread.ident is not None and thread is not threading.current_thread():
+                thread.join(max(0, deadline - time.monotonic()))
+        return not (self._thread.is_alive() or self._watch.is_alive())
+
+    def enqueue(self, kind: str, **params: Any) -> dict[str, Any]:
+        if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "breakdown", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
+            raise ValueError(f"unknown job {kind!r}")
+        from runesmith.app.build_jobs import BuildJob, PARAMETERS
+        if kind in PARAMETERS:
+            BuildJob(kind, params)  # Validate before creating a queued job or consuming an allocation.
+        from runesmith.app.work_modes import guard_job
+        guard_job(self.ws, kind)
+        with self._cv:
+            self._require_ready()
+            if self._closing:
+                raise WorkspaceError('Studio is closing; no new work was queued.')
             for job in self._jobs:                          # the same job twice in a row is one job
                 if job["kind"] == kind and job["params"] == params:
-                    return job
-            job = {"id": uuid.uuid4().hex[:8], "kind": kind, "params": params, "queued": _now(), "by": "owner"}
+                    return json.loads(json.dumps(job))
+            if len(self._jobs) >= MAX_JOBS:
+                raise WorkspaceError('The queue is full; inspect waiting jobs before adding more.')
+            job = {"id": uuid.uuid4().hex, "kind": kind, "params": params, "queued": _now(), "by": "owner"}
+            validate_job(job)
+            job = json.loads(json.dumps(job, allow_nan=False))
+            try:
+                self._save_queue([*self._jobs, job])  # Acknowledge only a committed intention.
+            except (OSError, WorkspaceError) as error:
+                self._block_storage(error)
+                raise
             self._jobs.append(job)
             self._cv.notify_all()
         self._publish_state()
-        return job
+        return json.loads(json.dumps(job))
 
     def pause(self) -> None:
-        self.paused = True
-        _write_json(self.ws.home / "STUDIO_STATE.json", {"paused": True})
+        with self._cv:
+            self.paused = True
+            if self._storage_error:
+                raise WorkspaceError('Control records need repair; pause is held in memory and no evidence was overwritten.')
+            self._records['STUDIO_STATE.json'].write({'paused': True})
         self.say("Paused. Nothing new starts until you resume; the current step finishes.")
         self._publish_state()
 
     def resume(self) -> None:
-        self.paused = False
-        _write_json(self.ws.home / "STUDIO_STATE.json", {"paused": False})
         with self._cv:
+            if self._closing:
+                raise WorkspaceError('This worker is stopping. Inspect the folder handoff or restart Studio; it cannot resume.')
+            self._require_ready()
+            for record in self._records.values():
+                record.check()
+            self._records['STUDIO_STATE.json'].write({'paused': False})
+            self.paused = False
             self._cv.notify_all()
         self.say("Resumed.")
         self._publish_state()
@@ -188,15 +384,22 @@ class Worker:
     def stop_current(self) -> None:
         self._stop_after_step = True
         self.say("Stopping after the current step…")
+        self._publish_state()
 
     def snapshot(self) -> dict[str, Any]:
         settings = self.ws.settings()
-        return {"status": "paused" if self.paused and not self.current else self.status, "detail": self.detail,
-                "since": self.since, "paused": self.paused, "current": self.current,
-                "queue": list(self._jobs), "history": list(self.history)[::-1][:12],
-                "next_round_utc": self._next_round_utc(settings), "lines": list(self.lines)[-80:],
-                "autonomy": settings["autonomy"], "auto_work": settings["auto_work"],
-                "interval_minutes": settings["interval_minutes"]}
+        with self._cv:
+            recovery = dict(self._recovery, required=True, blocked=bool(self._storage_error),
+                            error=self._storage_error, waiting=len(self._jobs)) if self._recovery else None
+            return {"status": "paused" if self.paused and not self.current else self.status, "detail": self.detail,
+                    "since": self.since, "paused": self.paused, "current": self.current,
+                    "stop_requested": bool(self.current and self._stop_after_step),
+                    "queue": json.loads(json.dumps(list(self._jobs))),
+                    "recovery": json.loads(json.dumps(recovery)),
+                    "history": list(self.history)[::-1][:12],
+                    "next_round_utc": self._next_round_utc(settings), "lines": list(self.lines)[-80:],
+                    "autonomy": settings["autonomy"], "auto_work": settings["auto_work"],
+                    "interval_minutes": settings["interval_minutes"]}
 
     # ------------------------------------------------------------------ helpers --
 
@@ -244,25 +447,65 @@ class Worker:
             with self._cv:
                 while not self._closing:
                     if self._jobs and not self.paused:
-                        job = self._jobs.popleft()
+                        job = self._jobs[0]  # Claim durably before removing the waiting intention.
                         break
                     due = None if self.paused else self._due()
                     if due is not None and due <= 0 and not self._jobs:
-                        job = {"id": uuid.uuid4().hex[:8], "kind": "round", "params": {}, "queued": _now(),
-                               "by": "schedule"}
+                        from runesmith.app.work_modes import configuration, choose_next
+                        try:
+                            if configuration(self.ws)['configured']:
+                                mid = choose_next(self.ws)
+                                if mid is None:
+                                    self._cv.wait(timeout=30.0)
+                                    continue
+                                kind, params = 'mode', {'mode': mid}
+                            else:
+                                kind, params = ('build' if self.ws.settings()['build_steps'] else 'round'), {}
+                        except WorkspaceError as error:
+                            self._set('blocked', str(error))
+                            self._cv.wait(timeout=30.0)
+                            continue
+                        job = {"id": uuid.uuid4().hex, "kind": kind, "params": params, "queued": _now(), "by": "schedule"}
                         break
                     self._cv.wait(timeout=min(30.0, due) if due is not None else 30.0)
                 else:
                     return
-            self._execute(job)
+            try:
+                self._execute(job)
+            except StopRequested:
+                continue  # A pause/close racing with the claim leaves the intention queued.
+            except Exception as error:
+                # Control-record failures must not kill the thread or retry a
+                # possibly dispatched action. Keep its marker and wait for review.
+                self._block_storage(error)
 
-    def _execute(self, job: dict[str, Any]) -> None:
-        self.current = dict(job, started=_now())
-        _write_json(self.ws.home / "STUDIO_CURRENT.json", self.current)
-        self._stop_after_step = False
+    def _execute(self, job: dict[str, Any], *, schedule_next=True) -> dict[str, Any]:
+        if job['kind'] == 'build' and job.get('params', {}).get('author_only') is True:
+            schedule_next = False
+        with self._cv:
+            self._require_ready()
+            if self.paused or self._closing:
+                raise StopRequested()
+            if self.current or self._records['STUDIO_CURRENT.json'].digest:
+                raise WorkspaceError('A current job already owns this worker; nothing else started.')
+            for record in self._records.values():
+                record.check()
+            validate_job(job)
+            current = dict(job, started=_now())
+            self._records['STUDIO_CURRENT.json'].write(current)
+            remaining = [row for row in self._jobs if row['id'] != job['id']]
+            self._save_queue(remaining)
+            self._jobs = deque(remaining)
+            self.current = current
+            self._stop_after_step = False
         started = time.monotonic()
         outcome: dict[str, Any] = {}
         try:
+            from runesmith.app.work_modes import guard_job
+            guard_job(self.ws, job['kind'])  # A switch may have changed since enqueue.
+            if job['kind'] in {'plan', 'goalposts', 'draft', 'build', 'round', 'escalate', 'supplement', 'revise', 'correct', 'breakdown'}:
+                from runesmith.app.environment_intent import require_intent
+                require_intent(self.ws)
             handler = getattr(self, f"_job_{job['kind']}")
             outcome = handler(**job["params"]) or {}
             result = "done"
@@ -282,17 +525,58 @@ class Worker:
             with open(self.ws.home / "logs" / "worker-errors.log", "a", encoding="utf-8", newline="\n") as stream:
                 stream.write(f"{_now()} {job['kind']}\n{traceback.format_exc()}\n")
         finally:
+            if job['kind'] in {'build', 'mode'}:
+                _write_json(self.ws.home / 'WORK.json', {'utc':_now(), 'kind':job['kind'], 'result':result})
             done = dict(job, finished=_now(), seconds=round(time.monotonic() - started, 1), result=result,
                         outcome={k: v for k, v in outcome.items() if k in ("summary", "error", "detail", "objects",
-                                                                            "opportunities", "served", "accepted")})
-            self.history.append(done)
-            _write_json(self.ws.home / "STUDIO_JOBS.json", list(self.history))
-            (self.ws.home / "STUDIO_CURRENT.json").unlink(missing_ok=True)
-            self.current = None
+                                                                            "opportunities", "served", "accepted", "draft", "milestone", "advanced")})
+            with self._cv:
+                self.history.append(done)
+                self._records['STUDIO_JOBS.json'].write(list(self.history))
+                self._records['STUDIO_CURRENT.json'].remove()
+                self.current = None
             self._set("idle", "")
             self.bus.publish("job", done)
+            from runesmith.app.work_modes import configuration
+            try:
+                legacy = not configuration(self.ws)['configured']
+            except WorkspaceError:
+                legacy = False  # Keep the failure receipt; malformed policy cannot restart work.
+            if (schedule_next and legacy and job['kind'] == 'build' and outcome.get('advanced') and self.ws.settings()['auto_work']
+                    and not self.paused and not self._closing and not self._stop_after_step):
+                self.enqueue('build')
+            if (schedule_next and legacy and job['kind']=='build' and outcome.get('replan_needed') and self.ws.settings()['auto_work']
+                    and not self.paused and not self._closing and not self._stop_after_step):
+                self.enqueue('breakdown',milestone=outcome['milestone'])
+        return dict(done, outcome=outcome)
 
     # --------------------------------------------------------------------- jobs --
+
+    def _work_checkpoint(self):
+        if self._stop_after_step or self._closing or self.paused:
+            raise StopRequested()
+        from runesmith.app.work_modes import checkpoint, guard_job
+        if self.current: guard_job(self.ws, self.current['kind'])
+        checkpoint(self.ws)
+        if hasattr(self, '_support_report_revision'):
+            from runesmith.app.support_reports import checkpoint as reports_checkpoint
+            reports_checkpoint(self.ws, self._support_report_revision)
+
+    def _job_mode(self, mode: str) -> dict[str, Any]:
+        from runesmith.app.work_modes import run
+        self._work_checkpoint()
+        result = run(self, mode)
+        self.say(result['summary']); self.bus.publish('mission', {})
+        return result
+
+    def _job_measure(self, measurement: str) -> dict[str, Any]:
+        from runesmith.app.measurements import measure
+        self._work_checkpoint()
+        from runesmith.app.environment_intent import require_intent
+        require_intent(self.ws)
+        receipt = measure(self.ws, measurement)
+        self.bus.publish('mission', {})
+        return {'summary': f"Report measurement: {receipt['status']}; no model call or project change.", 'receipt': receipt['id']}
 
     def _job_map(self, probe: bool | None = None) -> dict[str, Any]:
         settings = self.ws.settings()
@@ -322,11 +606,25 @@ class Worker:
         from runesmith.app.planner import draft_plan
         self._set("planning", "Drafting a plan from your brief and the map")
         self.say("Asking the planner model for a plan from your brief, goals, blueprints and the map")
-        plan = draft_plan(self.ws, self.ws.router(on_call=self._on_call, backoff_s=(5, 20, 60)))
+        plan = draft_plan(self.ws, self.ws.router(on_call=self._on_call, backoff_s=(5, 20, 60)),
+                          checkpoint=self._work_checkpoint,
+                          automatic=bool(getattr(self.ws, '_active_work_mode', None)))
         self.say(f"Plan v{plan['version']} drafted: {len(plan['milestones'])} milestones on "
                  f"{len(plan['tracks'])} tracks. It is yours to edit.")
         self.bus.publish("plan", {"version": plan["version"]})
         return {"summary": f"{len(plan['milestones'])} milestones"}
+
+    def _job_goalposts(self) -> dict[str, Any]:
+        from runesmith.app.goalposts import draft_goalposts
+        def checkpoint():
+            self._work_checkpoint()
+            if self._stop_after_step or self._closing or self.paused:
+                raise StopRequested()
+        self._set("planning", "Proposing measurable goalposts from the evidence")
+        result = draft_goalposts(self.ws, self.ws.router(on_call=self._on_call, backoff_s=()),
+                                 checkpoint=checkpoint)
+        self.bus.publish("goalposts", {"version": result["version"]})
+        return {"summary": f"{len(result['goalposts'])} model-proposed goalposts; no outcomes marked achieved."}
 
     def _job_draft(self, milestone: str | None = None) -> dict[str, Any]:
         from runesmith.app.planner import draft_files
@@ -337,13 +635,86 @@ class Worker:
         self.bus.publish("work", {"draft": draft["id"]})
         return {"summary": draft["title"]}
 
+    def _job_breakdown(self,milestone: str) -> dict[str, Any]:
+        from runesmith.app.breakdowns import propose_breakdown
+        def checkpoint():
+            self._work_checkpoint()
+            if self._stop_after_step or self._closing or self.paused:raise StopRequested()
+        self._set('planning','Breaking down a milestone from its recorded evidence')
+        proposal=propose_breakdown(self.ws,self.ws.router(on_call=self._on_call,backoff_s=()),
+                                   milestone,checkpoint=checkpoint)
+        self.bus.publish('plan',{'breakdown':proposal['id']})
+        return {'summary':f"Proposed {len(proposal['steps'])} prerequisites for {milestone}; original goal unchanged. Review under Goals & plan."}
+
+    def _job_build(self, draft_id: str | None = None, author_only: bool = False) -> dict[str, Any]:
+        return self._run_build_job('build',
+            'Rechecking saved files; no model call or apply' if draft_id is not None else
+            ('Drafting one bounded milestone step; no checks or apply' if author_only else
+             'Drafting and checking one bounded milestone step'), draft_id=draft_id, author_only=author_only)
+
+    def _run_build_job(self, kind, detail, **params):
+        from runesmith.app.build_jobs import BuildJob, execute_build_job
+        request = BuildJob(kind, params)
+        self._set('building', detail)
+        result = execute_build_job(self.ws, request, checkpoint=self._work_checkpoint,
+            on_call=self._on_call, active_job=(self.current or {}).get('id'))
+        self.say(result['summary'])
+        self.bus.publish('work', {'draft': result.get('draft')})
+        self.bus.publish('plan', {'milestone': result.get('milestone')})
+        return result
+
+    def _job_resume_author(self,request_id: str) -> dict[str,Any]:
+        return self._run_build_job('resume_author', 'Retrieving a saved model answer; no new inference', request_id=request_id)
+
+    def _job_revise(self, draft_id: str, quote_id: str, instrument: str, operation_id: str, reason: str) -> dict[str, Any]:
+        return self._run_build_job('revise', 'Authoring one revision from the existing allowance; no checks or apply',
+            draft_id=draft_id, quote_id=quote_id, instrument=instrument, operation_id=operation_id, reason=reason)
+
+    def _job_source_baseline(self, reason: str) -> dict[str, Any]:
+        return self._run_build_job('source_baseline', 'Measuring current source only; no candidate checks or inference', reason=reason)
+
+    def _job_allocate_check(self, draft_id: str, quote_id: str, reason: str) -> dict[str, Any]:
+        return self._run_build_job('allocate_check', 'Running one separately allocated full verification; no inference',
+                                   draft_id=draft_id, quote_id=quote_id, reason=reason)
+
+    def _job_reconcile_check(self, draft_id: str, quote_id: str, reason: str) -> dict[str, Any]:
+        return self._run_build_job('reconcile_check', 'Rechecking a linked preflight refusal once; no inference or apply',
+                                   draft_id=draft_id, quote_id=quote_id, reason=reason)
+
+    def _job_resume_check(self,draft_id: str,reason: str) -> dict[str,Any]:
+        return self._run_build_job('resume_check', 'One retained-candidate check extension; no inference', draft_id=draft_id, reason=reason)
+
+    def _job_correct(self, attempt: str) -> dict[str, Any]:
+        return self._run_build_job('correct', 'Correcting one retained rejected answer under its original scope', attempt=attempt)
+
+    def _job_review_current(self,milestone: str) -> dict[str,Any]:
+        return self._run_build_job('review_current', 'Checking existing project files; no model call or source edits', milestone=milestone)
+
+    def _job_supplement(self,draft_id: str,reason: str,instrument: str,author_only: bool=False) -> dict[str,Any]:
+        return self._run_build_job('supplement', 'One authorized revision after a clarified requirement; spent attempts retained',
+                                   draft_id=draft_id, reason=reason, instrument=instrument, author_only=author_only)
+
+    def _job_escalate(self) -> dict[str, Any]:
+        return self._run_build_job('escalate', 'Using one alternate author after the bounded ordinary attempts')
+
     def _job_round(self) -> dict[str, Any]:
+        from runesmith.app.work_modes import prompt_context
+        from runesmith.app.support_reports import view
+        work_policy = json.dumps(prompt_context(self.ws), ensure_ascii=False)
+        self._job_map(probe=False)
+        self._support_report_revision = view(self.ws)['revision']
+        try:
+            self._work_checkpoint()
+            return self._repair_round(work_policy)
+        finally:
+            del self._support_report_revision
+
+    def _repair_round(self, work_policy: str) -> dict[str, Any]:
         from runesmith.discover import discover
         from runesmith.loop import run_loop
         from runesmith.report import write_report
         from runesmith.steward import opportunity_id
         ws, settings = self.ws, self.ws.settings()
-        self._job_map(probe=False)
         env_map = ws.environment_map() or {"objects": []}
         objects = [o for o in env_map["objects"] if o["kind"] == "python_repository"]
         statuses: dict[str, str] = {}
@@ -395,6 +766,19 @@ class Worker:
                 notes = ws.notes_for_object(obj["name"])
                 if notes:
                     opportunity["issue"] = opportunity["issue"] + "\n\n" + notes
+                opportunity['issue'] += '\n\nWORKSPACE GUIDANCE AND WORK POLICY:\n' + work_policy
+                from runesmith.app.support_reports import packet
+                evidence = packet(ws, obj['name'], expected=obj)
+                if evidence['included']:
+                    # Keep restricted support context out of the generic issue
+                    # stored for learning. The run loop adds it only to this
+                    # repair and excludes the resulting task from reuse/trials.
+                    opportunity['support_evidence'] = evidence
+                    ws.ledger.append('support_report.packet_selected', {
+                        'opportunity': oid, 'object': obj['name'], 'target_path': obj['path'],
+                        'reports': [{'id': r['id'], 'source_sha256': r['source_sha256']} for r in evidence['included']],
+                        'omitted': evidence['omitted'],
+                        'scope': 'Selected for repair context; not proof a provider was called or the report was resolved.'})
                 fresh.append(dict(opportunity, id=oid, object=obj["name"]))
                 new += 1
             label = {"green": "all tests pass", "failing": f"{len(found['opportunities'])} failing test file(s)",
@@ -404,8 +788,7 @@ class Worker:
                      + (f": {found['triage']['reason']}" if found.get("triage") else "")
                      }.get(found["status"], found["status"].replace("_", " "))
             self.say(f"{obj['name']}: {label}" + (f"; {new} new to work on" if new else ""))
-            if self._stop_after_step:
-                raise StopRequested
+            self._work_checkpoint()
         summary: dict[str, Any] = {}
         consumed = 0
         if fresh:
@@ -419,8 +802,7 @@ class Worker:
                 self._report_step(step)
                 self.bus.publish("step", {k: v for k, v in step.items() if isinstance(v, (str, int, float, bool))
                                           or v is None})
-                if self._stop_after_step:
-                    raise StopRequested
+                self._work_checkpoint()
 
             loop_settings = {"min_experience": int(settings["min_experience"]) if settings["kaizen"] else 10**9,
                              "kaizen_every": int(settings["kaizen_every"]),
@@ -488,7 +870,9 @@ class Worker:
                     self.bus.publish("manual", {"waiting": waiting})
             except Exception:                              # never let the watcher die on a half-written file
                 pass
-            time.sleep(3.0)
+            with self._cv:
+                if not self._closing:
+                    self._cv.wait(timeout=3.0)
 
 
 def dump_json(value: Any) -> str:

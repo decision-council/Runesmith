@@ -1,8 +1,85 @@
 // Goals & plan: what the owner wants, in their words; the brief and blueprints; the plan the Planner drafts.
 import { h, icon, get, post, del, bus, toast, commentable, openNotes, clear, ago, plural, humanize, withBusy,
-  confirmDialog, askText, empty, debounce } from '../core.js';
+  confirmDialog, askText, drawer, empty, debounce } from '../core.js';
 
 const STATUS = { open: ['', 'open'], doing: ['rune', 'in progress'], done: ['good', 'done'], dropped: ['', 'dropped'] };
+
+function editInterfaces(milestone, contract, reload) {
+  // Freeze the reviewed revision even if a plan event refreshes behind this drawer.
+  const expectedDigest = contract?.digest ?? null;
+  const rows = structuredClone(contract?.interfaces || []);
+  drawer({title:'Public JSON response interfaces', sub:'Shown to authors · changes invalidate old verification, not spent budgets', render(body, close) {
+    body.append(h('p.small.muted', 'Declare the output names and types before asking a model to build. These declarations do not execute a command, create tests, or prove that an implementation conforms. Never paste private fixture literals. Object fields are flat; array fields describe each returned object.'));
+    const list=h('div');
+    const field=(label,input)=>h('label.field',h('span',label),input);
+    const input=(row,key,label)=>h('input.input',{value:row[key]||'', 'aria-label':label,oninput:e=>row[key]=e.target.value});
+    const draw=()=>{clear(list);rows.forEach((row,index)=>{
+      const card=h('div.card.flat.mt-12');
+      const fields=h('div');
+      card.append(field('Interface ID',input(row,'id',`Interface ${index+1} ID`)),
+        field('Command or API invocation',input(row,'invocation',`Interface ${index+1} invocation`)),
+        field('Public criterion IDs (comma separated)',h('input.input',{value:row.criterion_ids.join(', '),
+          'aria-label':`Interface ${index+1} criteria`,oninput:e=>row.criterion_ids=e.target.value.split(',').map(v=>v.trim()).filter(Boolean)})),
+        field('Response',h('select.input',{'aria-label':`Interface ${index+1} response`,onchange:e=>row.response_type=e.target.value},
+          ['object','array'].map(type=>h('option',{value:type,selected:row.response_type===type},type==='array'?'Array of objects':'Object')))),
+        field('Meaning and error behavior',input(row,'description',`Interface ${index+1} description`)));
+      row.fields.forEach((f,j)=>{
+        const prefix=`Interface ${index+1} field ${j+1}`;
+        fields.append(h('div.card.flat.mt-8',field('Field name',input(f,'name',prefix+' name')),
+          field('Type',h('select.input',{'aria-label':prefix+' type',onchange:e=>f.type=e.target.value},
+            ['string','integer','number','boolean','object','array'].map(type=>h('option',{value:type,selected:f.type===type},type)))),
+          h('label.row',h('input',{type:'checkbox',checked:f.required,'aria-label':prefix+' required',onchange:e=>f.required=e.target.checked}),'Required'),
+          h('label.row',h('input',{type:'checkbox',checked:f.nullable,'aria-label':prefix+' nullable',onchange:e=>f.nullable=e.target.checked}),'May be null'),
+          field('Unit (optional)',input(f,'unit',prefix+' unit')),
+          field('Meaning and constraints',input(f,'description',prefix+' description')),
+          h('button.btn.sm.ghost',{onclick:()=>{row.fields.splice(j,1);draw();}},'Remove field')));
+      });
+      card.append(fields,h('div.row.wrap.mt-8',h('button.btn.sm',{onclick:()=>{
+        row.fields.push({name:'',type:'string',required:true,nullable:false,unit:'',description:''});draw();}},'Add response field'),
+        h('button.btn.sm.ghost',{onclick:()=>{rows.splice(index,1);draw();}},'Remove interface')));list.append(card);
+    });};
+    const reason=h('textarea.textarea',{rows:2,'aria-label':'Interface revision reason',placeholder:'What was clarified, and why?'});
+    body.append(list,h('button.btn.mt-12',{onclick:()=>{rows.push({id:'',invocation:'',description:'',criterion_ids:[],response_type:'object',fields:[]});draw();}},'Add public interface'),
+      field('Revision reason',reason),h('div.row.wrap.mt-12',h('button.btn.primary',{onclick:e=>withBusy(e.currentTarget,async()=>{
+        if(!contract?.criteria?.length){toast('Publish public acceptance criteria first.','warn');return;}
+        if(!reason.value.trim()){toast('Explain this interface revision.','warn');return;}
+        await post(`/api/plan/milestones/${milestone.id}/expectations`,{criteria:contract.criteria,interfaces:rows,
+          expected_digest:expectedDigest,reason:reason.value});close();await reload();toast('Public interfaces published. No call, test, apply or budget reset.','good');
+      })},'Publish response interfaces'),h('button.btn.ghost',{onclick:close},'Cancel')));draw();
+  }});
+}
+
+async function showAuthorContext() {
+  const data = await get('/api/author-context');
+  drawer({title: 'Author context', sub: 'Workspace-wide source selection for future build requests', render(body, close) {
+    const paths = h('textarea.textarea.mono', {rows: 5, value: data.focus.paths.join('\n'),
+      placeholder: 'One exact relative file path per line', 'aria-label': 'Prioritized source files'});
+    const reason = h('input.input', {value: '', placeholder: 'Why does the author need these files?', 'aria-label': 'Context selection reason'});
+    const search = h('input.input', {placeholder: 'Filter file paths', 'aria-label': 'Filter source inventory'});
+    const rows = h('div.list.mt-8');
+    const draw = () => {
+      const matches = data.rows.filter(r => r.path.toLowerCase().includes(search.value.toLowerCase()));
+      clear(rows).append(...matches.slice(0, 100).map(r => h('div.item', h('div.body',
+        h('div.mono.small', r.path), h('div.tiny.muted',
+          `${r.bytes} bytes · ${r.included ? 'included' : 'omitted: ' + r.reason}${r.focused ? ' · prioritized' : ''}`)))));
+      if (matches.length > 100) rows.append(h('p.tiny.muted', `Showing100 of${matches.length} matches; narrow the filter.`));
+    };
+    search.addEventListener('input', draw);
+    body.append(h('p.small', `${data.included_count} files included; ${data.omitted_count} omitted. Source text uses ${data.used_chars} / ${data.budget_chars} characters. This excludes prompt instructions and retained candidate text.`),
+      h('p.tiny.muted', `Prioritize up to${data.max_focus_paths} files, at most${data.focused_file_bytes} bytes each. Other files retain the${data.normal_file_bytes}-byte cap. Total source budget stays fixed. Empty the list to restore default selection.`),
+      data.settings_error ? h('p.callout.warn', data.settings_error) : null,
+      Object.keys(data.focus_errors).length ? h('p.callout.warn', 'Some requested files are unavailable or over budget. Review and save a valid selection before authoring.') : null,
+      data.truncated_inventory ? h('p.callout.warn', 'Inventory display is bounded; not every file is listed.') : null,
+      paths, reason, h('button.btn.primary.mt-8', {onclick: e => withBusy(e.currentTarget, async () => {
+        const selected = paths.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        await post('/api/author-context', {paths: selected, reason: reason.value, snapshot_digest: data.snapshot_digest});
+        toast('Future source selection saved. No model call, project write or permission change.'); close();
+      })}, icon('check'), 'Save future context'),
+      h('p.tiny.muted', 'Existing requests keep their original inputs. Full-source verification and owner acceptance are unchanged. This does not authorize editing the selected files.'),
+      search, rows);
+    draw();
+  }});
+}
 
 /** One click: a chat window you relay by hand, for planning and self-improvement (not for repairs, which take many calls). */
 export async function useChatWindow() {
@@ -20,11 +97,13 @@ export async function useChatWindow() {
 }
 
 export default async function render(root, ctx) {
+  root.classList.add('goals-page');
   const offs = [];
   const head = h('div.page-head', h('div', h('h2', 'Goals & plan'),
     h('p', 'Tell Runesmith what matters in your own words. Say as much or as little as you like: a sentence, a brief, or whole blueprint documents from this folder. The Planner turns it into milestones on named tracks, and can write first files for any milestone as a draft you review.')));
   const left = h('div.col.gap-16'), right = h('div.col.gap-16');
   root.append(head, h('div.grid.two', left, right));
+  head.append(h('button.btn', {onclick: () => ctx.navigate('mission')}, icon('sliders'), 'Modes & measurements'));
 
   // ---- goals
   const goalsCard = h('div.card');
@@ -66,7 +145,7 @@ export default async function render(root, ctx) {
       const cb = h('input', { type: 'checkbox', checked: chosen.has(c.path), onchange: () => { cb.checked ? chosen.add(c.path) : chosen.delete(c.path); } });
       picks.append(h('label.row.small', { style: { cursor: 'pointer' } }, cb, h('span.mono.grow.ellipsis', c.path), h('span.faint', `${Math.round(c.bytes / 1024)} KB`)));
     }
-    save.addEventListener('click', () => withBusy(save, async () => { await post('/api/brief', { text: ta.value, blueprints: [...chosen] }); status.textContent = 'saved just now'; toast('Brief saved. The Planner reads it next time.', 'good'); }));
+    save.addEventListener('click', () => withBusy(save, async () => { await post('/api/brief', { text: ta.value, blueprints: [...chosen] }); status.textContent = 'saved just now'; toast('Brief saved. The Planner reads it next time.', 'good'); drawPlan(); drawGoalposts(); }));
     clear(briefCard).append(h('div.card-head', h('h3', icon('book'), 'Brief'), h('div.actions', status)), ta,
       h('div.label-text.mt-16', 'Blueprint documents the Planner should read'), picks, h('div.row.mt-16', h('span.tiny.faint', 'The Planner reads up to 12,000 characters of blueprints.'), h('span.spacer'), save));
     commentable(briefCard, 'brief', 'current', 'the brief');
@@ -77,13 +156,21 @@ export default async function render(root, ctx) {
   const drawPlan = async () => {
     const data = await get('/api/plan');
     const plan = data.plan;
-    const draftBtn = h('button.btn.primary', { disabled: !data.ready, title: data.ready ? '' : 'Add a model under Thinking power first' }, icon('wand'), plan ? 'Redraft the plan' : 'Draft a plan');
+    const planningBlocks=data.planning_blockers||[];
+    const draftBtn = h('button.btn.primary', { disabled: !data.ready||planningBlocks.length>0, title: planningBlocks.join(' ')||(data.ready ? '' : 'Add a model under Thinking power first') }, icon('wand'), plan ? 'Redraft the plan' : 'Draft a plan');
     draftBtn.addEventListener('click', () => withBusy(draftBtn, async () => {
       if (plan && !(await confirmDialog({ title: 'Redraft the plan?', text: 'The Planner writes a new version from your brief, goals, blueprints, notes and the map. The current version is kept in the home’s plans/ folder.', confirm: 'Redraft' }))) return;
       await post('/api/worker/run', { job: 'plan' }); toast('The Planner is drafting. This page updates when it is done.', 'good', 6000);
     }));
     clear(planCard).append(h('div.card-head', h('h3', icon('route'), 'Plan'), plan ? h('span.badge', `v${plan.version} · ${plan.drafted_by || 'owner'} · ${ago(plan.utc)}`) : null,
-      h('div.actions', h('button.btn.sm', { onclick: async () => { const t = await askText({ title: 'Add a milestone', placeholder: 'e.g. A first page that lists tasks', confirm: 'Add' }); if (t) { await post('/api/plan/milestones', { title: t }); drawPlan(); } } }, icon('plus'), 'Milestone'), draftBtn)));
+      h('div.actions', h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, showAuthorContext)}, icon('eye'), 'Author context'), h('button.btn.sm', { onclick: async () => { const t = await askText({ title: 'Add a milestone', placeholder: 'e.g. A first page that lists tasks', confirm: 'Add' }); if (t) { await post('/api/plan/milestones', { title: t }); drawPlan(); } } }, icon('plus'), 'Milestone'), draftBtn)));
+    if(planningBlocks.length)planCard.append(h('div.callout.warn',h('div',planningBlocks.join(' '),
+      h('button.btn.sm.mt-8',{onclick:()=>ctx.navigate('mission')},'Review planning controls'))));
+    for(const held of data.held_plans||[])planCard.append(h('details.mt-8',
+      h('summary.small',`Returned plan held — ${held.author||'author not recorded'} · ${held.utc}`),
+      h('p.small',held.reason),h('p.small',held.answer?.summary||'No summary returned.'),
+      h('p.tiny.muted','Not installed. Review the retained answer and current inputs before deliberately drafting again. No automatic author retry.'),
+      h('pre.code',JSON.stringify(held.answer,null,2))));
     if (!data.ready) {
       const quick = h('button.btn.sm.primary', icon('chat'), 'Use a chat window (no key)');
       quick.addEventListener('click', () => withBusy(quick, async () => {
@@ -97,30 +184,160 @@ export default async function render(root, ctx) {
     if (!plan) { planCard.append(empty('route', 'No plan yet', 'Write a brief (or just a goal), then let the Planner draft milestones on tracks. You can edit everything.')); return; }
     commentable(planCard, 'plan', 'current', 'the plan');
     if (plan.summary) planCard.append(h('p', plan.summary));
+    if(plan.purpose_origin?.kind)planCard.append(h('p.small.muted',`Purpose origin: ${plan.purpose_origin.kind}. ${plan.purpose_origin.kind==='inferred'?'Inferred suggestions are not owner-approved requirements; disabling inference does not change this provenance.':'Explicit owner inputs guided the model; this is not evidence of completion.'}`));
     if (plan.tracks?.length) planCard.append(h('div.pillbox.mb-8', plan.tracks.map((t) => h('span.badge.violet', { title: t.purpose }, t.name))));
+    const byId = new Map(plan.milestones.map((m) => [m.id, m]));
+    const parentsWithChildren = new Set(plan.milestones.map((m) => m.parent_id).filter(Boolean));
+    const breakdownDepth = (milestone) => {
+      let depth = 0, current = milestone, seen = new Set();
+      while (current?.parent_id && !seen.has(current.id)) {
+        seen.add(current.id); depth += 1; current = byId.get(current.parent_id);
+      }
+      return depth;
+    };
     const list = h('div.list');
     for (const m of plan.milestones) {
       const [cls, label] = STATUS[m.status] || STATUS.open;
+      const readiness = data.readiness?.[m.id];
       const sel = h('select.select', { style: { width: '140px', height: '30px' }, onchange: async () => { await post(`/api/plan/milestones/${m.id}`, { status: sel.value }); drawPlan(); } },
         Object.entries(STATUS).map(([k, [, l]]) => h('option', { value: k, selected: m.status === k }, l)));
       const item = h('div.item', h('div', { class: `ico ${m.status === 'done' ? 'good' : m.status === 'doing' ? 'rune' : 'accent'}` }, icon(m.status === 'done' ? 'check' : 'flag')),
         h('div.body', h('div.title', m.title), m.detail ? h('div.small.muted', m.detail) : null,
           h('div.meta', [m.track, m.done_when ? `done when: ${m.done_when}` : null].filter(Boolean).join(' · ')),
-          h('div.row.mt-8.wrap', sel, h('button.btn.sm', { disabled: !data.ready, onclick: (e) => withBusy(e.currentTarget, async () => { await post('/api/worker/run', { job: 'draft', params: { milestone: m.id } }); toast('Drafting first files for this milestone. They appear under Work → Drafts.', 'good', 6000); }) }, icon('filePlus'), 'Draft first files'),
+          m.parent_id ? h('div.tiny.faint', `Prerequisite of ${m.parent_id} · authored by ${m.drafted_by || 'model'}`) : null,
+          readiness?.unmet.length ? h('div.tiny.warn', `Waiting for: ${readiness.unmet.map(p => `${p.title} (${p.status})`).join('; ')}`) : readiness?.ready ? h('div.tiny.good', 'Prerequisites satisfied — ready to draft') : null,
+          h('div.row.mt-8.wrap', sel, h('button.btn.sm', { disabled: !data.ready || !readiness?.ready, onclick: (e) => withBusy(e.currentTarget, async () => { await post('/api/worker/run', { job: 'draft', params: { milestone: m.id } }); toast('Drafting first files for this milestone. They appear under Work → Drafts.', 'good', 6000); }) }, icon('filePlus'), 'Draft first files'),
+            ['open','doing'].includes(m.status) && (m.depends_on || []).every(id=>byId.get(id)?.status==='done') ? h('button.btn.sm',{
+              onclick:(e)=>withBusy(e.currentTarget,async()=>{
+                await post('/api/worker/run',{job:'review_current',params:{milestone:m.id}});
+                toast('Checking current files against the milestone. No model call, source edits or automatic completion.','good',7000);
+              })},icon('check'),'Check current files') : null,
+            ['open','doing'].includes(m.status) && !parentsWithChildren.has(m.id) && breakdownDepth(m) < 2 ? h('button.btn.sm', {
+              disabled:!data.ready, onclick:(e)=>withBusy(e.currentTarget,async()=>{
+                await post('/api/worker/run',{job:'breakdown',params:{milestone:m.id}});
+                toast('Runesmith is proposing smaller prerequisites from the evidence. The goal stays unchanged.','good',6000);
+              })},icon('route'),'Propose smaller steps') : null,
             h('button.btn.sm.ghost', { onclick: async () => { const t = await askText({ title: 'Edit milestone', value: m.title, confirm: 'Save' }); if (t) { await post(`/api/plan/milestones/${m.id}`, { title: t }); drawPlan(); } } }, icon('pencil'), 'Edit'))),
         h('span', { class: `badge ${cls}` }, label));
+      const expectations = data.acceptance_expectations?.[m.id];
+      const currentCheck = data.current_checks?.find(c=>c.milestone===m.id);
+      if(currentCheck) item.append(h('div.callout.mt-8',h('div',currentCheck.summary,
+        h('div.tiny.muted',`${currentCheck.utc} · project ${currentCheck.verification?.project_checks?.status || 'not run'} · owner acceptance ${currentCheck.verification?.acceptance?.status || 'not run'}`),
+        h('div.tiny.mono',currentCheck.verification?.evidence_dir || 'No executable receipt'),
+        h('div.tiny.muted','Historical check of the recorded snapshot. Review freshness before marking a milestone done.'))));
+      item.append(h('div.mt-8', h('b.small','Public acceptance expectations'),
+        expectations ? h('div',h('div.tiny.muted',`Revision ${expectations.version} · ${expectations.by} · ${expectations.reason}`),
+          h('ul.small',expectations.criteria.map(c=>h('li',`${c.id}: ${c.description}`)))) : h('div.small.muted','No separate public criteria yet.'),
+        expectations?.interfaces?.length ? h('details.mt-8',h('summary.small',`${expectations.interfaces.length} public JSON response interface(s)`),
+          expectations.interfaces.map(row=>h('div.card.flat.mt-8',h('b.small',row.invocation),h('p.tiny',row.description),
+            h('p.tiny.muted',`${row.response_type}; criteria: ${row.criterion_ids.join(', ')}`),
+            h('ul.small',row.fields.map(f=>h('li',`${f.name}: ${f.type} · ${f.required?'required':'optional'}${f.nullable?' · nullable':''}${f.unit?' · '+f.unit:''} — ${f.description}`)))))) : null,
+        h('div.tiny.muted','Criteria are shown to authors. Private assertions stay in verification receipts. Clarification does not reset spent author attempts.'),
+        h('div.row.wrap.mt-8',h('button.btn.sm.ghost',{onclick:async()=>{
+          const value=await askText({title:'Public acceptance criteria',text:'JSON array of {id, description}. Describe behavior, not private fixture values.',
+            value:JSON.stringify(expectations?.criteria || [{id:`${m.id}.behavior`,description:m.done_when || ''}],null,2),multiline:true,confirm:'Continue'});
+          if(value===null)return;
+          let criteria;try{criteria=JSON.parse(value);}catch{toast('Enter a valid JSON array.','warn');return;}
+          const reason=await askText({title:'Why clarify this requirement?',text:'The reason and previous revisions are retained; no budget is reset.',confirm:'Publish'});
+          if(!reason?.trim())return;
+          await post(`/api/plan/milestones/${m.id}/expectations`,{criteria,reason,expected_digest:expectations?.digest ?? null});drawPlan();
+        }},icon('pencil'),'Edit expectations'),
+        h('button.btn.sm.ghost',{disabled:!expectations?.criteria?.length,onclick:()=>editInterfaces(m,expectations,drawPlan)},icon('code'),'JSON response interfaces'))));
       commentable(item, 'milestone', m.id, m.title);
       list.append(item);
     }
     planCard.append(list);
+    for (const b of (data.breakdowns || []).filter(b=>b.state==='proposed')) {
+      planCard.append(h('div.card.flat.mt-16',h('h3','Proposed breakdown'),
+        h('p.tiny.muted', `${b.milestone} · ${b.drafted_by || 'unknown author'} · awaiting adoption`),
+        h('p.small', b.diagnosis), h('p.small.muted', b.coverage),
+        h('ol.small', {style:{paddingLeft:'18px'}}, b.steps.map(s=>h('li.mt-8', h('b',s.title),
+          h('div',s.detail),h('div.muted',`Done when: ${s.done_when}`),h('div.tiny.mono',s.suggested_paths.join(', '))))),
+        h('p.tiny.muted','The parent goal and completed milestones stay intact. Each new step requires its own owner acceptance before delegated application.'),
+        h('button.btn.primary',{onclick:(e)=>withBusy(e.currentTarget,async()=>{
+          if (!(await confirmDialog({title:'Adopt these prerequisite steps?',text:'This adds the proposed steps before the original milestone without changing its success criterion. Existing drafts may need review against the new plan version. No project files are written.',confirm:'Adopt steps'}))) return;
+          await post(`/api/plan/breakdowns/${b.id}/adopt`,{});toast('Prerequisites added; original goal preserved.','good');drawPlan();
+        })},icon('check'),'Adopt prerequisites'),
+        h('button.btn.ghost',{onclick:(e)=>withBusy(e.currentTarget,async()=>{
+          const reason=await askText({title:'Why should this breakdown be reconsidered?',multiline:true,confirm:'Keep feedback'});
+          if (!reason?.trim()) return;
+          await post(`/api/plan/breakdowns/${b.id}/reject`,{reason});toast('Proposal retained with feedback for the next attempt.');drawPlan();
+        })},icon('x'),'Reconsider')));
+    }
+    const reviews=(data.breakdowns || []).filter(b=>b.state!=='proposed');
+    if (reviews.length) planCard.append(h('details.mt-16',h('summary.small','Breakdown history'),reviews.map(b=>
+      h('div.card.flat.mt-8',h('b.small',`${b.milestone} · ${b.state}`),
+        h('p.tiny.muted',`${b.id} · ${b.drafted_by || 'model'} · reviewed by ${b.reviewed_by || b.adopted_by || 'owner'}`),
+        b.rejection_reason ? h('p.small',b.rejection_reason) : h('p.small',`Prerequisites: ${(b.children || []).join(', ')}`),
+        h('p.tiny.mono',`Evidence packet: ${b.packet_receipt || 'not recorded'}`)))));
     if (plan.first_steps?.length) planCard.append(h('div.label-text.mt-16', 'First steps'), h('ol.small', { style: { paddingLeft: '18px' } }, plan.first_steps.map((s) => h('li', s))));
+    if (plan.assumptions?.length) planCard.append(h('div.callout.warn.mt-16', h('b', 'Planner assumptions — not owner-approved requirements'), h('ul.small', plan.assumptions.map(a => h('li', a)))));
     if (plan.questions?.length) planCard.append(h('div.callout.accent.mt-16', icon('info'), h('div', h('b', 'The Planner asks you'), h('ul.small', { style: { paddingLeft: '18px', margin: '6px 0 0' } }, plan.questions.map((q) => h('li', q))),
       h('div.tiny.faint', 'Answer by commenting on the plan (the comment button on this card) or by editing the brief; the next draft reads both.'))));
   };
 
+  const goalpostsCard = h('div.card');
+  const drawGoalposts = async () => {
+    const data = await get('/api/goalposts');
+    const record = data.goalposts;
+    const propose = h('button.btn.sm', {disabled:!data.ready,title:(data.planning_blockers||[]).join(' '), onclick:(e)=>withBusy(e.currentTarget,async()=>{
+      await post('/api/worker/run', {job:'goalposts'});
+      toast('Runesmith is proposing measurable targets. Existing plans and owner goals stay unchanged.', 'good', 6000);
+    })}, icon('wand'), record ? 'Reassess goalposts' : 'Propose goalposts');
+    clear(goalpostsCard).append(h('div.card-head', h('h3', icon('target'), 'Runesmith’s goalposts'), propose),
+      h('p.small.muted', 'Model-authored targets, not measured achievements. Minimum, good and frontier tiers guide construction and optimization; they do not replace owner acceptance.' ));
+    if(data.planning_blockers?.length)goalpostsCard.append(h('p.small.warn',data.planning_blockers.join(' ')));
+    if (!record) { goalpostsCard.append(h('p.small.faint', 'No proposed goalposts yet. Give Runesmith your purpose and observations, then ask it to define useful measures.')); return; }
+    goalpostsCard.append(h('p.tiny.faint', `v${record.version} · ${record.drafted_by || 'unknown author'} · ${ago(record.utc)}`),
+      h('p.small', record.summary));
+    const list = h('div.list');
+    for (const g of record.goalposts) {
+      list.append(h('div.item', h('div.body', h('div.title', g.title),
+        h('div.meta', `${g.tier} · proposed · ${g.milestone_ids.join(', ') || 'future direction'}`),
+        h('div.small.mt-8', h('b', 'Measure: '), g.measurement),
+        h('div.small', h('b', 'Target: '), g.target),
+        h('div.small', h('b', 'Scenario: '), g.scenario || 'not yet specified'),
+        h('div.small', h('b', 'Window: '), g.window || 'not yet specified'),
+        h('div.small.muted', g.why),
+        h('div.small.mt-8', h('b', 'Next check: '), g.next_check),
+        h('div.tiny.faint', `Basis in supplied context: ${g.evidence_refs.join(', ') || 'new hypothesis; no evidence cited'}`))));
+    }
+    goalpostsCard.append(list);
+  };
+
+  const buildCard = h('div.card');
+  const drawBuild = async () => {
+    const [settings, build] = await Promise.all([get('/api/settings'), get('/api/build')]);
+    const checks = h('input', {type:'checkbox', checked:settings.build_steps});
+    const apply = h('input', {type:'checkbox', checked:build.apply});
+    const paths = h('input.input.mono', {value:(settings.build_paths || []).join(', '), placeholder:'src, tests, pyproject.toml'});
+    const save = h('button.btn', {onclick: () => withBusy(save, async () => {
+      if (apply.checked && !build.apply && !(await confirmDialog({title:'Delegate checked builds in this folder?',
+        text:'Only the paths below may be written. The owner-maintained acceptance test for the milestone must pass, alongside project tests. You can revoke this here. Existing backups and Undo remain available.',confirm:'Delegate'}))) return;
+      await post('/api/settings', {build_steps:checks.checked, build_apply:apply.checked,
+        build_paths:paths.value.split(',').map(x=>x.trim()).filter(Boolean)});
+      toast('Build settings saved for this folder.', 'good'); drawBuild();
+    })}, 'Save build settings');
+    clear(buildCard).append(h('h3', icon('hammer'), 'Build continuation'),
+      h('p.small.muted', 'Continue an existing milestone from real source and feedback. Review is the default. Delegated writes require an unchanged snapshot and owner acceptance, not only the author’s own tests.'),
+      h('label.row', checks, 'Enable executable Python unittest checks (local working copy)'),
+      h('label.row.mt-8', apply, 'Apply and advance automatically after acceptance'),
+      h('div.label-text.mt-8', 'Allowed files or folders, comma separated'), paths,
+      h('p.tiny.faint', `Owner acceptance files: ${build.acceptance_folder} / <milestone-id>.py (unittest). Working copies are not an OS sandbox.`),
+      h('div.row.wrap', save, h('button.btn.primary', {onclick:async()=>{await post('/api/worker/run',{job:'build'});toast('Build step queued. Follow it under Work.', 'good');}}, icon('play'), 'Build next step')),
+      build.last ? h('p.small.mt-8', build.last.summary) : null);
+  };
+
   left.append(goalsCard, briefCard);
-  right.append(planCard);
-  await Promise.all([drawGoals(), drawBrief(), drawPlan()]);
-  offs.push(bus.on('plan', debounce(drawPlan, 300)), bus.on('goals', debounce(drawGoals, 300)), bus.on('job', (j) => { if (j.kind === 'plan' || j.kind === 'draft') drawPlan(); }));
-  return () => offs.forEach((f) => f());
+  right.append(goalpostsCard, planCard, buildCard);
+  await Promise.all([drawGoals(), drawBrief(), drawPlan(), drawBuild(), drawGoalposts()]);
+  offs.push(bus.on('goalposts', debounce(drawGoalposts, 300)));
+  offs.push(bus.on('job', debounce(drawBuild, 300)));
+  offs.push(bus.on('mission', debounce(()=>{drawPlan();drawGoalposts();}, 300)));
+  offs.push(bus.on('brief', debounce(()=>{drawPlan();drawGoalposts();}, 300)),
+    bus.on('settings', debounce(()=>{drawPlan();drawGoalposts();}, 300)),
+    bus.on('inference', debounce(()=>{drawPlan();drawGoalposts();}, 300)),
+    bus.on('goals', debounce(()=>{drawPlan();drawGoalposts();}, 300)));
+  offs.push(bus.on('plan', debounce(drawPlan, 300)), bus.on('goals', debounce(drawGoals, 300)), bus.on('job', (j) => { if (['plan','draft','build','breakdown'].includes(j.kind)) drawPlan(); }));
+  return () => {root.classList.remove('goals-page');offs.forEach((f) => f());};
 }

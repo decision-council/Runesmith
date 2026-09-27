@@ -210,8 +210,10 @@ def _is_type(value: Any, kind: str) -> bool:
     return True if expected is None else isinstance(value, expected)
 
 
-def schema_problems(value: Any, schema: dict | None, path: str = "answer") -> list[str]:
-    """What a person should ask the chat model to fix (the JSON-schema subset Runesmith's schemas use)."""
+def schema_problems(value: Any, schema: dict | bool | None, path: str = "answer") -> list[str]:
+    """Format feedback for Runesmith's schema subset, not code admission or verification."""
+    if schema is False:
+        return [f"{path}: this value is not allowed"]
     if not isinstance(schema, dict):
         return []
     kind = schema.get("type")
@@ -220,6 +222,23 @@ def schema_problems(value: Any, schema: dict | None, path: str = "answer") -> li
         if not any(_is_type(value, k) for k in kinds):
             return [f"{path}: expected {' or '.join(kinds)}, got {type(value).__name__}"]
     problems = []
+    for keyword in ("allOf", "anyOf", "oneOf"):
+        alternatives = schema.get(keyword)
+        if not isinstance(alternatives, list):
+            continue
+        results = [schema_problems(value, branch, path) for branch in alternatives]
+        matches = sum(not errors for errors in results)
+        if keyword == "allOf":
+            problems.extend(error for errors in results for error in errors)
+        elif not matches:
+            problems.append(f"{path}: does not match any of the {len(results)} allowed {keyword} formats")
+            if results:
+                # Report the closest branch, deterministically, rather than every
+                # contradictory alternative. Sibling constraints still apply below.
+                closest = min(range(len(results)), key=lambda i: len(results[i]))
+                problems.extend(results[closest])
+        elif keyword == "oneOf" and matches != 1:
+            problems.append(f"{path}: matches {matches} oneOf formats; exactly one is required")
     if "enum" in schema and value not in schema["enum"]:
         problems.append(f"{path}: must be one of {schema['enum']}")
     if isinstance(value, str):

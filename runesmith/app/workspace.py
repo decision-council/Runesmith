@@ -60,11 +60,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "min_experience": 8,
     "kaizen_every": 8,
     "theme": "auto",
+    "build_steps": False,          # executable build checks are explicitly enabled per workspace
+    "build_apply": False,          # only owner acceptance + unchanged source + a root-bound grant can apply
+    "build_paths": [],
 }
 SETTING_TYPES: dict[str, Any] = {
     "onboarded": bool, "workspace_name": str, "use_type": str, "autonomy": str, "auto_work": bool,
     "interval_minutes": (int, float), "probe_tests": bool, "exclude": list, "max_objects": int, "read_notes": bool,
     "kaizen": bool, "min_experience": int, "kaizen_every": int, "theme": str,
+    "build_steps": bool, "build_apply": bool, "build_paths": list,
 }
 CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"},
            "use_type": {"", "improve", "build", "docs", "explore"}}
@@ -202,6 +206,10 @@ class Workspace:
                 raise WorkspaceError(f"{key} must be between {RANGES[key][0]} and {RANGES[key][1]}")
             if key == "exclude":
                 value = sorted({str(v).strip() for v in value if str(v).strip()})
+            if key == "build_paths":
+                value = sorted({str(v).strip().rstrip('/') for v in value if str(v).strip()})
+                if any(not self._safe_rel(v) for v in value):
+                    raise WorkspaceError("build paths must be inside this workspace and outside its private home")
             if key == "workspace_name":
                 value = value.strip()[:80]
             clean[key] = value
@@ -209,6 +217,10 @@ class Workspace:
             config = self.config()
             config["app"] = dict(config.get("app") or {}, **clean)
             self.save_config(config)
+            if "build_apply" in clean or "build_paths" in clean:
+                _write_json(self.home / "BUILD_GRANT.json", {"id":uuid.uuid4().hex, "root":str(self.root),
+                    "home":str(self.home), "enabled":config["app"].get("build_apply", False),
+                    "paths":config["app"].get("build_paths", []), "utc":_now(), "by":"operator"})
         self.ledger.append("settings.changed", {"keys": sorted(clean)})
         return self.settings()
 
@@ -319,6 +331,7 @@ class Workspace:
             base_url = str(spec.get("base_url") or "")
             instruments.append({
                 "name": name, "kind": spec.get("kind"), "model": spec.get("model"), "base_url": spec.get("base_url"),
+                "fallback_models": list(spec.get('fallback_models') or []),
                 "preset": spec.get("preset"), "label": spec.get("label") or (preset or {}).get("label") or name,
                 "local": bool((preset or {}).get("local")) or "127.0.0.1" in base_url or "localhost" in base_url,
                 "key": {"secret": secret, "saved": bool(secret and self.keys.has(secret)),
@@ -380,11 +393,17 @@ class Workspace:
         if kind not in ("openai", "milliner", "manual"):
             raise WorkspaceError("the kind must be openai, milliner or manual")
         clean = {k: spec[k] for k in ("kind", "model", "base_url", "preset", "label", "json_mode", "timeout_s", "note",
-                                      "api_key_env", "token_env")
+                                      "api_key_env", "token_env", "caller_tag", "budget_tag")
                  if spec.get(k) not in (None, "")}
-        for key in ("model", "base_url", "label", "note"):
+        for key in ("model", "base_url", "label", "note", "caller_tag", "budget_tag"):
             if key in clean:
                 clean[key] = str(clean[key]).strip()[:300]
+        if kind == 'milliner' and 'fallback_models' in spec:
+            models = spec['fallback_models']
+            if (not isinstance(models, list) or len(models) > 5 or
+                    any(not isinstance(m, str) or not m.strip() or len(m) > 300 for m in models)):
+                raise WorkspaceError('Use up to five fallback model names.')
+            clean['fallback_models'] = list(dict.fromkeys(m.strip() for m in models if m.strip() != clean.get('model')))
         if kind in ("openai", "milliner") and not (clean.get("base_url") and clean.get("model")):
             raise WorkspaceError("an endpoint address and a model name are needed")
         if clean.get("base_url") and not str(clean["base_url"]).startswith(("http://", "https://")):
@@ -447,19 +466,29 @@ class Workspace:
         return result
 
     def list_models(self, *, name: str | None = None, preset: str | None = None, base_url: str | None = None,
-                    key_value: str | None = None) -> dict[str, Any]:
+                    key_value: str | None = None, provider: str = "") -> dict[str, Any]:
         from runesmith.app.providers import list_models
         key = (key_value or "").strip()
+        kind = (PRESET_BY_ID.get(preset) or {}).get("kind", "openai")
         if name:
             spec = self.config()["instruments"].get(name) or {}
+            kind = spec.get("kind", kind)
+            if (base_url and base_url.rstrip('/') != str(spec.get('base_url', '')).rstrip('/')
+                    and not key):
+                return {"ok": False, "models": [], "detail": "Supply a key explicitly for a different endpoint."}
             base_url = base_url or spec.get("base_url")
             secret = spec.get("api_key_secret") or spec.get("token_secret")
             key = key or (self.keys.supplier(secret)() if secret else "")
+            if not key:
+                from runesmith.instruments import secret_from
+                prefix = 'token' if kind == 'milliner' else 'api_key'
+                key = secret_from(spec.get(prefix+'_env'), spec.get(prefix+'_env_file'),
+                                  spec.get(prefix+'_key'))()
         if not base_url and preset:
             base_url = (PRESET_BY_ID.get(preset) or {}).get("base_url")
         if not base_url:
             return {"ok": False, "models": [], "detail": "no endpoint address"}
-        return list_models(base_url, key)
+        return list_models(base_url, key, kind=kind, provider=provider)
 
     def record_call(self, event: dict[str, Any]) -> None:
         """Count one model call per instrument (the router's on_call hook), for the operations view."""
@@ -472,9 +501,18 @@ class Workspace:
             row["latency_s"] = round(row["latency_s"] + float(event.get("latency_s") or 0), 3)
             row["last_utc"] = _now()
             row["model"] = event.get("model")
+            for field in ('tokens_in', 'tokens_out'):
+                if isinstance(event.get(field), (int, float)):
+                    row[field] = row.get(field, 0) + event[field]
+            if isinstance(event.get('est_usd'), (int, float)):
+                row['estimated_usd'] = round(row.get('estimated_usd', 0) + event['est_usd'], 8)
+                row['costed_calls'] = row.get('costed_calls', 0) + 1
             if not event.get("ok"):
                 row["last_error"] = (event.get("error") or event.get("error_kind") or "")[:200]
             _write_json(self.home / "OPERATIONS.json", stats)
+        self.ledger.append('instrument.call', {k:event[k] for k in ('key','attempt','role','instrument','model',
+            'provider','requested_model','job_id','request_id','ok','error_kind','latency_s','tokens_in','tokens_out','est_usd','accounting','cached','prompt_bytes')
+            if k in event})
 
     def call_stats(self) -> dict[str, Any]:
         return _read_json(self.home / "OPERATIONS.json", {"instruments": {}})["instruments"]
@@ -587,6 +625,9 @@ class Workspace:
     def plan(self) -> dict[str, Any] | None:
         return _read_json(self.home / "PLAN.json", None)
 
+    def goalposts(self) -> dict[str, Any] | None:
+        return _read_json(self.home / "GOALPOSTS.json", None)
+
     def save_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
         previous = self.plan()
         milestones = []
@@ -603,7 +644,11 @@ class Workspace:
                            for t in (plan.get("tracks") or []) if isinstance(t, dict) and t.get("name")][:10],
                 "first_steps": [str(s)[:300] for s in (plan.get("first_steps") or [])][:10],
                 "questions": [str(s)[:300] for s in (plan.get("questions") or [])][:10],
+                "assumptions": [str(s)[:500] for s in (plan.get("assumptions") or [])][:20],
                 "drafted_by": plan.get("drafted_by"), "utc": _now(), "version": (previous or {}).get("version", 0) + 1}
+        if isinstance(plan.get('purpose_origin'), dict):
+            body['purpose_origin'] = {k: str(plan['purpose_origin'].get(k, ''))[:200]
+                                      for k in ('kind', 'policy_revision', 'direction_digest')}
         with self._lock:
             if previous:
                 _write_json(self.home / "plans" / f"PLAN-v{previous.get('version', 0)}.json", previous)
@@ -660,15 +705,37 @@ class Workspace:
         recent = []
         for s in self.sessions()[-40:][::-1]:
             row = {k: s.get(k) for k in ("key", "status", "strict_success", "cycle_seconds", "generation", "repo",
-                                         "trial_arm")}
+                                         "trial_arm", "context_scope")}
             row["calls"] = len(s.get("calls") or [])
             row["object"] = self._object_label(Path(row["repo"])) if row.get("repo") else None
             row["issue"] = (s.get("issue") or "")[:400]
             recent.append(row)
         drafts = self.drafts()
+        from runesmith.app.build_memory import recent_observations
+        from runesmith.app.build_corrections import correction_candidates
+        from runesmith.app.building import author_context_preflight, build_escalation_status, supplement_status
+        from runesmith.app.acceptance_contracts import owner_feedback
+        from runesmith.app.verification_resume import resume_status
+        from runesmith.app.author_recovery import pending_authors
+        from runesmith.app.source_baseline import baseline_status
+        from runesmith.app.verification_allocation import allocation_status
+        from runesmith.app.verification_reconciliation import reconciliation_status
+        for draft in drafts:
+            if draft.get('milestone'):
+                draft['requirement_supplement'] = supplement_status(self,draft)
+            draft['public_feedback'] = owner_feedback(self,draft.get('verification') or {})
+            draft['check_resume'] = resume_status(self,draft)
+            draft['check_allocation'] = allocation_status(self,draft)
+            draft['check_reconciliation'] = reconciliation_status(self,draft)
+            if draft.get('state') == 'waiting' and (draft.get('verification') or {}).get('status') == 'stale':
+                draft['author_context_preflight'] = author_context_preflight(self, draft)
         return {"proposals": proposals, "drafts": drafts, "opportunities": work.get("opportunities", []),
                 "objects": work.get("objects", {}), "round_utc": work.get("utc"), "last_round": work.get("summary"),
-                "recent_sessions": recent,
+                "recent_sessions": recent, "build_memory": recent_observations(self),
+                "build_corrections": correction_candidates(self),
+                "build_escalation": build_escalation_status(self),
+                "pending_authors": pending_authors(self),
+                "source_baseline": baseline_status(self),
                 "counts": dict(Counter(p["state"] for p in proposals)),
                 "draft_counts": dict(Counter(d["state"] for d in drafts))}
 
@@ -791,7 +858,18 @@ class Workspace:
 
     def _backup_and_write(self, backup_key: str, plans: list[tuple[str, Path, bytes | None, bytes]]) -> None:
         backup = self.home / "backups" / backup_key
-        shutil.rmtree(backup, ignore_errors=True)
+        if not backup.resolve().is_relative_to((self.home / 'backups').resolve()):
+            raise WorkspaceError('invalid backup target')
+        prior = _read_json(backup / 'TRANSACTION.json', {})
+        if prior.get('state') in ('prepared', 'conflict'):
+            raise WorkspaceError('a previous partial write must be recovered first')
+        # Keep earlier journal attempts instead of deleting their evidence.
+        if backup.exists():
+            archived = backup.with_name(backup.name + '-prior-' + uuid.uuid4().hex[:8])
+            backup.rename(archived)
+        manifest = {'key':backup_key, 'state':'prepared', 'root':str(self.root), 'utc':_now(),
+                    'files':[{'path':rel, 'before':hashlib.sha256(old).hexdigest() if old is not None else None,
+                              'after':hashlib.sha256(data).hexdigest()} for rel, _target, old, data in plans]}
         for rel, _target, current, _data in plans:
             saved = backup / rel
             saved.parent.mkdir(parents=True, exist_ok=True)
@@ -799,9 +877,49 @@ class Workspace:
                 saved.write_bytes(current)
             else:
                 saved.with_name(saved.name + ".absent").write_bytes(b"")
-        for _rel, target, _current, data in plans:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
+        _write_json(backup / 'TRANSACTION.json', manifest)
+        try:
+            for _rel, target, _current, data in plans:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temp = target.with_name(target.name + '.runesmith-' + uuid.uuid4().hex[:8] + '.tmp')
+                temp.write_bytes(data)
+                temp.replace(target)
+        except BaseException:
+            self.recover_writes()
+            raise
+        _write_json(backup / 'TRANSACTION.json', dict(manifest, state='committed', committed=_now()))
+
+    def recover_writes(self) -> list[dict[str, Any]]:
+        """Rollback unfinished batches only where bytes still belong to that batch."""
+        receipts = []
+        for path in (self.home / 'backups').glob('*/TRANSACTION.json'):
+            manifest = _read_json(path, {})
+            if manifest.get('state') != 'prepared' or manifest.get('root') != str(self.root):
+                continue
+            conflicts = []
+            for f in manifest.get('files', []):
+                rel = self._safe_rel(f['path'])
+                if not rel:
+                    conflicts.append(f['path']); continue
+                target, saved = self.root / rel, path.parent / rel
+                current = target.read_bytes() if target.is_file() else None
+                digest = hashlib.sha256(current).hexdigest() if current is not None else None
+                if digest == f['before']:
+                    continue
+                if digest != f['after']:
+                    conflicts.append(rel); continue
+                if f['before'] is None:
+                    target.unlink()
+                elif saved.is_file() and hashlib.sha256(saved.read_bytes()).hexdigest() == f['before']:
+                    target.write_bytes(saved.read_bytes())
+                else:
+                    conflicts.append(rel)
+            recovered = dict(manifest, state='conflict' if conflicts else 'rolled_back', conflicts=conflicts,
+                             recovered=_now())
+            _write_json(path, recovered)
+            self.ledger.append('write.recovered', {'key':manifest['key'], 'state':recovered['state'], 'conflicts':conflicts})
+            receipts.append(recovered)
+        return receipts
 
     def _restore(self, backup_key: str, base: Path, files: list[str]) -> None:
         backup = self.home / "backups" / backup_key
@@ -948,7 +1066,8 @@ class Workspace:
         return {"ok": True, "draft": draft["id"], "fixed": fixed, "unresolved": unresolved}
 
     def save_draft(self, *, title: str, why: str, files: list[dict[str, Any]], drafted_by: str | None,
-                   milestone: str | None = None) -> dict[str, Any]:
+                   milestone: str | None = None, author_request_key: str | None = None,
+                   answer_digest: str | None = None) -> dict[str, Any]:
         clean, refused = [], []
         for f in files[:MAX_DRAFT_FILES]:
             rel = self._safe_rel(str(f.get("path") or ""))
@@ -962,13 +1081,22 @@ class Workspace:
                      "purpose": str(f.get("purpose") or "")[:300], "existed": (self.root / rel).is_file()}
             if isinstance(f.get("base"), str):      # an edit of a known version: applied only onto that version
                 entry["base"] = f["base"].replace("\r\n", "\n")
+            if f.get("expected_absent") is True:
+                entry["expected_absent"] = True
+            if isinstance(f.get("expected_sha256"), str):
+                entry["expected_sha256"] = f["expected_sha256"]
+            if isinstance(f.get("retained_from"), str):
+                entry["retained_from"] = f["retained_from"][:80]
+            if f.get("revision_base") in ("current", "candidate"):
+                entry["revision_base"] = f["revision_base"]
             clean.append(entry)
         if not clean:
             raise WorkspaceError("the draft had no usable files" + (f" (refused: {', '.join(refused)})" if refused else ""))
         draft = {"id": "d" + time.strftime("%Y%m%d%H%M%S", time.gmtime()) + uuid.uuid4().hex[:4],
                  "title": (title or "Draft").strip()[:200], "why": (why or "").strip()[:2000], "files": clean,
                  "refused": refused, "drafted_by": drafted_by, "milestone": milestone, "state": "waiting",
-                 "verified": False, "utc": _now()}
+                 "verified": False, "utc": _now(),
+                 "author_request_key":author_request_key, "answer_digest":answer_digest}
         _write_json(self.home / "drafts" / draft["id"] / "DRAFT.json", draft)
         self.ledger.append("draft.created", {"id": draft["id"], "files": [f["path"] for f in clean],
                                              "drafted_by": drafted_by})
@@ -1002,6 +1130,12 @@ class Workspace:
                     continue
                 target = self.root / rel
                 current = target.read_bytes() if target.is_file() else None
+                if f.get('expected_sha256') and (current is None or hashlib.sha256(current).hexdigest()!=f['expected_sha256']):
+                    conflicts.append(rel)
+                    continue
+                if f.get("expected_absent") and target.exists():
+                    conflicts.append(rel)
+                    continue
                 if "base" in f:                          # an edit: only onto the version it was made from
                     if current is None or _lf(current) != f["base"]:
                         conflicts.append(rel)
@@ -1038,6 +1172,8 @@ class Workspace:
                         "detail": "these files changed after the draft was applied, so nothing was restored"}
             self._restore(f"draft-{draft_id}", self.root, files)
             self._save_draft_state(draft, "undone")
+            if draft.get('applied_by') == 'delegated_build' and draft.get('milestone'):
+                self.update_milestone(draft['milestone'], {'status':'doing'})
         self.ledger.append("draft.undone", {"id": draft_id})
         return {"ok": True}
 
@@ -1189,14 +1325,23 @@ class Workspace:
                 targets.append((note["target"]["type"], note["target"]["id"]))
         return self.notes.operator_notes(targets)
 
-    def notes_for_plan(self) -> str:
-        if not self.settings()["read_notes"]:
-            return ""
+    def planning_note_selection(self, *, milestone_id=None, draft_id=None) -> dict[str, Any]:
         targets = [("workspace", "root"), ("plan", "current"), ("brief", "current")]
         for note in self.notes.all():
             if note["target"]["type"] in ("goal", "milestone", "object", "draft"):
                 targets.append((note["target"]["type"], note["target"]["id"]))
-        return self.notes.operator_notes(targets, max_chars=3000)
+        priority = [('draft', draft_id)] if draft_id else []
+        if milestone_id: priority.append(('milestone', milestone_id))
+        enabled = self.settings()['read_notes']
+        result = self.notes.operator_note_selection(targets if enabled else [], max_chars=3000,
+                                                    priority_targets=priority)
+        return dict(result, enabled=enabled)
+
+    def notes_for_plan(self, *, milestone_id=None, draft_id=None) -> str:
+        selection = self.planning_note_selection(milestone_id=milestone_id, draft_id=draft_id)
+        if selection['blockers']:
+            raise WorkspaceError('; '.join(selection['blockers']))
+        return selection['text']
 
     # ----------------------------------------------------------------- the manual --
 

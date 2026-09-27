@@ -1,5 +1,5 @@
 // Overview: where things stand, what needs you, and what comes next.
-import { h, icon, get, post, bus, toast, commentable, ago, plural, KIND, worstBand, BAND_COLOR, BAND_LABEL, humanize,
+import { h, icon, get, bus, toast, commentable, ago, plural, KIND, worstBand, BAND_COLOR, BAND_LABEL, humanize,
   withBusy, clock } from '../core.js';
 import { LOGO } from '../icons.js';
 
@@ -16,8 +16,20 @@ export default async function render(root, { app, navigate, refreshState }) {
 
   // ---- hero: the one thing to do next
   let cta, line, extra = null;
-  if (!s.ready.any) {
-    line = 'Runesmith has mapped your folder. Give it thinking power (a model on this computer, an API key, or a chat window) and it can start working.';
+  if (s.worker?.recovery?.required) {
+    line = 'Saved work needs restart recovery review. Inspect retained outcomes before deciding what may continue; no job has been replayed.';
+    cta = h('button.btn.primary.lg', { onclick: () => navigate('activity') }, icon('alert'), 'Review restart recovery');
+  } else if (s.manual_waiting) {
+    line = 'A request is waiting for you to relay it to a chat model. Manual transport needs a person even when scheduling is enabled.';
+    cta = h('button.btn.primary.lg', { onclick: () => navigate('inference', 'relay') }, icon('chat'), 'Open the chat relay');
+  } else if (s.worker?.current) {
+    line = 'A job is already in progress. Inspect its current step and saved outcomes; running is not the same as passing checks or applying a change.';
+    cta = h('button.btn.primary.lg', { onclick: () => navigate('activity') }, icon('activity'), 'Inspect current work');
+  } else if (s.worker?.paused) {
+    line = 'The work queue is paused. Review Activity before resuming; an enabled schedule or configured model does not override the pause.';
+    cta = h('button.btn.primary.lg', { onclick: () => navigate('activity') }, icon('activity'), 'Review paused work');
+  } else if (!s.ready.any) {
+    line = `${s.mapped_utc ? 'Runesmith has a saved map of your folder.' : 'Runesmith can map your folder.'} Add thinking power (a model on this computer, an API key, or a chat window), then review the modes and prerequisites for the work you want.`;
     cta = h('button.btn.primary.lg', { onclick: () => { navigate('inference'); setTimeout(() => bus.emit('ui:add-model', {}), 250); } }, icon('cpu'), 'Add thinking power');
     extra = h('button.btn.lg', { title: 'No key and no install: you relay each request to a chat you already use', onclick: (e) => withBusy(e.currentTarget, async () => {
       const { useChatWindow } = await import('./goals.js');
@@ -28,25 +40,22 @@ export default async function render(root, { app, navigate, refreshState }) {
   } else if (waiting) {
     const fixes = s.proposals.waiting || 0, drafts = s.drafts.waiting || 0;     // judged fixes and unverified drafts
     const what = [fixes ? plural(fixes, 'fix', 'fixes') : '', drafts ? plural(drafts, 'draft') : ''].filter(Boolean).join(' and ');
-    line = `${what} ${waiting === 1 ? 'waits' : 'wait'} for your review. Nothing is written to your files until you apply it.`;
+    line = `${what} ${waiting === 1 ? 'waits' : 'wait'} for your review. Check the saved verification and application state. Delegated build application, if enabled with a valid grant, is separate from manual review.`;
     cta = h('button.btn.primary.lg', { onclick: () => navigate('work') }, icon('inbox'), waiting === 1 ? 'Review it' : 'Review them');
-  } else if (s.manual_waiting) {
-    line = 'A request is waiting for you to relay it to a chat model.';
-    cta = h('button.btn.primary.lg', { onclick: () => navigate('inference', 'relay') }, icon('chat'), 'Open the chat relay');
   } else if (s.workspace.empty || (!s.objects.some((o) => o.kind === 'python_repository') && !s.plan.milestones)) {
     line = s.workspace.empty ? 'This folder is empty: a clean slate. Describe what to build and let the planner lay out milestones and first files.'
       : 'There is no code with tests to repair here yet. Draft a plan from your brief to start building.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('goals') }, icon('wand'), 'Plan what to build');
   } else {
-    line = s.last_round ? `Last round ${ago(s.round_utc)}: ${humanize(s.last_round.outcome)}. ${s.worker.next_round_utc ? 'Next round ' + ago(s.worker.next_round_utc) + '.' : ''}`
-      : 'Everything is set. Run a round to map, find work, work and report.';
-    cta = h('button.btn.primary.lg', { onclick: (e) => withBusy(e.currentTarget, async () => { await post('/api/worker/run', { job: 'round' }); toast('Round queued', 'good'); }) }, icon('play'), 'Run a round now');
+    line = 'Review enabled modes and their prerequisites before starting. A configured route is not a capacity test, and a saved work outcome is not proof that the project is complete.';
+    cta = h('button.btn.primary.lg', { onclick: () => navigate('mission') }, icon('sliders'), 'Choose the next work mode');
   }
   const hero = h('section.hero', h('div', { class: 'runes', html: LOGO }),
     h('div.small.faint', `${greeting()} · ${s.workspace.path}`),
     h('h2', s.workspace.name),
     h('p', line),
     h('div.row.mt-16.wrap', cta, extra,
+      h('button.btn.lg', {onclick:()=>navigate('dashboards')}, icon('gauge'), 'Project dashboards'),
       extra ? null : h('button.btn.lg', { onclick: () => navigate('map') }, icon('map'), 'Open the living map'),
       h('button.btn.lg.ghost', { onclick: () => import('../core.js').then((c) => c.openNotes('workspace', 'root', 'the whole workspace')) }, icon('note'), 'Tell Runesmith something')));
   commentable(hero, 'workspace', 'root', 'the whole workspace');
@@ -55,9 +64,9 @@ export default async function render(root, { app, navigate, refreshState }) {
   const steps = [
     { done: s.settings.onboarded, label: 'Named what you build here', go: () => navigate('goals') },
     { done: !!s.mapped_utc, label: 'Folder mapped', go: () => navigate('map') },
-    { done: s.ready.any, label: 'Thinking power added', go: () => navigate('inference') },
+    { done: s.ready.any, label: 'Thinking power configured (not tested)', go: () => navigate('inference') },
     { done: s.goals.length > 0 || s.brief, label: 'Goals or a brief written', go: () => navigate('goals') },
-    { done: !!s.round_utc, label: 'First round run', go: () => post('/api/worker/run', { job: 'round' }).then(() => toast('Round queued', 'good')) },
+    { done: !!s.round_utc, label: 'Work history recorded (not a success verdict)', go: () => navigate('mission') },
   ];
   const doneCount = steps.filter((x) => x.done).length;
   const checklist = doneCount < steps.length ? h('div.card',
@@ -65,6 +74,48 @@ export default async function render(root, { app, navigate, refreshState }) {
     h('div.bar.mb-8', h('i', { style: { width: `${(doneCount / steps.length) * 100}%` } })),
     h('div.list', steps.map((st) => h('div.item', h('div', { class: `ico ${st.done ? 'good' : ''}` }, icon(st.done ? 'check' : 'right')),
       h('div.body', h('div.title', st.label)), st.done ? null : h('button.btn.sm', { onclick: st.go }, 'Do it'))))) : null;
+
+  // This is setup evidence, not an unattended-readiness score or a launch action.
+  const policy = h('section.card.mt-24', {'aria-label':'Setup and work policy'},
+    h('div.card-head', h('h3', icon('sliders'), 'Before you leave it working'),
+      h('button.btn.sm', {onclick:()=>navigate('settings')}, 'Review settings')),
+    h('p.small.muted', 'Configuration and work status as of opening this page. Saving a mode, adding a key or finishing onboarding is not proof of a successful build.'),
+    h('div.list', [
+      ['Scheduled work', s.settings.auto_work, 'After onboarding; pause, mode guards and provider limits still apply.'],
+      ['Self-improvement', s.settings.kaizen, 'Separate from Optimize; requires eligible experience and its own checks.'],
+      ['Executable build checks', s.settings.build_steps, 'Needed for the checked Build workflow, not installed by a mode switch.'],
+      ['Delegated build application', s.settings.build_apply, 'Also requires an explicit root/path grant, acceptance and unchanged source.'],
+    ].map(([label,value,detail])=>h('div.item',h('div.body',h('div.title',label),h('div.meta',detail)),
+      h('span.badge',typeof value==='boolean'?(value?'On':'Off'):'Not reported')))),
+    h('p.small.muted', 'API/local routes are needed for unattended transport. A chat-window instrument waits for your copied replies. Operations currently reads selected local reports; it is not a production deployment or messaging engine.'));
+  const healthBody=h('div'); let closed=false,healthSerial=0;
+  const checkLocal=async()=>{
+    const serial=++healthSerial;
+    let rows;
+    try {
+      const result=await get('/api/health?network=0');
+      if(!Array.isArray(result?.checks)||!result.checks.length)throw new Error('No diagnostic results returned');
+      if(result.checks.some(r=>!r||typeof r.check!=='string'||!r.check.trim()||![true,false,null].includes(r.ok)))
+        throw new Error('Incomplete diagnostic results returned');
+      rows=result.checks;
+    } catch(error) {
+      if(!closed&&serial===healthSerial)healthBody.replaceChildren(h('p.callout.warn',`Local checks unavailable: ${error.message}. Setup is unknown; nothing was installed or started.`));
+      return;
+    }
+    if(closed||serial!==healthSerial)return;
+    const issues=rows.filter(r=>r.ok===false);
+    healthBody.replaceChildren(h('p',{class:issues.length?'callout warn':'small muted'},issues.length
+      ? `${issues.length} local setup issue(s) need review. No automatic installation or repair.`
+      : 'No failure reported by these local checks. Model reachability, quota, author quality and unattended completion are not established.'),
+      h('details', h('summary.small','Inspect local checks'),h('div.list',rows.map(r=>h('div.item',
+        h('div.body',h('b.small',String(r.check||'Unnamed check')),h('p.small',String(r.detail||'')),
+          r.fix?h('p.tiny.mono',`Suggested next step: ${r.fix}`):null),
+        h('span.badge',r.ok===true?'Passed':r.ok===false?'Needs attention':'Not checked'))))));
+  };
+  policy.append(h('div.card-head.mt-16',h('h4','Local setup checks'),
+    h('button.btn.sm',{onclick:e=>withBusy(e.currentTarget,checkLocal)},icon('refresh'),'Refresh local checks')),
+    h('p.tiny.muted','Read-only and offline: no provider probe, model call, package installation or queued job.'),healthBody);
+  await checkLocal();
 
   // ---- KPIs
   const bands = s.objects.flatMap((o) => o.bands);
@@ -133,10 +184,10 @@ export default async function render(root, { app, navigate, refreshState }) {
   }
   caps.append(h('p.tiny.faint.mt-8', 'Bands: bad · minimal · optimal. "Unknown" means there is no evidence yet, not that things are fine.'));
 
-  root.append(hero, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
+  root.append(hero, policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
     h('div.grid.two.mt-24', objects, next), h('div.grid.two.mt-24', live, caps));
   function kpisWrap(k) { k.classList.remove('four'); k.classList.add('two'); return k; }
-  return () => offs.forEach((off) => off());
+  return () => {closed=true;healthSerial++;offs.forEach((off) => off());};
 }
 
 function fmtCap(key, v) {

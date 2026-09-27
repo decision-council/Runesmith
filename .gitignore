@@ -15,3 +15,7 @@ dist/
 
 # Patches written by `runesmith proposals --write`
 proposals/
+
+# Third-party tools and packages fetched for training (large binaries; reinstallable)
+node_modules/
+training/.tools/

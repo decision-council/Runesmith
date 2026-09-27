@@ -1,16 +1,20 @@
 // Thinking power: where Runesmith's thinking comes from. None, a model on this computer, API keys, or a chat window.
 import { h, icon, get, post, del, bus, toast, commentable, openNotes, clear, ago, plural, humanize, withBusy, confirmDialog,
   modal, empty, debounce, copyText } from '../core.js';
+import {gatewayUsage} from '../gateway-usage.js';
 
 const MONO_COLORS = { ollama: '#111827', lmstudio: '#4f46e5', llamacpp: '#0f766e', openrouter: '#6d28d9', groq: '#f55036', gemini: '#1a73e8',
   mistral: '#fa520f', deepseek: '#4d6bfe', openai: '#10a37f', anthropic: '#d97757', together: '#0f6fff', custom: '#475569', milliner: '#b45309', manual: '#22d3c5' };
 const ROLE_ICON = { repair: 'hammer', kaizen: 'spark', plan: 'wand' };
+// In-memory only; keep a pending typed reply across redraws/panel navigation.
+const relayReplies = new Map();
 
 export default async function render(root, ctx) {
   const offs = [];
   const head = h('div.page-head', h('div', h('h2', 'Thinking power'),
     h('p', 'Runesmith works with any model, weak or strong, and even with none: without a model it maps and watches. Add a model that runs on this computer (free and private), an API key, or simply a chat window you copy and paste into. Keys are saved on this computer only and are never shown again.')),
-    h('div.actions', h('button.btn.primary', { onclick: () => addModel() }, icon('plus'), 'Add thinking power')));
+    h('div.actions', h('button.btn', {onclick:e=>withBusy(e.currentTarget,recordedUsage)}, icon('layers'), 'Usage & cost coverage'),
+      h('button.btn.primary', { onclick: () => addModel() }, icon('plus'), 'Add thinking power')));
   const body = h('div');
   root.append(head, body);
   let data;
@@ -29,7 +33,7 @@ export default async function render(root, ctx) {
     // ---- roles
     const roles = h('div.card', h('div.card-head', h('h3', icon('layers'), 'Who does what'), h('span.badge', 'first = preferred, then fallbacks')));
     for (const role of ['repair', 'kaizen', 'plan']) roles.append(roleLane(role, data, load));
-    roles.append(h('p.tiny.faint', 'The Planner borrows the Improver’s (or the Worker’s) model when it has none of its own. A small free model is fine for the Worker; a stronger one pays off for the Improver.'));
+    roles.append(h('p.tiny.faint', 'Ready means configured, not available quota. The Planner borrows the Improver’s (or the Worker’s) model when it has none of its own. Qualify each route for its role: a connection test is not an authoring test.'));
     const local = h('div.card', h('div.card-head', h('h3', icon('laptop'), 'On this computer'), h('div.actions', h('button.btn.sm', { onclick: (e) => withBusy(e.currentTarget, () => scan(localList)) }, icon('refresh'), 'Look again'))));
     const localList = h('div');
     local.append(localList);
@@ -37,7 +41,7 @@ export default async function render(root, ctx) {
     const keys = h('div.card', h('div.card-head', h('h3', icon('key'), 'Saved keys'), h('span.badge.good', icon('lock'), 'never shown')),
       data.keys.length ? h('div.list', data.keys.map((k) => h('div.item', h('div.ico', icon('key')), h('div.body', h('div.title.mono', k.name), h('div.meta', `saved ${ago(k.saved_utc)} · stored in this folder's .runesmith/secrets.json`)))))
         : h('p.muted', 'No keys saved. Keys stay on this computer, outside your project files, and are sent only to the provider they belong to.'));
-    body.append(h('div.grid.two', h('div.col.gap-16', inst, roles), h('div.col.gap-16', local, keys)));
+    body.append(h('div.grid.two', h('div.col.gap-16', inst, roles, authorGuidance()), h('div.col.gap-16', local, keys)));
     if (!waiting.length && ctx.sub[0] !== 'relay' && data.instruments.some((i) => i.kind === 'manual')) body.append(h('div.mt-16'), relayPanel([], load));
   };
   const scan = async (box) => {
@@ -78,34 +82,45 @@ export default async function render(root, ctx) {
       clear(body);
       const p = chosen;
       const firstModel = !data.instruments.length;
-      const name = h('input.input', { value: uniqueName(p.id, data), placeholder: 'a short name' });
-      const model = h('input.input', { value: extra.model || (p.suggested || [])[0] || '', placeholder: p.kind === 'manual' ? 'which chat you will use, e.g. ChatGPT, Claude, Gemini' : 'model id', list: 'rs-models' });
+      const name = h('input.input', { value: uniqueName(p.id, data), placeholder: 'a short name', 'aria-label': 'Instrument name' });
+      const model = h('input.input', { value: extra.model || (p.suggested || [])[0] || '', placeholder: p.kind === 'manual' ? 'which chat you will use, e.g. ChatGPT, Claude, Gemini' : 'model id', list: 'rs-models', 'aria-label': p.kind === 'manual' ? 'Chat/model label (optional)' : 'Model ID' });
       const dl = h('datalist#rs-models', [...new Set([...(extra.models || []), ...(p.suggested || [])])].map((x) => h('option', { value: x })));
       const base = h('input.input.mono', { value: p.base_url || '', placeholder: 'https://… or http://127.0.0.1:…' });
+      const providerFilter = h('input.input.mono', { placeholder: 'all providers, or e.g. opencode / cline' });
+      const fallbacks = h('textarea.input.mono', {rows:3, placeholder:'provider:model — one fallback per line (up to five)'});
       const key = h('input.input.mono', { type: 'password', placeholder: p.key === 'required' ? 'paste your key' : 'optional', autocomplete: 'off' });
       const showKey = h('button.btn.icon', { type: 'button', title: 'Show or hide', onclick: () => { key.type = key.type === 'password' ? 'text' : 'password'; } }, icon('eye'));
-      // A chat window suits the Improver and Planner (a few calls each); repairs take several calls, so it is off by default.
+      // Prefer author roles for manual relay; any role can require several human-relayed calls.
       const defaultOn = (r) => (p.kind === 'manual' ? r !== 'repair' : firstModel || (r === 'repair' && !data.ready.repair));
       const roleBoxes = ['repair', 'kaizen', 'plan'].map((r) => { const cb = h('input', { type: 'checkbox', checked: defaultOn(r), value: r });
         return { r, cb, el: h('label.chip', cb, icon(ROLE_ICON[r]), data.role_labels[r].split(':')[0]) }; });
       const listBtn = h('button.btn', { type: 'button', onclick: () => withBusy(listBtn, async () => {
-        const r = await post('/api/inference/models', { preset: p.id, base_url: base.value, key: key.value });
-        if (r.ok && r.models.length) { clear(dl).append(...r.models.map((x) => h('option', { value: x }))); toast(`${r.count} models available; start typing to pick one.`, 'good'); model.focus(); }
-        else toast(r.status === 401 ? 'The provider refused the key.' : 'Could not list models (the provider may not support it, or it is not running).', 'warn', 6000);
+        const r = await post('/api/inference/models', { preset: p.id, base_url: base.value, key: key.value,
+          provider: p.kind === 'milliner' ? providerFilter.value.trim().toLowerCase() : '' });
+        if (r.ok) {
+          clear(dl).append(...r.models.map((x) => h('option', { value: x })));
+          toast(`${r.models.length} catalog entries shown. ${r.detail || 'Start typing to pick one.'}`, r.models.length ? 'good' : 'warn', 8000);
+          model.focus();
+        } else toast(r.status === 401 ? 'The provider refused the key.' : (r.detail || 'Could not list models (the provider may not support it, or it is not running).'), 'warn', 6000);
       }) }, icon('search'), 'List models');
       const fields = [h('div.field', h('label', 'Name'), name, h('span.hint', 'How Runesmith refers to this model.'))];
-      if (p.kind !== 'manual') fields.push(h('div.field', h('label', 'Model'), h('div.row', model, listBtn), dl, h('span.hint', 'Any model id the provider serves. Small models work for repairs; stronger ones help self-improvement.')));
+      if (p.kind === 'milliner') fields.push(h('div.field', h('label', 'Catalog provider filter'), providerFilter,
+        h('span.hint', 'Narrows List models without making an inference call. It does not change the saved model, routing or fallback policy.')));
+      if (p.kind !== 'manual') fields.push(h('div.field', h('label', 'Model'), h('div.row', model, listBtn), dl, h('span.hint', 'Use a served model id. Qualify it on representative work: authoring needs coherent design and complete changes; workers may handle narrower, checked tasks. Free or paid is not a capability grade.')));
       else fields.push(h('div.field', h('label', 'Which chat will you use? (for the record)'), model));
       if (p.id === 'custom' || p.id === 'milliner' || p.local) fields.push(h('div.field', h('label', 'Address'), base));
+      if (p.kind === 'milliner') fields.push(h('div.field', h('label', 'Milliner fallback models'), fallbacks,
+        h('span.hint', 'Milliner tries this explicit chain after the primary fails. Only add free models here if this is a free-only fallback. Their quotas still apply.')));
       if (p.key !== 'none') fields.push(h('div.field', h('label', p.kind === 'milliner' ? 'Agent token' : 'API key'), h('div.row', key, showKey),
         h('span.hint', 'Saved in this folder’s .runesmith/secrets.json, never in your project, never shown again.', p.key_url ? [' ', h('a', { href: p.key_url, target: '_blank', rel: 'noopener' }, 'Get a key')] : null)));
       fields.push(h('div.field', h('label', 'Roles'), h('div.pillbox', roleBoxes.map((x) => x.el)), h('span.hint', 'Worker repairs code · Improver improves Runesmith itself · Planner drafts plans and first files.')));
-      if (p.kind === 'manual') fields.push(h('div.callout', icon('chat'), h('div', 'When Runesmith needs an answer, the request appears here and in the top bar. Copy it into any chat, paste the reply back, done. Best for the Improver and Planner: a few calls each time.')));
+      if (p.kind === 'manual') fields.push(h('div.callout', icon('chat'), h('div', 'Requests appear here and in the top bar. Copy the whole packet into your chat, then paste its reply back. Useful for Planner/Improver work; every call requires a person to relay it. Keep Studio running while waiting. Saving this instrument does not make a model call.')));
       if (p.setup) fields.push(h('div.callout', icon('info'), h('div', 'First time? Install it, then run ', h('code', p.setup))));
-      const save = h('button.btn.primary', icon('check'), 'Save and test');
+      const save = h('button.btn.primary', icon('check'), p.kind === 'manual' ? 'Save chat instrument' : 'Save and test');
       save.addEventListener('click', () => withBusy(save, async () => {
         const spec = { kind: p.kind, preset: p.id, model: model.value.trim(), base_url: (p.id === 'custom' || p.id === 'milliner' || p.local) ? base.value.trim() : p.base_url, label: p.label };
         if (p.kind === 'openai') spec.json_mode = 'json_object';
+        if (p.kind === 'milliner') spec.fallback_models = fallbacks.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
         const roles = roleBoxes.filter((x) => x.cb.checked).map((x) => x.r);
         const saved = await post('/api/inference/instruments', { name: name.value.trim(), spec, key: key.value.trim() || undefined, roles });
         key.value = '';
@@ -139,19 +154,105 @@ function uniqueName(base, data) {
   for (let i = 2; ; i++) if (!names.has(`${base}-${i}`)) return `${base}-${i}`;
 }
 
+function authorGuidance() {
+  return h('div.card', h('h3', icon('info'), 'Choosing authors and workers'),
+    h('p.small', 'There is no established minimum model size or price. Planner authors integrate requirements and draft plans/files; Improver authors change Runesmith itself. These roles usually need broader design and integration ability than a bounded Worker task.'),
+    h('p.small', 'A cheaper or smaller worker can be useful with focused source, a narrow contract and real checks. Complex repairs may still need a stronger model. A free model can be a good author; qualify the task, not the price tag.'),
+    h('details', h('summary', 'What is strong enough?'),
+      h('ul.small', h('li', 'Follows the actual packet and required format; does not invent unseen source or permission.'),
+        h('li', 'Produces a complete, applicable change while preserving interfaces and unrelated behavior.'),
+        h('li', 'Passes meaningful checks and uses failure feedback within a bounded call budget.'),
+        h('li', 'Still works after a fresh load/source check; failures, assistance and cost remain recorded.')),
+      h('p.small.muted', 'Start with a capable available author, then qualify economical alternatives on the same contract. If it fails, narrow the work, improve the packet or change models—do not waive checks. One successful draft does not qualify general unattended work.')),
+    h('details', h('summary', 'Use a frontier chat without an API key'),
+      h('ol.small',
+        h('li', 'Add thinking power → No key needed → A chat window. Name it; the chat/model label is optional.'),
+        h('li', 'Assign Planner for plans/build drafts, or Improver for self-improvement proposals. Move it first in the intended role under Who does what. An API/local Worker avoids relaying every repair call. Roles do not enable automatic work or self-improvement by themselves.'),
+        h('li', 'Start the intended action. Copy the complete waiting request into your chosen model’s chat. Preserve its requested JSON or file-block format and check what project information you are sharing.'),
+        h('li', 'Paste the complete reply into the matching request. The model label is self-reported, not provider-verified. Do not mix request IDs.'),
+        h('li', 'If refused, use Copy correction request in that chat and return the whole corrected reply. Format acceptance is not code approval: normal admission, source checks, tests and application permissions still apply.'),
+        h('li', 'Keep Studio running. Closing the panel is safe; a restart may set unanswered requests aside. Follow current recovery status and read the resulting check/apply receipts.')),
+      h('p.small.muted', 'Copy/paste is human-assisted transport, not unattended execution. Fully automatic work needs API or local inference for every role it uses.')));
+}
+
+async function editMillinerRoute(name, reload) {
+  const route = await get(`/api/inference/routes/${name}`);
+  const body = h('div');
+  const m = modal({title: `Route for ${name}`, wide: true, body, actions:[{label:'Close',kind:'ghost'}]});
+    const model = h('input.input.mono', {value: route.model, 'aria-label': 'Primary model ID'});
+    const fallbacks = h('textarea.textarea.mono', {rows: 4, value: route.fallback_models.join('\n'),
+      'aria-label': 'Fallback model IDs', placeholder: 'One provider:model per line; up to five'});
+    const reason = h('input.input', {'aria-label': 'Route change reason', placeholder: 'Why change this route?'});
+    const provider = h('input.input', {'aria-label': 'Catalog provider', placeholder: 'Optional provider filter, e.g. gemini3'});
+    const catalog = h('div.small.muted');
+    const list = h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, async () => {
+      const result = await post('/api/inference/models', {name, provider: provider.value.trim().toLowerCase()});
+      clear(catalog).append(result.ok
+        ? h('div', h('p.tiny', result.detail || 'Catalog only; not a tested route.'),
+            h('pre.code', result.models.slice(0, 100).join('\n') || 'No catalog entries.'),
+            result.models.length > 100 ? h('p.tiny', 'Showing100 entries; filter by provider to narrow.') : null)
+        : h('p', result.detail || `Catalog unavailable (${result.status || 'no response'}).`));
+    })}, icon('search'), 'List free-catalog models');
+    body.append(h('p', 'Changes routing for future jobs. Keys, endpoint, caller, timeouts, spending tags and role assignments stay unchanged.'),
+      h('p.small.muted', 'These are requested preferences, not a guarantee of which model answers. Milliner selects an eligible route; request receipts identify the actual author.'),
+      h('p.small.muted', 'This does not enforce a free-only spending policy. Select only authorized routes; gateway permissions and quotas still apply. Saving makes no inference or connection-test call.'),
+      ...route.blockers.map(message => h('p.callout.warn', message)),
+      h('div.field', h('label', 'Primary model'), model),
+      h('div.field', h('label', 'Explicit fallback preferences'), fallbacks),
+      h('div.field', h('label', 'Reason'), reason),
+      h('details.mt-8', h('summary', 'Look up free catalog IDs (no generation)'), provider, list, catalog),
+      h('button.btn.primary.mt-16', {disabled: Boolean(route.blockers.length), onclick: e => withBusy(e.currentTarget, async () => {
+        if (!reason.value.trim()) { toast('Add a reason for changing this route.', 'warn'); return; }
+        await post(`/api/inference/routes/${name}`, {revision: route.revision, model: model.value.trim(),
+          fallback_models: fallbacks.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean), reason: reason.value.trim()});
+        m.close(); await reload(); toast('Route saved. No model call made; this configuration is not a quality test.', 'good', 7000);
+      })}, icon('check'), 'Save route without a test call'));
+}
+
+async function recordedAvailability(name) {
+  const data = await get(`/api/inference/availability/${name}`);
+  const body = h('div');
+  modal({title: `Recorded availability for ${name}`, wide: true, body, actions:[{label:'Close',kind:'ghost'}]});
+    body.append(h('p.small', data.scope), h('p.callout.warn', data.caution),
+      h('p.tiny.muted', `Read at ${data.observed_at}. Scanned ${data.coverage.scanned} receipts; ${data.coverage.matching} match this instrument; ${data.coverage.omitted} outside the window; ${data.coverage.unreadable} unreadable or invalid.`));
+    if (data.unresolved_requests) body.append(h('p.callout.warn',
+      `${data.unresolved_requests} unresolved request(s). Retrieve the saved ticket in Work & proposals; do not submit another copy.`));
+    for (const row of data.routes) body.append(h('div.card.mt-8',
+      h('h4.mono', {style:{overflowWrap:'anywhere'}}, row.model),
+      h('span.badge', humanize(row.status)), h('p.small', row.detail),
+      row.outcome ? h('p.tiny.muted', `Last gateway outcome: ${humanize(row.outcome)} · ${row.gateway_attempts} recorded attempt(s) in that job`) : null,
+      row.observed_at ? h('p.tiny.muted', `Outcome recorded ${row.observed_at}${row.job_id ? ' · job ' + row.job_id : ''}`) : null,
+      row.retry_at ? h('p.small', `Reported retry time: ${row.retry_at}${row.remaining_s > 0 ? ' (about ' + Math.ceil(row.remaining_s / 60) + ' minutes at this reading)' : ' (elapsed, not confirmed available)'}`) : null));
+}
+
+async function recordedUsage(){
+  const body=h('div');
+  modal({title:'Recorded gateway accounting',wide:true,body,actions:[{label:'Close',kind:'ghost'}]});
+  const content=h('div');
+  const load=async()=>{
+    const report=await get('/api/inference/accounting');
+    clear(content).append(gatewayUsage(report));
+  };
+  body.append(h('button.btn.sm',{onclick:e=>withBusy(e.currentTarget,load)},icon('refresh'),'Refresh saved receipts'),content);
+  await load();
+}
+
 function instrumentRow(i, data, reload) {
   const st = data.stats[i.name];
   const status = h('div.small');
   const row = h('div.instrument', h('div.monogram', { style: { background: MONO_COLORS[i.preset] || '#475569' } }, (i.label || i.name).replace(/[^A-Za-z]/g, '').slice(0, 2)),
-    h('div', h('div.row.wrap', h('b', i.label), h('span.badge.mono', i.name), i.local ? h('span.badge.good', 'local') : null, i.usable ? null : h('span.badge.warn', 'incomplete'),
+    h('div', {style:{paddingRight:'22px'}}, h('div.row.wrap', h('b', i.label), h('span.badge.mono', i.name), i.local ? h('span.badge.good', 'local') : null, i.usable ? null : h('span.badge.warn', 'incomplete'),
       i.key.secret ? h('span', { class: `badge ${i.key.saved ? 'good' : 'bad'}` }, icon('key'), i.key.saved ? 'key saved' : 'key missing') : null),
       h('div.small.muted.mono.ellipsis', `${i.model || ''}${i.base_url ? ' · ' + i.base_url : ''}`),
+      i.fallback_models?.length ? h('div.tiny.mono', `Milliner fallbacks: ${i.fallback_models.join(' → ')}`) : null,
       h('div.tiny.faint', i.roles.length ? `roles: ${i.roles.map((r) => data.role_labels[r].split(':')[0]).join(', ')}` : 'no role yet: assign one below',
-        st ? ` · ${st.calls} calls, ${st.errors} errors, ~${(st.latency_s / Math.max(1, st.calls)).toFixed(1)} s each` : ''), status),
-    h('div.row', i.kind !== 'manual' ? h('button.btn.sm', { onclick: () => testInstrument(i.name, reload, status) }, icon('zap'), 'Test') : null,
+        st ? ` · ${st.calls} host callbacks, ${st.errors} errors, ~${(st.latency_s / Math.max(1, st.calls)).toFixed(1)} s each${i.kind==='milliner'?' · see Usage & cost coverage for reconciled gateway receipts':st.costed_calls ? ` · $${st.estimated_usd.toFixed(4)} reported estimate (${st.costed_calls}/${st.calls} callbacks costed)` : ' · spend not reported'}` : ''), status),
+    h('div.row.wrap.instrument-actions', i.kind === 'milliner' ? h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, () => recordedAvailability(i.name))}, icon('clock'), 'Recorded availability') : null,
+      i.kind === 'milliner' ? h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, () => editMillinerRoute(i.name, reload))}, icon('layers'), 'Route') : null,
+      i.kind !== 'manual' ? h('button.btn.sm', { onclick: () => testInstrument(i.name, reload, status) }, icon('zap'), 'Test') : null,
       h('button.btn.sm.icon.ghost', { title: 'Remove', onclick: async () => { if (await confirmDialog({ title: `Remove ${i.label}?`, text: 'Its saved key is deleted too.', confirm: 'Remove', danger: true })) { await del(`/api/inference/instruments/${i.name}`); reload(); } } }, icon('trash'))));
   commentable(row, 'instrument', i.name, i.label);
-  row.querySelector('.note-btn').style.right = '96px';
+  row.querySelector('.note-btn').style.right = '8px';
   return row;
 }
 async function testInstrument(name, reload, statusEl) {
@@ -197,7 +298,7 @@ export function openRelayDrawer() {
         const relay = await get('/api/manual');
         const waiting = relay.requests.filter((r) => !r.answered);
         clear(body);
-        if (!waiting.length) { body.append(empty('check', 'Nothing is waiting', 'Runesmith carries on with the answer you gave.')); setTimeout(close, 1400); return; }
+        if (!waiting.length) { body.append(empty('check', 'Nothing is waiting', 'There are no unanswered chat requests in this workspace.')); setTimeout(close, 1400); return; }
         body.append(relayPanel(waiting, draw));
       };
       draw();
@@ -205,30 +306,58 @@ export function openRelayDrawer() {
 }
 
 function relayPanel(requests, reload) {
+  const activeIds = new Set(requests.map(r => r.id));
+  for (const id of relayReplies.keys()) if (!activeIds.has(id)) relayReplies.delete(id);
   const card = h('div.card.glow', h('div.card-head', h('h3', icon('chat'), 'Chat relay'), requests.length ? h('span.badge.accent', `${requests.length} waiting`) : h('span.badge', 'nothing waiting')));
   if (!requests.length) { card.append(h('p.muted', 'When a model set up as “a chat window” is needed, its request appears here. Copy it into any chat, paste the reply back.')); return card; }
+  card.append(h('p.small.muted', 'No API key is needed for this author; you relay the messages. Keep Studio running while a reply is pending. Restarting Studio sets aside unanswered requests. Closing this panel is safe.'));
   for (const r of requests) {
-    const answer = h('textarea.textarea.mono', { rows: 12, placeholder: 'Paste the chat model’s whole reply here…' });
-    const model = h('input.input', { placeholder: 'Which model answered? (optional, recorded in the receipt)' });
+    const saved = relayReplies.get(r.id);
+    const current = saved?.request === r.text ? saved : {};
+    if (saved && saved.request !== r.text) relayReplies.delete(r.id);
+    const answer = h('textarea.textarea.mono', { rows: 12, value: current.text || '', 'aria-label': `Reply for request ${r.id}`, placeholder: 'Paste the chat model’s whole reply here…' });
+    const model = h('input.input', { value: current.model || '', 'aria-label': `Model label for request ${r.id}`, placeholder: 'Which model answered? (optional, self-reported in the receipt)' });
+    const remember = () => relayReplies.set(r.id, {request: r.text, text: answer.value, model: model.value});
+    const feedback = h('div.mt-8', { role: 'status', 'aria-live': 'polite' });
+    answer.addEventListener('input', () => { remember(); clear(feedback); });
+    model.addEventListener('input', () => { remember(); clear(feedback); });
     const send = h('button.btn.primary', icon('send'), 'Send the answer');
     send.addEventListener('click', () => withBusy(send, async () => {
       if (!answer.value.trim()) { toast('Paste the reply first.', 'warn'); return; }
-      const res = await post(`/api/manual/${encodeURIComponent(r.id)}/answer`, { text: answer.value, model: model.value });
-      if (res.written) { toast('Answer delivered. Runesmith continues.', 'good'); reload(); return; }
-      const problems = (res.problems || []).slice(0, 6).map((p) => p.replace(/^[a-z_]+:\s*/, '')).join('; ');   // no internal codes
-      if (await confirmDialog({ title: 'The reply does not fit the requested format', text: `${problems}. You can ask the chat model to fix it, or send it anyway (Runesmith records an unusable answer as such).`, confirm: 'Send anyway' })) {
-        await post(`/api/manual/${encodeURIComponent(r.id)}/answer`, { text: answer.value, model: model.value, force: true });
-        toast('Sent as it is.', 'good'); reload();
-      }
+      const submitted = { text: answer.value, model: model.value };
+      remember();
+      const sameReply = () => answer.value === submitted.text && model.value === submitted.model;
+      const res = await post(`/api/manual/${encodeURIComponent(r.id)}/answer`, submitted);
+      if (res.written) { relayReplies.delete(r.id); toast('Answer delivered. Runesmith continues.', 'good'); reload(); return; }
+      if (!sameReply()) { toast('The reply changed while it was checked. Send the current reply to check it.', 'warn'); return; }
+      const problems = Array.isArray(res.problems) && res.problems.length ? res.problems.map(String) : ['The reply does not fit the requested format.'];
+      const correction = `Runesmith has not accepted the format of my reply for request ${r.id}.\n` +
+        'Please correct these format problems using the original request and its JSON schema. Return the complete corrected reply, not just a fragment. Preserve the task and its constraints; this feedback is not a test result or permission to change the requirements.\n\n' +
+        problems.map((p) => `- ${p}`).join('\n');
+      const force = h('button.btn.ghost', icon('send'), 'Send unchanged anyway');
+      force.addEventListener('click', () => withBusy(force, async () => {
+        if (!sameReply()) { clear(feedback); toast('Check the edited reply before sending it.', 'warn'); return; }
+        if (!(await confirmDialog({ title: 'Send this reply despite format problems?', text: 'Only this early format check is bypassed. Normal admission, source bindings, tests and application permissions still apply. The reply may be rejected without producing a draft.', confirm: 'Send anyway' }))) return;
+        if (!sameReply()) { clear(feedback); toast('The reply changed. Check it again before sending.', 'warn'); return; }
+        const delivered = await post(`/api/manual/${encodeURIComponent(r.id)}/answer`, { ...submitted, force: true });
+        if (delivered.written) { relayReplies.delete(r.id); toast('Sent without passing the format precheck.', 'warn'); reload(); }
+      }));
+      clear(feedback);
+      feedback.append(h('p.small', 'Not submitted: the reply needs a format correction. Your pasted reply is kept above.'),
+        h('ul.small', ...problems.slice(0, 6).map((p) => h('li', p))),
+        problems.length > 6 ? h('p.small.muted', `Showing 6 of ${problems.length} problems; the correction request includes all of them.`) : null,
+        h('div.row', h('button.btn.sm.primary', { onclick: () => copyText(correction) }, icon('copy'), 'Copy correction request'), force));
     }));
     const skip = h('button.btn.ghost', { title: 'Decline: the waiting step gets no answer and moves on' }, icon('x'), 'Skip');
     skip.addEventListener('click', async () => {
       if (!(await confirmDialog({ title: 'Skip this request?', text: 'The step that asked stops without an answer, and nothing it would have changed is changed: a plan or draft stays as it is. This is recorded in the ledger.', confirm: 'Skip it' }))) return;
-      withBusy(skip, async () => { await post(`/api/manual/${encodeURIComponent(r.id)}/skip`, {}); toast('Skipped.', 'good'); reload(); });
+      withBusy(skip, async () => { await post(`/api/manual/${encodeURIComponent(r.id)}/skip`, {}); relayReplies.delete(r.id); toast('Skipped.', 'good'); reload(); });
     });
     card.append(h('div.relay.mt-8',
       h('div', h('div.row', h('b.small', '1. Copy this request'), h('span.spacer'), h('span.tiny.faint', `~${r.approx_tokens} tokens`), h('button.btn.sm.primary', { onclick: () => copyText(r.text) }, icon('copy'), 'Copy')), h('pre.code.mt-8', r.text)),
-      h('div', h('b.small', '2. Paste it into any chat model, then paste its reply here'), h('div.col.mt-8', answer, model, h('div.row', h('span.tiny.faint', `request ${r.id}`), h('span.spacer'), skip, send)))));
+      h('div', h('b.small', '2. Paste it into any chat model, then paste its reply here'), h('div.col.mt-8', answer, model,
+        h('p.tiny.faint', 'The format precheck does not approve the code or apply changes.'),
+        h('div.row', h('span.tiny.faint', `request ${r.id}`), h('span.spacer'), skip, send), feedback))));
   }
   return card;
 }

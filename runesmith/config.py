@@ -86,7 +86,8 @@ def build_instrument(name: str, spec: dict[str, Any], home: Path | None = None) 
         return MillinerInstrument(name, spec["model"], base_url=spec["base_url"], token=token,
                                   caller_tag=spec.get("caller_tag", "runesmith"), timeout_s=float(spec.get("timeout_s", 900)),
                                   allow_uncatalogued=bool(spec.get("allow_uncatalogued", False)),
-                                  budget_tag=spec.get("budget_tag"))
+                                  budget_tag=spec.get("budget_tag"), fallback_models=spec.get('fallback_models'),
+                                  request_dir=home_dir(home)/'inference-requests')
     if kind == "manual":                        # a person relays each request to a chat model (runesmith.manual)
         from runesmith.manual import ManualInstrument
         directory = Path(spec["dir"]) if spec.get("dir") else home_dir(home) / "manual"

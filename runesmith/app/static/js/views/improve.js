@@ -6,7 +6,7 @@ import { bandPosition, fmtCap } from './home.js';
 export default async function render(root, ctx) {
   const offs = [];
   const head = h('div.page-head', h('div', h('h2', 'Self-improvement'),
-    h('p', 'Runesmith rewrites its own repair organ only with evidence. Its own experience is split in two: the Improver model sees one half, and every candidate is tested on the other. A candidate that wins is frozen, not switched on. It becomes active only by winning a trial on your fresh work, or by your explicit choice. Rolling back is one click.')));
+    h('p', 'Runesmith rewrites its own repair organ only with evidence. Eligible experience is split in two: the Improver model sees one half, and every candidate is tested on the other. Support-report-assisted repairs stay available for local review but are excluded from learning and trial scoring. A candidate that wins is frozen, not switched on. It becomes active only by winning a trial on eligible fresh work, or by your explicit choice. Rolling back is one click.')));
   const body = h('div');
   root.append(head, body);
   const load = async () => {
@@ -36,7 +36,7 @@ export default async function render(root, ctx) {
     if (t) {
       const bar = (arm) => { const [s, n] = t.counts[arm]; return h('div', h('div.row.small', h('b', arm === 'candidate' ? `Candidate ${nameOf(t.candidate)}` : `Incumbent ${nameOf(t.incumbent)}`), h('span.spacer'), h('span', `${s} repaired of ${n}`)),
         h('div', { class: `bar mt-8${arm === 'incumbent' ? ' rune' : ''}` }, h('i', { style: { width: `${Math.min(100, (n / t.max_per_arm) * 100)}%` } }))); };
-      trial.append(h('p.small.muted', `New work is split between the two by a seeded coin, so nobody picks which generation gets which task. At every ${t.look_every} finished tasks per arm (from ${t.min_per_arm}), a one-sided Fisher test compares them at level ${t.level_per_look.toFixed(4)} per look. The candidate is activated only if it is clearly better; otherwise the incumbent stays. At most ${t.max_per_arm} tasks per arm.`),
+      trial.append(h('p.small.muted', `Eligible new work is split between the two by a seeded coin. Support-report-assisted work is excluded before assignment. At every ${t.look_every} finished tasks per arm (from ${t.min_per_arm}), a one-sided Fisher test compares them at level ${t.level_per_look.toFixed(4)} per look. The candidate is activated only if it is clearly better; otherwise the incumbent stays. At most ${t.max_per_arm} tasks per arm.`),
         h('div.col.gap-16.mt-8', bar('incumbent'), bar('candidate')),
         t.looks_detail?.length ? h('table.table.small.mt-16', h('tr', ['Look', 'Incumbent', 'Candidate', 'p (better)', 'p (worse)'].map((x) => h('th', x))),
           t.looks_detail.map((l) => h('tr', h('td', String(l.look)), h('td', `${l.incumbent[0]}/${l.incumbent[1]}`), h('td', `${l.candidate[0]}/${l.candidate[1]}`), h('td', String(l.p_candidate_better)), h('td', String(l.p_candidate_worse))))) : h('p.tiny.faint.mt-8', 'No look yet: the first comes after enough tasks on both arms.'));
@@ -81,7 +81,7 @@ export default async function render(root, ctx) {
       d.campaigns.length ? h('div.list', d.campaigns.slice().reverse().map((c) => h('div.item', h('div', { class: `ico ${c.decision === 'candidate' ? 'good' : ''}` }, icon('beaker')),
         h('div.body', h('div.title', `${humanize(c.decision)} · ${humanize(c.target || '')}`), h('div.meta', `${c.campaign} · best ${c.best ?? '—'} vs baseline ${c.baseline ?? '—'}`),
           c.attempts.length ? h('div.pillbox.mt-8', c.attempts.map((a) => h('span', { class: `badge ${a.accepted ? 'good' : ''}`, title: a.mechanism || '' }, `#${a.iteration} ${humanize(a.stage || '')}`))) : null))))
-        : h('p.muted', `No campaign yet. One starts when Runesmith has at least ${settings.min_experience || 8} stored attempts and enough new ones since the last campaign, and only while no trial is open.`),
+        : h('p.muted', `No campaign yet. One starts when Runesmith has at least ${settings.min_experience || 8} eligible stored attempts and enough new ones since the last campaign, and only while no trial is open.`),
       h('button.btn.sm.mt-8', { onclick: () => openNotes('self', 'runesmith', 'Runesmith itself') }, icon('note'), 'Tell the Improver something'));
     body.append(h('div.grid.two', h('div.col.gap-16', lineage, trial), h('div.col.gap-16', lib, caps, camp)));
   };

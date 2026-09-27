@@ -59,8 +59,10 @@ export function frag(markup) { const t = document.createElement('template'); t.i
 
 // ---------------------------------------------------------------------- API --
 export class ApiError extends Error { constructor(status, message, body) { super(message); this.status = status; this.body = body; } }
+let workspaceEpoch = null;
 export async function api(path, { method = 'GET', body } = {}) {
   const opts = { method, credentials: 'same-origin', headers: {} };
+  if (workspaceEpoch) opts.headers['X-Runesmith-Workspace'] = workspaceEpoch;
   if (method !== 'GET') { opts.headers['X-Runesmith'] = '1'; opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body || {}); }
   let res;
   try { res = await fetch(path, opts); }
@@ -68,6 +70,9 @@ export async function api(path, { method = 'GET', body } = {}) {
   let data = null;
   try { data = await res.json(); } catch { /* empty */ }
   if (!res.ok) throw new ApiError(res.status, (data && data.error) || res.statusText, data);
+  // A page binds once, at bootstrap. Never silently retarget old forms after a
+  // switch in another tab. The workspace event/explicit picker reloads the page.
+  if (!workspaceEpoch && path === '/api/session') workspaceEpoch = res.headers.get('X-Runesmith-Workspace');
   return data;
 }
 export const get = (p) => api(p);
@@ -82,10 +87,10 @@ export const bus = {
 };
 let source = null, lastId = 0;
 const KINDS = ['worker', 'log', 'call', 'step', 'map', 'round', 'plan', 'work', 'job', 'manual', 'notes', 'settings', 'goals',
-  'brief', 'inference', 'improve', 'health', 'needs', 'workspace'];
+  'brief', 'inference', 'improve', 'health', 'needs', 'workspace', 'mission', 'dashboards', 'support_reports'];
 export function connectEvents() {
   if (source) source.close();
-  source = new EventSource(`/api/events?since=${lastId}`);
+  source = new EventSource(`/api/events?since=${lastId}&workspace=${encodeURIComponent(workspaceEpoch || '')}`);
   for (const kind of KINDS) {
     source.addEventListener(kind, (ev) => { try { const e = JSON.parse(ev.data); lastId = Math.max(lastId, e.id); bus.emit(kind, e.data); } catch (err) { console.error(err); } });
   }
@@ -136,6 +141,8 @@ export function toast(text, kind = 'info', ms = 4200) {
   const ic = { good: 'check', bad: 'alert', warn: 'alert', info: 'info' }[kind] || 'info';
   const el = h('div', { class: `toast ${kind}`, role: 'status' }, icon(ic), h('div.grow', text));
   box.appendChild(el);
+  // Rapid normal use must not cover the workspace with an unbounded stack.
+  while (box.children.length > 3) box.firstElementChild.remove();
   setTimeout(() => { el.style.transition = 'opacity .3s, transform .3s'; el.style.opacity = '0'; el.style.transform = 'translateX(20px)'; setTimeout(() => el.remove(), 320); }, ms);
 }
 // ------------------------------------------------------------------ layers --
@@ -181,7 +188,8 @@ export function modal({ title, text, body, actions = [], wide = false, onClose }
   for (const a of actions) {
     const b = h('button', { class: `btn ${a.kind || ''}` }, a.icon ? icon(a.icon) : null, a.label);
     b.addEventListener('click', async () => {
-      if (!a.onClick) return close(a.value ?? a.label);
+      // An explicit null is a cancellation, not a missing button value.
+      if (!a.onClick) return close(Object.prototype.hasOwnProperty.call(a, 'value') ? a.value : a.label);
       b.classList.add('busy');
       try { const r = await a.onClick(close); if (r !== false) { /* handler closes when it wants */ } }
       catch (e) { toast(e.message || String(e), 'bad'); }
@@ -293,7 +301,7 @@ export function openNotes(type, id, label) {
     const list = h('div');
     const reads = READS[type];
     const info = h('div.callout.mb-8', icon('info'), h('div', notesState.readNotes && reads
-      ? `Open notes here are read by ${reads}, labelled as your guidance. Resolve a note when it no longer applies.`
+      ? `Open notes here are eligible for ${reads}, within the prompt budget. Delivery is not guaranteed; inspect the draft's Revision packet for included and omitted feedback. Resolve notes that no longer apply.`
       : notesState.readNotes ? 'Notes here are kept for you and your team. They are recorded in the ledger.'
       : 'Models do not read notes right now (Settings → Give notes to the model).'));
     const ta = h('textarea.textarea', { placeholder: `Say anything about ${TARGET_WORDS[type] || 'this'}… (Ctrl+Enter to save)`, rows: 4 });
@@ -325,7 +333,7 @@ export function openNotes(type, id, label) {
       const text = ta.value.trim(); if (!text) return;
       await post('/api/notes', { target_type: type, target_id: id, target_label: label || id, text, reply_to: replyTo });
       ta.value = ''; replyTo = null; replyHint.classList.add('hidden');
-      toast(reads && notesState.readNotes ? `Noted. ${cap(reads.split(',')[0])} will read it.` : 'Noted.', 'good');
+      toast(reads && notesState.readNotes ? 'Note saved for future context selection. Existing requests are unchanged.' : 'Noted.', 'good');
       load();
     });
     save.addEventListener('click', submit);

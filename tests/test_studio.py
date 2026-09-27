@@ -438,7 +438,9 @@ def test_a_worker_round_finds_repairs_and_proposes_with_the_owners_notes(tmp_pat
 # ------------------------------------------------------------------ server --
 
 @pytest.fixture()
-def studio(tmp_path):
+def studio(tmp_path, monkeypatch):
+    from runesmith.app import server
+    monkeypatch.setattr(server, 'STUDIO_DIR', tmp_path / 'profile')
     s = Studio(tmp_path)
     httpd = bind(s, 0)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -451,7 +453,7 @@ def studio(tmp_path):
 
 
 def call(s: Studio, method: str, path: str, body=None, *, cookie=True, headers=None):
-    head = {"Content-Type": "application/json"}
+    head = {"Content-Type": "application/json", 'X-Runesmith-Workspace': s.epoch}
     if method != "GET":
         head["X-Runesmith"] = "1"
     if cookie:
@@ -520,7 +522,7 @@ def test_the_server_serves_the_app_and_its_api(studio):
         assert conn.getresponse().status == 404, path
     for path in ("/api/genesis", "/api/map/environment", "/api/map/self", "/api/map/development", "/api/map/operations",
                  "/api/work", "/api/improve", "/api/notes", "/api/manual", "/api/activity", "/api/health", "/api/plan",
-                 "/api/inference", "/api/brief", "/api/workspaces", "/api/browse"):
+                 "/api/inference", "/api/brief", "/api/goalposts", "/api/workspaces", "/api/browse"):
         assert call(studio, "GET", path)[0] == 200, path
     status, body, _ = call(studio, "POST", "/api/genesis", {"name": "Moonlight", "description": "Bread for neighbours",
                                                             "use_type": "build"})

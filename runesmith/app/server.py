@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 import webbrowser
+from contextlib import contextmanager, nullcontext
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,12 +41,14 @@ from urllib.request import Request, urlopen
 from runesmith import __version__
 from runesmith.app.worker import EventBus, Worker
 from runesmith.app.workspace import Workspace, WorkspaceError, _read_json, _write_json
+from runesmith.app.workspace_ownership import Bindings, RootLease
 
 STATIC = Path(__file__).resolve().parent / "static"
 DEFAULT_PORT = 7300
 STUDIO_DIR = Path.home() / ".runesmith-studio"
 MAX_BODY = 4_000_000
 COOKIE = "rs_session"
+WORKSPACE_HEADER = 'X-Runesmith-Workspace'
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
        "connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
@@ -58,6 +61,14 @@ def home_tag(home: Path) -> str:
     return hashlib.sha256(str(Path(home).resolve()).encode("utf-8")).hexdigest()[:12]
 
 
+class WorkspaceConflict(WorkspaceError):
+    """An ownership or stale-context conflict, not permission to retry a write."""
+
+
+class WorkspaceOwned(WorkspaceConflict):
+    pass
+
+
 class Studio:
     """The open workspace and its worker. The Studio can switch to another folder without restarting."""
 
@@ -67,38 +78,176 @@ class Studio:
         self.lock = threading.RLock()
         self.ws: Workspace | None = None
         self.worker: Worker | None = None
+        self._instance: InstanceLock | None = None
+        self._inflight = 0
+        self.epoch = ''
+        self.startup_error = ''
         self.port: int | None = None
         self.started = _now()
         self.closing = False
         self.httpd_shutdown: Callable[[], None] = lambda: None
         self.open(root, home)
 
-    def open(self, root: Path, home: Path | None = None) -> Workspace:
-        ws = Workspace(Path(root), home)              # may raise WorkspaceError before anything is closed
+    def open(self, root: Path, home: Path | None = None, *, create: bool = False) -> Workspace:
         with self.lock:
-            if self.worker:
-                self.worker.close()
-            self.ws, self.worker = ws, Worker(ws, self.bus)
-            self.worker.start()
-        self._remember(ws)
-        ws.ledger.append("studio.opened", {"version": __version__})
-        self.bus.publish("workspace", {"path": str(ws.root), "name": ws.settings()["workspace_name"]})
-        return ws
+            if self.closing:
+                raise WorkspaceConflict('Studio is closing; no folder was opened.')
+            root = Path(root).expanduser().resolve()
+            # Picking the same root must retain an explicitly isolated home.
+            if self.ws and root == self.ws.root:
+                if home is None or Path(home).expanduser().resolve() == self.ws.home:
+                    return self.ws
+                raise WorkspaceConflict('This root is already open with a different home.')
+            if self._inflight:
+                raise WorkspaceConflict('Another workspace request is still finishing. No folder was opened.')
+            destination = Path(Bindings(STUDIO_DIR).resolve(root, home)['home'])
+            if self.ws and destination == self.ws.home:
+                raise WorkspaceConflict('The same home cannot be rebound to a different root.')
+            old, old_ws, old_bus, old_instance = self.worker, self.ws, self.bus, self._instance
+            instance = None
+            try:
+                # No folder creation, destination initialization, or old-worker
+                # shutdown until the old claim boundary is held idle.
+                with old.switch_guard() if old else nullcontext():
+                    if create and root.exists():
+                        raise WorkspaceError('The new folder already exists. Select it explicitly instead of creating it.')
+                    if not create and not root.is_dir():
+                        raise WorkspaceError(f'{root} is not a folder')
+                    instance = InstanceLock(destination, root=root)
+                    if not instance.acquire():
+                        raise WorkspaceOwned('The destination home is owned by another Runesmith writer. No switch was made.')
+                    if create:
+                        root.mkdir(parents=True, exist_ok=True)
+                    Bindings(STUDIO_DIR).remember(root, destination)
+                    ws = Workspace(root, destination)
+                    bus = EventBus()
+                    worker = Worker(ws, bus)
+                    if old:
+                        if not worker.paused:
+                            worker.pause()
+                        old.close()
+                if old and not old.wait_stopped():
+                    raise WorkspaceConflict('The previous worker is still stopping. Its home remains owned; no new worker was started.')
+            except BaseException:
+                if instance:
+                    instance.close()
+                raise
 
-    def close(self) -> None:
+            # Commit only after both old threads have stopped. From here, even a
+            # startup error leaves the selected home owned and closed to work.
+            self.ws, self.worker, self.bus, self._instance = ws, worker, bus, instance
+            # A thread must retain its own ownership lease even if __init__ is
+            # interrupted and the caller never receives the Studio reference.
+            worker._studio_lease = instance
+            self.epoch = secrets.token_hex(16)
+            self.startup_error = ''
+            if old_ws:
+                self._remove_beacon(old_ws.home)
+                old_instance.close()
+            try:
+                self.publish_beacon()
+                ws.ledger.append('studio.opened', {'version': __version__, 'switched_paused': bool(old)})
+                worker.start()
+                try:
+                    self._remember(ws)
+                except Exception:
+                    worker.say('Recent folders could not be saved. Workspace ownership and work are unchanged.', 'warn')
+            except BaseException as error:
+                worker.close()
+                stopped = worker.wait_stopped()
+                if not isinstance(error, Exception):
+                    if stopped:
+                        self.closing = True
+                        self._remove_beacon(ws.home)
+                        instance.close()
+                    raise  # Unjoined threads retain the lease, including on interruption.
+                self.startup_error = f'Worker startup failed; this home remains owned. Restart Studio after inspection: {type(error).__name__}: {error}'
+            if old_ws:
+                old_bus.publish('workspace', {'path': str(ws.root), 'reload': True})
+            return ws
+
+    def switch_status(self):
+        blockers = []
+        if self.closing:
+            blockers.append('Studio is closing.')
+        if self.worker and self.worker.current:
+            blockers.append('The current job is still running. Wait for it to finish; switching does not cancel it.')
+        if self._inflight > 1:
+            blockers.append('Another workspace request is still finishing.')
+        warning = self.startup_error
+        if not warning and self.worker and self.worker._closing:
+            warning = 'The previous worker was asked to stop. Finish the folder switch or restart Studio; this worker cannot resume.'
+        return {'allowed': not blockers, 'blockers': blockers, 'warning': warning,
+                'waiting': len(self.worker.snapshot()['queue']) if self.worker else 0,
+                'policy': 'Waiting jobs stay in their original home. A different home opens paused; review it before Resume.'}
+
+    def check_epoch(self, epoch, *, mutating=False):
+        if self.closing:
+            raise WorkspaceConflict('Studio is closing. Reload after it restarts.')
+        if (mutating and not epoch) or (epoch and epoch != self.epoch):
+            raise WorkspaceConflict('Workspace changed or this action has no workspace context. Reload Studio before acting; nothing was submitted.')
+
+    @contextmanager
+    def operation(self, epoch, *, mutating=False):
+        # Pin ws/worker/bus for an entire handler without blocking Pause behind a
+        # slow API read. A switch cannot commit while any handler is in flight.
         with self.lock:
+            self.check_epoch(epoch, mutating=mutating)
+            self._inflight += 1
+            bound_epoch = self.epoch
+        try:
+            yield bound_epoch
+        finally:
+            with self.lock:
+                self._inflight -= 1
+
+    def publish_beacon(self):
+        if self.port is not None:
+            _write_json(self.ws.home / 'studio.lock.json', {'pid': os.getpid(), 'port': self.port,
+                        'token': self.token, 'started': self.started, 'folder': str(self.ws.root)})
+
+    def _remove_beacon(self, home):
+        try:
+            record = _read_json(home / 'studio.lock.json', {})
+            if isinstance(record, dict) and record.get('token') == self.token:
+                (home / 'studio.lock.json').unlink()
+        except OSError:
+            pass
+
+    def close(self, timeout: float = 2.0) -> bool:
+        with self.lock:
+            self.closing = True
             if self.worker:
                 self.worker.close()
+                if not self.worker.wait_stopped(timeout) or self._inflight:
+                    # Keep the lease alive even if a caller drops its Studio
+                    # reference while the worker thread is still finishing.
+                    self.worker._studio_lease = self._instance
+                    return False
+            if self._instance:
+                self._remove_beacon(self.ws.home)
+                self._instance.close()
+            return True
 
     @staticmethod
     def recent() -> list[dict[str, Any]]:
-        rows = _read_json(STUDIO_DIR / "studio.json", {}).get("recent", [])
-        return [r for r in rows if Path(r.get("path", "")).is_dir()]
+        data = _read_json(STUDIO_DIR / 'studio.json', {})
+        rows = data.get('recent', []) if isinstance(data, dict) else []
+        valid = []
+        for row in rows[:12] if isinstance(rows, list) else []:
+            if not isinstance(row, dict) or not isinstance(row.get('path'), str) or not row['path'].strip():
+                continue
+            try:
+                if Path(row['path']).is_dir():
+                    valid.append(row)
+            except (OSError, ValueError):
+                continue
+        return valid
 
     def _remember(self, ws: Workspace) -> None:
         try:
             rows = [r for r in self.recent() if r["path"] != str(ws.root)]
-            rows.insert(0, {"path": str(ws.root), "name": ws.settings()["workspace_name"], "opened": _now()})
+            rows.insert(0, {"path": str(ws.root), "home": str(ws.home), "name": ws.settings()["workspace_name"], "opened": _now()})
             _write_json(STUDIO_DIR / "studio.json", {"recent": rows[:12]})
         except OSError:                                  # a read-only profile must not stop the Studio
             pass
@@ -142,10 +291,41 @@ def api_worker(s: Studio, q, body):
     return s.worker.snapshot()
 
 
+@route("GET", r"/api/build")
+def api_build(s: Studio, q, body):
+    from runesmith.app.building import status
+    return status(_ws(s))
+
+
+@route('GET', r'/api/dashboards')
+def api_dashboards(s: Studio, q, body):
+    from runesmith.app.dashboards import view
+    return view(_ws(s))
+
+
+@route('POST', r'/api/dashboards')
+def api_dashboards_change(s: Studio, q, body):
+    from runesmith.app.dashboards import change
+    result = change(_ws(s), revision=body.get('revision'), action=body.get('action'),
+                    project=body.get('project'), project_id=body.get('project_id'), panels=body.get('panels'))
+    s.bus.publish('dashboards', {})
+    return result
+
+
 @route("POST", r"/api/worker/run")
 def api_worker_run(s: Studio, q, body):
     job = body.get("job", "round")
-    params = {k: v for k, v in (body.get("params") or {}).items() if k in ("probe", "milestone")}
+    allowed = {"map":{"probe"}, "draft":{"milestone"}, "build":{"draft_id","author_only"}, "escalate":set(),
+               "supplement":{"draft_id","reason","instrument","author_only"},
+               "revise":{"draft_id","quote_id","instrument","operation_id","reason"},
+               "review_current":{"milestone"},
+               "resume_check":{"draft_id","reason"},
+               "resume_author":{"request_id"}, "mode":{"mode"}, "measure":{"measurement"},
+               "source_baseline":{"reason"},
+               "allocate_check":{"draft_id","quote_id","reason"},
+               "reconcile_check":{"draft_id","quote_id","reason"},
+               "correct":{"attempt"}, "breakdown":{"milestone"}}.get(job, set())
+    params = {k: v for k, v in (body.get("params") or {}).items() if k in allowed}
     return s.worker.enqueue(job, **params)
 
 
@@ -153,6 +333,12 @@ def api_worker_run(s: Studio, q, body):
 def api_worker_control(s: Studio, q, body, action):
     {"pause": s.worker.pause, "resume": s.worker.resume, "stop": s.worker.stop_current}[action]()
     return s.worker.snapshot()
+
+
+@route('POST', r'/api/worker/recovery')
+def api_worker_recovery(s: Studio, q, body):
+    return s.worker.review_recovery(revision=body.get('revision'), decision=body.get('decision'),
+                                    reviewed=body.get('reviewed'))
 
 
 @route("GET", r"/api/settings")
@@ -211,7 +397,88 @@ def api_brief_update(s: Studio, q, body):
 @route("GET", r"/api/plan")
 def api_plan(s: Studio, q, body):
     ws = _ws(s)
-    return {"plan": ws.plan(), "milestones": ws.milestones(), "ready": ws.ready()["plan"]}
+    from runesmith.app.breakdowns import proposals
+    from runesmith.app.acceptance_contracts import expectations
+    from runesmith.app.building import current_file_reviews
+    from runesmith.app.planner import plan_readiness
+    from runesmith.app.work_modes import planning_blockers, held_plans
+    return {"plan": ws.plan(), "milestones": ws.milestones(), "ready": ws.ready()["plan"], 'breakdowns':proposals(ws),
+            'acceptance_expectations':{m['id']:expectations(ws,m['id']) for m in (ws.plan() or {}).get('milestones',[])},
+            'current_checks':current_file_reviews(ws), 'readiness':plan_readiness(ws.plan()),
+            'planning_blockers':planning_blockers(ws),
+            'held_plans':[{k:r.get(k) for k in ('id', 'utc', 'author', 'reason', 'answer')} for r in held_plans(ws)[:10]]}
+
+
+@route('GET', r'/api/author-context')
+def api_author_context(s: Studio, q, body):
+    from runesmith.app.source_focus import inspect_context
+    return inspect_context(_ws(s))
+
+
+@route('POST', r'/api/author-context')
+def api_author_context_save(s: Studio, q, body):
+    from runesmith.app.source_focus import save_focus
+    result = save_focus(_ws(s), body.get('paths'), body.get('snapshot_digest'), body.get('reason'))
+    s.bus.publish('plan', {}); s.bus.publish('work', {})
+    return result
+
+
+@route('GET', r'/api/drafts/([A-Za-z0-9]+)/revision-context')
+def api_revision_context(s: Studio, q, body, draft_id):
+    from runesmith.app.revision_context import inspect_revision
+    return inspect_revision(_ws(s), draft_id)
+
+
+@route('GET', r'/api/drafts/([A-Za-z0-9]+)/revision-request')
+def api_revision_request(s: Studio, q, body, draft_id):
+    from runesmith.app.author_revisions import revision_status
+    return revision_status(_ws(s), draft_id, (q.get('instrument') or [None])[0])
+
+
+@route('POST', r'/api/drafts/([A-Za-z0-9]+)/revision-context')
+def api_revision_context_save(s: Studio, q, body, draft_id):
+    from runesmith.app.revision_context import save_selection
+    result = save_selection(_ws(s), draft_id, version=body.get('version'), selections=body.get('selections'),
+                            reason=body.get('reason'), enabled=body.get('enabled', True))
+    s.bus.publish('work', {})
+    return result
+
+
+@route('POST', r'/api/plan/milestones/([A-Za-z0-9_-]+)/expectations')
+def api_acceptance_expectations(s: Studio,q,body,milestone_id):
+    from runesmith.app.acceptance_contracts import publish_expectations
+    from runesmith.app.workspace import WorkspaceError
+    if 'expected_digest' not in body:
+        raise WorkspaceError('Reload public expectations before publishing; their current digest is required.')
+    result=publish_expectations(_ws(s),milestone_id,body.get('criteria'),body.get('reason'),
+                                interfaces=body.get('interfaces'),expected_digest=body['expected_digest'])
+    s.bus.publish('plan',{});s.bus.publish('work',{})
+    return result
+
+
+@route('POST', r'/api/plan/breakdowns/(b[0-9a-f]{12})/adopt')
+def api_breakdown_adopt(s: Studio,q,body,key):
+    from runesmith.app.breakdowns import adopt_breakdown
+    result=adopt_breakdown(_ws(s),key)
+    s.bus.publish('plan',{})
+    return result
+
+
+@route('POST', r'/api/plan/breakdowns/(b[0-9a-f]{12})/reject')
+def api_breakdown_reject(s: Studio,q,body,key):
+    from runesmith.app.breakdowns import reject_breakdown
+    result=reject_breakdown(_ws(s),key,body.get('reason',''))
+    s.bus.publish('plan',{})
+    return result
+
+
+@route("GET", r"/api/goalposts")
+def api_goalposts(s: Studio, q, body):
+    ws = _ws(s)
+    from runesmith.app.work_modes import planning_blockers
+    blockers = planning_blockers(ws)
+    return {"goalposts": ws.goalposts(), "ready": ws.ready()["plan"] and not blockers,
+            'planning_blockers': blockers}
 
 
 @route("POST", r"/api/plan/milestones")
@@ -233,10 +500,37 @@ def api_inference(s: Studio, q, body):
     return _ws(s).inference()
 
 
+@route("GET", r"/api/inference/accounting")
+def api_inference_accounting(s: Studio, q, body):
+    from runesmith.app.inference_accounting import accounting_view
+    return accounting_view(_ws(s).home)
+
+
 @route("POST", r"/api/inference/instruments")
 def api_instrument_save(s: Studio, q, body):
     saved = _ws(s).save_instrument(body.get("name", ""), body.get("spec") or {}, body.get("key"), body.get("roles"))
     s.bus.publish("inference", {})
+    return saved
+
+
+@route("GET", r"/api/inference/routes/([A-Za-z0-9_.-]+)")
+def api_instrument_route(s: Studio, q, body, name):
+    from runesmith.app.inference_routes import route_view
+    return route_view(_ws(s), name)
+
+
+@route("GET", r"/api/inference/availability/([A-Za-z0-9_.-]+)")
+def api_instrument_availability(s: Studio, q, body, name):
+    from runesmith.app.inference_availability import availability_view
+    return availability_view(_ws(s), name)
+
+
+@route("POST", r"/api/inference/routes/([A-Za-z0-9_.-]+)")
+def api_instrument_route_save(s: Studio, q, body, name):
+    from runesmith.app.inference_routes import save_route
+    saved = save_route(_ws(s), name, revision=body.get('revision'), model=body.get('model'),
+                       fallback_models=body.get('fallback_models'), reason=body.get('reason'))
+    s.bus.publish('inference', {})
     return saved
 
 
@@ -270,7 +564,7 @@ def api_discover(s: Studio, q, body):
 @route("POST", r"/api/inference/models")
 def api_models(s: Studio, q, body):
     return _ws(s).list_models(name=body.get("name"), preset=body.get("preset"), base_url=body.get("base_url"),
-                              key_value=body.get("key"))
+                              key_value=body.get("key"), provider=body.get("provider", ""))
 
 
 @route("GET", r"/api/map/environment")
@@ -374,7 +668,8 @@ def api_activate(s: Studio, q, body, generation_id):
 @route("GET", r"/api/notes")
 def api_notes(s: Studio, q, body):
     ws = _ws(s)
-    return {"notes": ws.notes.all(), "counts": ws.notes.counts(), "read_notes": ws.settings()["read_notes"]}
+    return {"notes": ws.notes.all(), "counts": ws.notes.counts(), "read_notes": ws.settings()["read_notes"],
+            'planning_feedback': ws.planning_note_selection()}
 
 
 @route("POST", r"/api/notes")
@@ -397,10 +692,64 @@ def api_manual(s: Studio, q, body):
     return {"requests": _ws(s).manual_requests()}
 
 
+@route('GET', r'/api/mission')
+def api_mission(s, q, body):
+    from runesmith.app.work_modes import view
+    return view(_ws(s))
+
+
+@route('POST', r'/api/mission/modes')
+def api_mission_modes(s, q, body):
+    from runesmith.app.work_modes import save
+    result = save(_ws(s), body.get('modes'), body.get('revision'), body.get('reason'), body.get('infer_purpose'))
+    s.bus.publish('mission', {})
+    return result
+
+
+@route('POST', r'/api/measurements')
+def api_measurement_definition(s, q, body):
+    from runesmith.app.measurements import save_definition
+    result = save_definition(_ws(s), body.get('definition'), body.get('revision'))
+    s.bus.publish('mission', {})
+    return result
+
+
+@route('GET', r'/api/support-reports')
+def api_support_reports(s, q, body):
+    from runesmith.app.support_reports import view
+    return view(_ws(s))
+
+
+@route('POST', r'/api/support-reports')
+def api_support_report_add(s, q, body):
+    from runesmith.app.support_reports import add
+    result = add(_ws(s), body.get('report'), body.get('revision'))
+    s.bus.publish('support_reports', {'id': result['report']['id'], 'received': True})
+    return result
+
+
+@route('POST', r'/api/support-reports/([a-f0-9]{64})/selection')
+def api_support_report_select(s, q, body, report_id):
+    from runesmith.app.support_reports import select
+    result = select(_ws(s), report_id, body.get('selected'), body.get('revision'),
+                    confirm_model_sharing=body.get('confirm_model_sharing', False))
+    s.bus.publish('support_reports', {'id': report_id, 'selected': result['report']['selected']})
+    return result
+
+
+@route('POST', r'/api/measurements/([A-Za-z0-9_-]+)/report')
+def api_measurement_report(s, q, body, measurement):
+    from runesmith.app.measurements import save_pasted_report
+    result = save_pasted_report(_ws(s), measurement, body.get('text'))
+    s.bus.publish('mission', {'measurement': measurement, 'report_received': True})
+    return result
+
+
 @route("POST", r"/api/manual/([A-Za-z0-9_.-]+)/answer")
 def api_manual_answer(s: Studio, q, body, request_id):
     result = _ws(s).answer_manual(request_id, body.get("text", ""), body.get("model") or None, bool(body.get("force")))
-    s.bus.publish("manual", {"answered": request_id})
+    if result.get("written"):
+        s.bus.publish("manual", {"answered": request_id})
     return result
 
 
@@ -425,18 +774,33 @@ def api_health(s: Studio, q, body):
 
 @route("GET", r"/api/workspaces")
 def api_workspaces(s: Studio, q, body):
-    return {"current": str(_ws(s).root), "recent": Studio.recent()}
+    return {"current": str(_ws(s).root), "home": str(_ws(s).home), "recent": Studio.recent(), 'switch': s.switch_status()}
+
+
+def _workspace_path(raw, label='folder'):
+    if not isinstance(raw, str) or not raw.strip():
+        raise WorkspaceError(f'Choose an explicit {label} path.')
+    if not Path(raw.strip()).expanduser().is_absolute():
+        raise WorkspaceError(f'Choose an absolute {label} path, or browse to the folder.')
+    return Path(raw.strip()).expanduser().resolve()
+
+
+@route('GET', r'/api/workspaces/resolve')
+def api_workspace_resolve(s: Studio, q, body):
+    root = _workspace_path((q.get('path') or [None])[0])
+    raw_home = (q.get('home') or [None])[0]
+    home = _workspace_path(raw_home, 'home') if raw_home else None
+    return Bindings(STUDIO_DIR).resolve(root, home)
 
 
 @route("POST", r"/api/workspaces/open")
 def api_workspace_open(s: Studio, q, body):
-    path = Path(str(body.get("path") or "")).expanduser()
-    if body.get("create"):
-        path.mkdir(parents=True, exist_ok=True)
-    if not path.is_dir():
-        raise WorkspaceError(f"{path} is not a folder")
-    ws = s.open(path)
-    return {"ok": True, "path": str(ws.root)}
+    root = _workspace_path(body.get('path'))
+    home = _workspace_path(body['home'], 'home') if 'home' in body else None
+    if 'create' in body and type(body['create']) is not bool:
+        raise WorkspaceError('Create must be true or false.')
+    ws = s.open(root, home, create=body.get('create', False))
+    return {'ok': True, 'path': str(ws.root), 'home': str(ws.home), 'paused': s.worker.paused, 'warning': s.startup_error}
 
 
 @route("GET", r"/api/browse")
@@ -588,7 +952,7 @@ def make_handler(studio: Studio):
 
         def _json(self, status: int, value: Any) -> None:
             self._send(status, json.dumps(value, default=str).encode("utf-8"), "application/json; charset=utf-8",
-                       {"Cache-Control": "no-store"})
+                       {"Cache-Control": "no-store", WORKSPACE_HEADER: getattr(self, '_workspace_epoch', '')})
 
         def _error(self, status: int, message: str) -> None:
             self._json(status, {"error": message})
@@ -664,7 +1028,18 @@ def make_handler(studio: Studio):
                 match = pattern.fullmatch(path)
                 if match:
                     try:
-                        result = handler(studio, query, body, *[unquote(g) for g in match.groups()])
+                        epoch = self.headers.get(WORKSPACE_HEADER)
+                        if method == 'POST' and path == '/api/workspaces/open':
+                            with studio.lock:
+                                studio.check_epoch(epoch, mutating=True)
+                                result = handler(studio, query, body)
+                                self._workspace_epoch = studio.epoch
+                        else:
+                            with studio.operation(epoch, mutating=method != 'GET') as bound_epoch:
+                                self._workspace_epoch = bound_epoch
+                                result = handler(studio, query, body, *[unquote(g) for g in match.groups()])
+                    except WorkspaceConflict as error:
+                        return self._error(409, str(error))
                     except LookupError as error:                 # KeyError and the manual relay's LookupError
                         return self._error(404, f"not found: {str(error).strip(chr(39))}")
                     except (WorkspaceError, ValueError) as error:
@@ -678,24 +1053,37 @@ def make_handler(studio: Studio):
         def _log_error(self, path: str, error: Exception) -> None:
             import traceback
             try:
-                logs = studio.ws.home / "logs"
-                logs.mkdir(parents=True, exist_ok=True)
-                with open(logs / "studio-errors.log", "a", encoding="utf-8", newline="\n") as stream:
-                    stream.write(f"{_now()} {path}\n{traceback.format_exc()}\n")
+                with studio.lock:
+                    if getattr(self, '_workspace_epoch', None) != studio.epoch:
+                        return  # Never write an old request's error into a new home.
+                    logs = studio.ws.home / "logs"
+                    logs.mkdir(parents=True, exist_ok=True)
+                    with open(logs / "studio-errors.log", "a", encoding="utf-8", newline="\n") as stream:
+                        stream.write(f"{_now()} {path}\n{traceback.format_exc()}\n")
             except OSError:
                 pass
 
         def _events(self, query) -> None:
+            # Bind the subscription to a home, including automatic SSE reconnects.
+            # A stale page receives only a reload event, never another home's log.
+            with studio.lock:
+                event_bus = studio.bus
+                epoch = (query.get('workspace') or [''])[0]
+                stale = epoch != studio.epoch
+                subscriber = None if stale else event_bus.subscribe()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "keep-alive")
             self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
-            subscriber = studio.bus.subscribe()
             try:
+                if stale:
+                    self._write_event({'id': 0, 'kind': 'workspace', 'data': {'reload': True}})
+                    self.wfile.flush()
+                    return
                 since = int((query.get("since") or ["0"])[0] or 0)
-                backlog = studio.bus.since(since) if since else []
+                backlog = event_bus.since(since) if since else []
                 self.wfile.write(b"retry: 3000\n\n")
                 for event in backlog:
                     self._write_event(event)
@@ -709,10 +1097,13 @@ def make_handler(studio: Studio):
                         continue
                     self._write_event(event)
                     self.wfile.flush()
+                    if event['kind'] == 'workspace':
+                        break
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError, ValueError):
                 pass
             finally:
-                studio.bus.unsubscribe(subscriber)
+                if subscriber is not None:
+                    event_bus.unsubscribe(subscriber)
                 self.close_connection = True
 
         def _write_event(self, event: dict[str, Any]) -> None:
@@ -786,6 +1177,11 @@ def bind(studio: Studio, port: int | None) -> ThreadingHTTPServer:
             last = error
             continue
         studio.port = httpd.server_address[1]
+        try:
+            studio.publish_beacon()
+        except Exception:
+            httpd.server_close()
+            raise
         return httpd
     raise SystemExit(f"could not open a local port: {last}")
 
@@ -794,12 +1190,26 @@ class InstanceLock:
     """One Studio per home: an OS file lock held for the Studio's whole life. The system releases it when the process
     ends, even by a crash, so a stale lock can never keep anyone out."""
 
-    def __init__(self, home: Path) -> None:
-        home.mkdir(parents=True, exist_ok=True)
+    def __init__(self, home: Path, *, root: Path | None = None) -> None:
         self.path = home / "studio.instance.lock"
         self.handle = None
+        self.root_lease = RootLease(root, STUDIO_DIR, home=home) if root is not None else None
 
     def acquire(self) -> bool:
+        if self.handle is not None:
+            raise WorkspaceConflict('This ownership lease is already held.')
+        if self.root_lease and not self.root_lease.acquire():
+            raise WorkspaceOwned('The source root or home overlaps another Runesmith writer (possibly this Studio). Close that writer before opening this root.')
+        try:
+            return self._acquire_home()
+        except BaseException:
+            self.close()
+            raise
+
+    def _acquire_home(self) -> bool:
+        from runesmith.app.workspace_ownership import safe_control
+        safe_control(self.path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         handle = open(self.path, "a+b")
         try:
             handle.seek(0)
@@ -811,17 +1221,27 @@ class InstanceLock:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             handle.close()
+            if self.root_lease:
+                self.root_lease.close()
             return False
         self.handle = handle
         return True
+
+    def close(self) -> None:
+        if self.handle is not None:
+            self.handle.close()
+            self.handle = None
+        if self.root_lease:
+            self.root_lease.close()
 
 
 def serve(folder: Path, *, home: Path | None = None, port: int | None = None, open_browser: bool = True,
           out: Callable[[str], None] = print) -> None:
     folder = Path(folder).expanduser().resolve()
-    probe_home = (Path(home).resolve() if home else folder / ".runesmith")
-    instance = InstanceLock(probe_home)
-    if not instance.acquire():                      # another Studio has this folder, or is opening it right now
+    probe_home = Path(Bindings(STUDIO_DIR).resolve(folder, home)['home'])
+    try:
+        studio = Studio(folder, home)
+    except WorkspaceOwned as error:                # another writer owns this home/root, or is opening it now
         running = None
         for _ in range(60):
             running = _existing(probe_home)
@@ -834,10 +1254,13 @@ def serve(folder: Path, *, home: Path | None = None, port: int | None = None, op
             if open_browser:
                 webbrowser.open(url)
         else:
-            out(f"Another Runesmith Studio is opening {folder}; it did not answer yet. Try again in a moment.")
+            out(str(error))
         return
-    studio = Studio(folder, home)
-    httpd = bind(studio, port)
+    try:
+        httpd = bind(studio, port)
+    except BaseException:
+        studio.close()
+        raise
 
     def shutdown() -> None:
         studio.closing = True
@@ -846,8 +1269,6 @@ def serve(folder: Path, *, home: Path | None = None, port: int | None = None, op
 
     studio.httpd_shutdown = shutdown
     url = f"http://127.0.0.1:{studio.port}/?t={studio.token}"
-    lock = {"pid": os.getpid(), "port": studio.port, "token": studio.token, "started": _now(), "folder": str(folder)}
-    _write_json(studio.ws.home / "studio.lock.json", lock)
     out(f"Runesmith Studio {__version__} is running for {folder}\n  Open: {url}\n  (Keep this window open; press Ctrl+C to stop.)")
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
@@ -859,11 +1280,6 @@ def serve(folder: Path, *, home: Path | None = None, port: int | None = None, op
         studio.closing = True
         studio.close()
         httpd.server_close()
-        try:
-            if _read_json(studio.ws.home / "studio.lock.json", {}).get("token") == studio.token:
-                (studio.ws.home / "studio.lock.json").unlink()
-        except OSError:
-            pass
 
 
 def main(argv: list[str] | None = None) -> None:

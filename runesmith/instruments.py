@@ -54,6 +54,10 @@ def classify(message: str) -> str:
 class TransportCensored(RuntimeError):
     """No usable response after the declared retries; the opportunity is censored."""
 
+    def __init__(self, message, *, receipt=None):
+        super().__init__(message)
+        self.receipt = receipt or {}
+
 
 @dataclass
 class CallOutcome:
@@ -166,11 +170,21 @@ class MillinerInstrument(Instrument):
     def __init__(self, name: str, model: str, *, base_url: str, token: Callable[[], str],
                  caller_tag: str = "runesmith", timeout_s: float = 900.0,
                  allow_uncatalogued: bool = False, budget_tag: str | None = None,
+                 fallback_models: list[str] | None = None,
+                 request_dir: Path | None = None,
                  transport: Transport = http_json) -> None:
         super().__init__(name, model)
         self.base_url, self._token, self.caller_tag = base_url.rstrip("/"), token, caller_tag
         self.timeout_s, self.allow_uncatalogued, self.budget_tag = timeout_s, allow_uncatalogued, budget_tag
+        if fallback_models is not None and (not isinstance(fallback_models, list)
+                or any(not isinstance(m, str) or not m.strip() for m in fallback_models)):
+            raise ValueError('fallback_models must be a list of nonempty model names')
+        chain = list(dict.fromkeys([model] + [m.strip() for m in (fallback_models or [])]))
+        if len(chain) > 6:
+            raise ValueError('Milliner accepts a primary and at most five fallback models')
+        self.fallback_models = chain[1:]
         self._transport = transport
+        self.request_dir = Path(request_dir) if request_dir is not None else None
 
     def complete(self, *, prompt, system, schema, max_tokens, key, reasoning_effort=None) -> CallOutcome:
         token = self._token()
@@ -179,6 +193,10 @@ class MillinerInstrument(Instrument):
         body: dict[str, Any] = {"model": self.model, "prompt": prompt, "system": system, "priority": 1,
                                 "wait": True, "timeout_s": max(1.0, self.timeout_s - 5.0),
                                 "max_tokens": max_tokens, "idempotency_key": key}
+        if self.fallback_models:
+            body.pop('model')
+            body.update(models=[self.model, *self.fallback_models], allow_fallback=True,
+                        max_fallbacks=len(self.fallback_models))
         if schema is not None:
             body["json_schema"] = schema
         if self.budget_tag:
@@ -189,13 +207,38 @@ class MillinerInstrument(Instrument):
             body["allow_uncatalogued"] = True
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
                    "X-Milliner-Agent": self.caller_tag}
+        if self.request_dir is not None:
+            from runesmith.milliner_jobs import submit
+            return submit(self, body, headers)
         started = time.monotonic()
         try:
             status, payload = self._transport("POST", f"{self.base_url}/v1/complete", headers, body, self.timeout_s)
         except (URLError, OSError, TimeoutError) as error:
             return CallOutcome(False, error_kind="transport", error=f"{type(error).__name__}: {error}",
                                latency_s=time.monotonic() - started)
-        latency = time.monotonic() - started
+        return self._response(status, payload, time.monotonic()-started)
+
+    def resume_request(self, request_id, *, wait_s=20):
+        """GET only: a saved ticket can never trigger a new generation."""
+        from runesmith.milliner_jobs import read_request, poll
+        if self.request_dir is None:
+            raise ValueError('This instrument has no durable request directory')
+        token = self._token()
+        if not token:
+            raise ValueError('Milliner token unavailable; no request resumed')
+        headers = {'Authorization':f'Bearer {token}', 'X-Milliner-Agent':self.caller_tag}
+        return poll(self, read_request(self.request_dir, request_id), headers, wait_s=min(30, max(0.1,wait_s)))
+
+    def _response(self, status, payload, latency):
+        from runesmith.inference_usage import qualify_usage
+        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+        usage = qualify_usage(meta)
+        receipt = {"provider": payload.get("provider") or meta.get("provider"),
+                   "model": payload.get("model") or meta.get("model"), "job_id": payload.get("job_id"),
+                   "tokens_in": usage['tokens_in'], "tokens_out": usage['tokens_out'],
+                   "latency_ms": meta.get("latency_ms"), "est_usd": usage['est_usd'],
+                   "cached": meta.get("cached"), "provider_attempts":meta.get('attempts',[]),
+                   "accounting": usage}
         # Classify on the message text exactly as Runesmith v1 did (codes are recorded, not classified).
         if not 200 <= status < 300:
             error = payload.get("error")
@@ -205,16 +248,11 @@ class MillinerInstrument(Instrument):
             else:
                 message = str(payload.get("message") or error or f"http_{status}")
             return CallOutcome(False, error_kind=classify(message), error=message[:600], latency_s=latency,
-                               receipt={"http_status": status})
+                               receipt=dict(receipt, http_status=status))
         if payload.get("state") != "succeeded":
             message = str(payload.get("error") or f"Milliner job ended in state {payload.get('state')!r}")
             return CallOutcome(False, error_kind=classify(message), error=message[:600], latency_s=latency,
-                               receipt={"error_code": payload.get("error_code"), "job_id": payload.get("job_id")})
-        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
-        receipt = {"provider": payload.get("provider") or meta.get("provider"),
-                   "model": payload.get("model") or meta.get("model"), "job_id": payload.get("job_id"),
-                   "tokens_in": meta.get("tokens_in"), "tokens_out": meta.get("tokens_out"),
-                   "latency_ms": meta.get("latency_ms")}
+                               receipt=dict(receipt,error_code=payload.get("error_code")))
         try:
             data = parse_json_answer(payload.get("text"), payload.get("parsed"))
         except (ValueError, json.JSONDecodeError) as error:
@@ -343,13 +381,22 @@ class Router:
                                           key=f"{key}-a{attempt}", reasoning_effort=reasoning_effort)
             attempt += 1
             outcome.attempts = attempt
-            outcome.receipt = dict(outcome.receipt, **instrument.identity(), role=role,
+            identity = instrument.identity()
+            answered_model = outcome.receipt.get('model')
+            provider = outcome.receipt.get('provider')
+            if answered_model and provider and not answered_model.startswith(provider + ':'):
+                answered_model = provider + ':' + answered_model
+            outcome.receipt = dict(outcome.receipt, **identity, role=role,
                                    prompt_bytes=len(prompt.encode("utf-8")))
+            if answered_model:
+                outcome.receipt.update(requested_model=identity['model'], model=answered_model)
             if self._on_call:
                 self._on_call({"role": role, "key": key, "attempt": attempt, "ok": outcome.ok,
                                "error_kind": outcome.error_kind, "error": (outcome.error or "")[:300] or None,
                                "latency_s": round(outcome.latency_s, 3), **outcome.receipt})
             if outcome.ok or outcome.error_kind == "output":
                 return outcome
+            if outcome.receipt.get('no_retry'):
+                raise TransportCensored(outcome.error or 'Saved remote request requires review', receipt=outcome.receipt)
             errors.append(outcome.error)
         raise TransportCensored(f"role {role!r}: no response after {attempt} attempts; last: {errors[-1] if errors else ''}")
