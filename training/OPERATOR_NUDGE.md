@@ -1,0 +1,1 @@
+﻿OPERATOR NOTE 2026-09-26T19:15:33.7850247+02:00: Projects Manager stepped down. Trainer seat returned to Astra. SupportHat m6: Opus draft d20260926170845e812 admitted; 240s retained-candidate check continuation may be mid-flight or interrupted — finish or park with receipts. Four logs current through that cut. Do not regenerate completed m5 / GrowthHat m4 children.

@@ -1,0 +1,58 @@
+{
+  "utc": "2026-09-27T04:32:38Z",
+  "kind": "external_trainer_test_fixture_escape",
+  "cause": "The intentional pre-fix empty-path regression called Path(empty), resolving to the shell working directory instead of a disposable project.",
+  "original": "D:\\Runesmith\\.runesmith",
+  "preserved_at": "D:\\Runesmith\\training\\trainer-receipts\\test-fixture-home-20260927T043238Z",
+  "recovery": "Entire newly initialized home moved recoverably; no files deleted. Tests now change cwd to their disposable tmp_path. API rejects empty and relative folder paths before initialization.",
+  "observed_ledger": "home.initialized, generation.activated, two studio.opened rows only; no job/current records",
+  "instrument_count": 0,
+  "configured_roles": {
+    "repair": [],
+    "kaizen": [],
+    "plan": []
+  },
+  "fixture_only": true,
+  "files": [
+    {
+      "path": ".gitignore",
+      "bytes": 79,
+      "sha256": "4f52477b6d6d509df61cd46479bfaed6d1ba07e23315d415e2cb639b3b081f64"
+    },
+    {
+      "path": "ACTIVE",
+      "bytes": 18,
+      "sha256": "4faa52a738ae2883ae4a2f865ba816cdbb8499fa502eeac4ce84d6c7f28726ed"
+    },
+    {
+      "path": "generations\\gen-ad9d3a1482f1\\MANIFEST.json",
+      "bytes": 626,
+      "sha256": "3ca2c8f652ebf10e1ec0ddc1d41a2de613aa37d67eb4b25d1bd072d170125e6c"
+    },
+    {
+      "path": "generations\\gen-ad9d3a1482f1\\organs\\__init__.py",
+      "bytes": 415,
+      "sha256": "365bf47a0f6da529f0bf12b804c39c3ecf2f9271315a9b72fa74636ec2bc715b"
+    },
+    {
+      "path": "generations\\gen-ad9d3a1482f1\\organs\\repair.py",
+      "bytes": 14384,
+      "sha256": "140bae1ac6058635b5ce3b5c9e3d765025fc54657e5de06e747f8b5ed1d9c71c"
+    },
+    {
+      "path": "ledger.jsonl",
+      "bytes": 1109,
+      "sha256": "aa78326eabdafb7a8249ed2e92ffee251dd9974bd9bcbdb6d5db38fdf135cf45"
+    },
+    {
+      "path": "ledger.jsonl.lock",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runesmith.json",
+      "bytes": 1362,
+      "sha256": "70290b595cbc6a11cd2129ff9de45435a0aae887c251b4f1be5bdb2a1a40aea7"
+    }
+  ]
+}

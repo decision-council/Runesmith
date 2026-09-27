@@ -1,0 +1,156 @@
+{
+  "schema": "runesmith.trainer-validation.v1",
+  "slice": "B18 support-report intake and restricted repair context",
+  "created_at": "2026-09-27T07:05:19Z",
+  "attribution": "External trainer-authored reusable Runesmith runtime, actual Studio frontend, and tests. No model-authored Hat change or scientific confirmation.",
+  "backend": {
+    "tests": 162,
+    "passed": 162,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 241.455,
+    "artifact": "training/.tmp/b18-integration-final.xml",
+    "scope": [
+      "tests/test_support_reports.py",
+      "tests/test_support_report_learning.py",
+      "tests/test_work_modes_measurements.py",
+      "tests/test_studio.py",
+      "tests/test_loop.py",
+      "tests/test_proposals.py",
+      "tests/test_trial.py",
+      "tests/test_worker_lifecycle.py",
+      "tests/test_worker_restart.py"
+    ],
+    "qualification": "Targeted integration, not full-repository testing. After this suite only loop.py explanatory docstrings and additional browser screenshot assertions changed."
+  },
+  "browser": {
+    "series": "B1–B18",
+    "loops": 139,
+    "requests": 272,
+    "errors": 0,
+    "artifact": "training/.tmp/studio-use-loops-2026-09-27T06-59-40-838Z/receipt.json",
+    "scope": "Actual frontend/CSS plus in-memory APIs. No live Studio or providers.",
+    "final_focused": {
+      "series": "B18",
+      "loops": 10,
+      "requests": 14,
+      "errors": 0,
+      "artifact": "training/.tmp/studio-use-loops-2026-09-27T07-02-50-430Z/receipt.json",
+      "note": "Same ten scenarios, with added phone intake field bounds and steady-state screenshots. Not additive."
+    },
+    "inspected_screenshots": [
+      "training/.tmp/studio-use-loops-2026-09-27T06-59-40-838Z/B18-inbox-1440.png",
+      "training/.tmp/studio-use-loops-2026-09-27T06-59-40-838Z/B18-inbox-390.png",
+      "training/.tmp/studio-use-loops-2026-09-27T07-02-50-430Z/B18-paste-390.png",
+      "training/.tmp/studio-use-loops-2026-09-27T07-02-50-430Z/B18-overview-390.png",
+      "training/.tmp/studio-use-loops-2026-09-27T07-02-50-430Z/B18-inbox-1440.png"
+    ],
+    "tested_widths": [
+      1440,
+      820,
+      390
+    ]
+  },
+  "syntax_and_whitespace": "node --check passed for changed JavaScript/browser harness; git diff --check passed.",
+  "advisor": {
+    "at": "2026-09-27T06:42:21Z",
+    "role": "read-only Astra",
+    "findings": [
+      "Bind support evidence to the captured discovery object's exact path/kind/name, not only the current map name.",
+      "Trace report text through episodic memory, Kaizen packets/replays and online trial assignment.",
+      "Test revocation between steps and preserve already-served opportunity identity.",
+      "Duplicate import must not claim sharing was turned off when existing selection was retained."
+    ],
+    "next_eligible": "2026-09-27T07:42:21Z"
+  },
+  "development_failures": [
+    "Initial support test collection failed before the new module existed.",
+    "Initial 29-pass and 106-pass integration runs overlap the final suite and predate downstream context isolation.",
+    "First B18 browser run failed because the fixture tried filling a collapsed Build instructions field; opened the details element, then reran successfully.",
+    "Expanded support/learning development run: 37 passed, 2 failed. Corrected the fixture request-key pattern and supplied marks/calls arrays in synthetic ordinary records. Real learning path rerun passed 3 tests.",
+    "Advisor review exposed exact-path map rebinding and normal issue reuse risks before final validation. Both were corrected and covered by integration tests.",
+    "A closure read initially used training/READ_ME_TRAINER_NOW.md, which does not exist; reread the actual root brief. No file was created."
+  ],
+  "feature_limits": [
+    "Manually pasted/minimized excerpts only; no automatic redaction, file watcher, mailbox or analytics connector.",
+    "At most 30 retained reports; no archive/delete flow. Import is unselected; duplicate content preserves its prior selection.",
+    "At most 3 newest selected reports within 12000 UTF-8 bytes of report entries per component.",
+    "Report evidence supplements existing failing-test opportunities in mapped Python src repositories. Report alone is not a repair trigger or a verification result.",
+    "Deselection/change stops subsequent steps at safe boundaries, not an already-sent call. Closed opportunity identities are not reopened.",
+    "Support-assisted sessions/checked proposals remain local review records; excluded from episodic memory, Kaizen experience/replay and trial scoring.",
+    "Local home exports include retained records. This is not a general information-flow or prompt-injection guarantee.",
+    "No field commissioning or unattended production qualification."
+  ],
+  "custody": "support-report-audit-20260927T065532Z.json",
+  "route_review": "support-report-route-review-20260927.json",
+  "accounting": {
+    "new_project_instrument_calls": 0,
+    "new_job_ids": [],
+    "new_provider_inference_spend_usd": 0,
+    "estimate_coverage": "N/A: no new inference",
+    "trainer_advisor_allowance": "Separate, unpriced"
+  },
+  "files": [
+    {
+      "path": "runesmith/app/support_reports.py",
+      "sha256": "9a2eb7e730eb5ea38249d1924462de9533cb34629f228be35fde9558aef1a8d9"
+    },
+    {
+      "path": "runesmith/app/worker.py",
+      "sha256": "0c5804cf47d678ea95be0d873fb42bb32c5d903758c6c73a1d5fe1b4caa471ba"
+    },
+    {
+      "path": "runesmith/loop.py",
+      "sha256": "b09f25a4abebd97a6ae8f7b2d586b568294fbeb8544440bdebe61acef9cc1c6c"
+    },
+    {
+      "path": "runesmith/app/server.py",
+      "sha256": "b63bec056be1f63db79e263e71ce51b34c26d20997a252887e355a5bb23b5416"
+    },
+    {
+      "path": "runesmith/app/workspace.py",
+      "sha256": "967782e781fecab21b32abe7c6c9fb0b3ef59265cb28d6ee9d6d043ade9d3bae"
+    },
+    {
+      "path": "runesmith/app/work_modes.py",
+      "sha256": "850a86f52c14992f065a697e3895ed0a02ed2749be542787f21e1fd831cfa5ab"
+    },
+    {
+      "path": "runesmith/app/static/js/support-reports.js",
+      "sha256": "094dead581eb1cb9b121daa2ba59a9ed553e902014611d9629c130f3692e89c8"
+    },
+    {
+      "path": "runesmith/app/static/js/views/mission.js",
+      "sha256": "3e0a7ebe06905277ae27db9a2e6e0097899b3cf065b1f6da7dd13e2200938d0c"
+    },
+    {
+      "path": "runesmith/app/static/js/views/work.js",
+      "sha256": "2ba54fe1336a8325ad17638b98ef8e0071c259a09087bd60a0b9908e6279ea61"
+    },
+    {
+      "path": "runesmith/app/static/js/views/improve.js",
+      "sha256": "e0f08b4b554348f832e4921da4b62c715d8c690138639496b17415f261a69d91"
+    },
+    {
+      "path": "runesmith/app/static/js/core.js",
+      "sha256": "d11c4582122ffb9984bec0c9c5bfd6de1e25e130ff3fa0b490ad03575857884d"
+    },
+    {
+      "path": "runesmith/app/static/app.css",
+      "sha256": "4b4c7c370b49b330639a5e675d6176e02cfc967b0c0d4fbe8f14b005967b7c44"
+    },
+    {
+      "path": "tests/test_support_reports.py",
+      "sha256": "68c29e5741234e29ae92f0abdca901a7948bf791a1eef6dfdc25970cfd67de03"
+    },
+    {
+      "path": "tests/test_support_report_learning.py",
+      "sha256": "5f6e8e53093e4378fb9509942dd13adbcaddb629f0d1ab4c2e7f1d954ae8cff8"
+    },
+    {
+      "path": "tests/studio_use_loops_browser.mjs",
+      "sha256": "790f55b9b53601dc2b7bd1e9428b57907c9122cdecbc7aa67aa09033ea1836c3"
+    }
+  ]
+}

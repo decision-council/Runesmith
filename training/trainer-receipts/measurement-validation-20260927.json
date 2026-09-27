@@ -1,0 +1,121 @@
+{
+  "utc": "2026-09-27 05:55:27 UTC",
+  "step": "B16",
+  "scope": "External trainer Runesmith engineering; deterministic/disposable runtime tests plus actual frontend against in-memory APIs; not a live field outcome or scientific confirmation.",
+  "backend": {
+    "integration": {
+      "passed": 173,
+      "skipped": 1,
+      "seconds": 132.32
+    },
+    "readiness_final": {
+      "passed": 29,
+      "seconds": 19.92,
+      "additional_distinct_cases": 3
+    },
+    "distinct_passes": 176,
+    "skip_reason": "Host symlink creation unavailable",
+    "full_repository_suite": false
+  },
+  "frontend": {
+    "full": {
+      "loops": 121,
+      "requests": 249,
+      "path": "training/.tmp/studio-use-loops-2026-09-27T05-50-52-035Z"
+    },
+    "focused": {
+      "loops": 12,
+      "requests": 23,
+      "path": "training/.tmp/studio-use-loops-2026-09-27T05-52-37-919Z"
+    },
+    "browser_errors": 0,
+    "live_studio": false
+  },
+  "advisor": {
+    "at": "2026-09-27T05:42:14Z",
+    "read_only": true,
+    "next_eligible": "2026-09-27T06:42:14Z",
+    "findings": "No blocker in saved-report scope. Requested last-refresh/narrow newest-row wording and literal pre-B16 memo compatibility; implemented and tested."
+  },
+  "field_audit": "training/trainer-receipts/measurement-audit-20260927T055103Z.json",
+  "inference": {
+    "new_project_requests": 0,
+    "job_ids": [],
+    "new_provider_spend_usd": 0,
+    "estimate_coverage": "N/A: no new project instrument calls; Codex trainer/advisor allowance separate",
+    "openrouter_credit_refreshed": false
+  },
+  "failures": {
+    "initial_red_readiness_cases": 14,
+    "readiness_red_seconds": 11.64,
+    "ui_fixture_issues": [
+      "Ambiguous metric-label selector",
+      "Assertion before async GET completion",
+      "Incorrect dependency-directory spelling",
+      "Wrong dashboard refresh button name"
+    ],
+    "runtime_ui_regression": "Delayed GET erased mode edits; reproduced and fixed",
+    "source_artifacts": [
+      "training/.tmp/studio-use-loops-2026-09-27T05-36-13-435Z",
+      "training/.tmp/studio-use-loops-2026-09-27T05-36-32-850Z",
+      "training/.tmp/studio-use-loops-2026-09-27T05-37-35-043Z",
+      "training/.tmp/studio-use-loops-2026-09-27T05-43-21-113Z"
+    ]
+  },
+  "code_hashes": [
+    {
+      "path": "runesmith/app/measurements.py",
+      "sha256": "387a1f5028c53353cb1130b6fbd154a1fe9b647d679686bcbe4d242448d5e852"
+    },
+    {
+      "path": "runesmith/app/work_modes.py",
+      "sha256": "31b23eb28c3ee3e3a149acbf3b2970eb38414993ccff6d2ccf25502351a5f9e1"
+    },
+    {
+      "path": "runesmith/app/dashboards.py",
+      "sha256": "d2263ca7029ed470e42943d7012b37ded2f6d79250767f777e31a11f08f6978c"
+    },
+    {
+      "path": "runesmith/app/server.py",
+      "sha256": "175396f92bdee8155405780e10687eeb0674a4253463e18d4bbbd15b9db07ba5"
+    },
+    {
+      "path": "runesmith/app/static/app.css",
+      "sha256": "851fb8a4f7d45e6dba917be961d0249e71e38ce7d666c0ae4fa2b456577c56dd"
+    },
+    {
+      "path": "runesmith/app/static/js/measurement-readiness.js",
+      "sha256": "52369a7112a704362d1b0831e6d74cb01742ce625d446bcdf194684a0f2d358e"
+    },
+    {
+      "path": "runesmith/app/static/js/views/mission.js",
+      "sha256": "19a158d1b19328b6461df350fb3bd85596bb65d5e7856036f9a666093b63abe0"
+    },
+    {
+      "path": "runesmith/app/static/js/views/dashboards.js",
+      "sha256": "27984cfaa2bde5854d6788f15beb0f8b8a2bdd48bed7dc2aa3c0d56f77806717"
+    },
+    {
+      "path": "tests/test_measurement_readiness.py",
+      "sha256": "c6453a5c939a252682f024c15340cfabea10e6c14fc6eaa553929eee3cb88f67"
+    },
+    {
+      "path": "tests/fixtures/pre_b16_optimization.json",
+      "sha256": "67915c4bd6589a52191cebf29953ea1f38e7ab7351d261a2a70393085f456066"
+    },
+    {
+      "path": "tests/studio_use_loops_browser.mjs",
+      "sha256": "91ee14f05a6c5710af52faf68a4cbc0ed668d0955d84527b71e8a4e2204da2fa"
+    }
+  ],
+  "limits": [
+    "Newest included timestamp is not whole-population freshness/completeness",
+    "Saved receipts are not live/current business truth",
+    "Local source files not reread during view refresh",
+    "Old parser-v1 receipts not retroactively revalidated",
+    "Optimize remains unadopted hypotheses, not autonomous implementation",
+    "No resident field Studio commissioned or denied launch retried",
+    "No live PRHat scan or write",
+    "Support m7 ordinary attempts spent; Growth m5 needs revision"
+  ]
+}

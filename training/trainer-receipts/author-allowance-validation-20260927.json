@@ -1,0 +1,136 @@
+{
+  "id": "B17",
+  "utc": "2026-09-27 06:27:07 UTC",
+  "scope": "External trainer-authored ordinary author allowance, revision linkage and Studio Work UI. Offline tests and read-only field custody; no live provider call or project implementation.",
+  "code_sha256": [
+    {
+      "path": "runesmith/app/author_allowance.py",
+      "sha256": "f289be0ec4d64351cccff340665cf00b70db410445d41992b81254d8f583713c"
+    },
+    {
+      "path": "runesmith/app/building.py",
+      "sha256": "8d19f4d4398d37645bc8860b83fe02305f2de9db066479b3eebd10c19c53540e"
+    },
+    {
+      "path": "runesmith/app/author_revisions.py",
+      "sha256": "b1b61782d13c87ba93861e7b65eee9201e3b753e7de941e4adb2c7cce1971f73"
+    },
+    {
+      "path": "runesmith/app/build_corrections.py",
+      "sha256": "4d49df9ededa7941ed30736c0413421a06eaf8e78a674f0107b8e9f14504d75d"
+    },
+    {
+      "path": "runesmith/app/planner.py",
+      "sha256": "ce5b1f59d78b38b94227ba5d639466c0c7b7171d613d1c6545c4c1d7df4031de"
+    },
+    {
+      "path": "runesmith/app/static/js/views/work.js",
+      "sha256": "2a4bdb5acc0af843a20c71422390af0b4dc8f4d66e0de03131491d6d6c569e32"
+    },
+    {
+      "path": "runesmith/app/static/app.css",
+      "sha256": "09e6bcd73533588dcb61e8b895aba2ad021fabe5f7a10426a6d0fcf695981a31"
+    },
+    {
+      "path": "tests/test_author_allowance.py",
+      "sha256": "de42dc3c993cb51f73c8a962dd5603035101286ac5bce408b79030b9313a483e"
+    },
+    {
+      "path": "tests/test_author_revisions.py",
+      "sha256": "119b52085099c103801e5e839da52591948c99b6d98c9a42e80045bcf2052398"
+    },
+    {
+      "path": "tests/test_build_steps.py",
+      "sha256": "f8fdc6701b34c3e1d850bcd1bd3773a5db45f7dc47d04def66dd05e49e11c740"
+    },
+    {
+      "path": "tests/conftest.py",
+      "sha256": "708aeb8a8dc49fd73208619e8688eebbfcad5c67864a416d5aa077b90e452010"
+    },
+    {
+      "path": "tests/studio_use_loops_browser.mjs",
+      "sha256": "6e8037928ae2112e1c81b704cbd0a7f3ce88ba7293fcc95077789da28cfeeb77"
+    },
+    {
+      "path": "training/accounting_audit_20260927.py",
+      "sha256": "4b796dfa46fb37dc6dda1a97a3808ede530b03391aaba6043bcadd5b42b1a3a9"
+    }
+  ],
+  "backend": [
+    {
+      "tests": 247,
+      "passed": 247,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 215.72,
+      "junit": "training/.tmp/b17-integration-final.xml",
+      "scope": "Build/revision/recovery/corrections/jobs/snapshots/contracts/restart/lifecycle/switching integration. Before the final unreadable-directory guard."
+    },
+    {
+      "tests": 29,
+      "passed": 29,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 19.17,
+      "junit": "training/.tmp/b17-allowance-final.xml",
+      "scope": "Final allowance suite after the directory guard; 27 overlap integration, 2 new directory cases."
+    }
+  ],
+  "distinct_backend_passes": 249,
+  "full_repository_suite": false,
+  "frontend": {
+    "state": "passed",
+    "loops": 129,
+    "requests": 259,
+    "browser_errors": 0,
+    "artifacts": "D:\\Runesmith\\training\\.tmp\\studio-use-loops-2026-09-27T06-24-30-612Z",
+    "series": "B1–B17",
+    "final_B17_loops": 8,
+    "widths": [
+      1440,
+      820,
+      390
+    ],
+    "visual_inspection": [
+      "B17-allowance-controls-390.png",
+      "B17-author-allowance-1440.png"
+    ],
+    "scope": "Actual JavaScript/CSS with in-memory API fixtures, not a resident Studio or field proof."
+  },
+  "development_failures": [
+    "Initial regression slice: 9 red cases/assertions; note edits replenished ordinary scope, aliases were not aggregated and damaged/unresolved histories lacked fail-closed structured status.",
+    "First integration slice: 64 passed, 2 failed due to stale no-queue-write expectation and a test profile created inside project source. Corrected harness checks preserve durable queue assertions and place the profile in a disposable sibling.",
+    "Expanded pre-reservation-guard slice: 80 passed; later lineage-only slice 25 passed. Overlapping counts are not additive.",
+    "First broad 247-case run: 74 failed / 173 passed in 167.72s after trainer omitted the local _read_json import in the new planner guard. No field model calls. Import and exception-type assertion fixed; corrected 247-case rerun green.",
+    "B10/B17 browser run and B17 diagnostic rerun reproduced 390px horizontal overflow in retained check/recovery details. Scoped Work flex/button wrapping fixed it. Failed artifacts 2026-09-27T06-14-08-854Z and 2026-09-27T06-14-47-694Z remain in training/.tmp."
+  ],
+  "audit": "D:/Runesmith/training/trainer-receipts/author-allowance-audit-20260927T062442Z.json",
+  "new_provider_calls": 0,
+  "new_job_ids": [],
+  "estimated_new_provider_spend_usd": 0,
+  "estimate_coverage": "N/A: no new project-instrument requests. Trainer/Codex allowance not priced here.",
+  "retained_estimate_coverage": {
+    "SupportHat": {
+      "subtotal_usd": 0.32907398,
+      "requests_covered": 4,
+      "total_requests": 6
+    },
+    "GrowthHat": {
+      "subtotal_usd": 0.78811,
+      "requests_covered": 12,
+      "total_requests": 13
+    },
+    "PRHat": "No retained gateway records: historical spend unknown, not zero."
+  },
+  "advisor": {
+    "consulted_this_step": false,
+    "last_consultation_utc": "2026-09-27T05:42:14Z",
+    "next_eligible_utc": "2026-09-27T06:42:14Z"
+  },
+  "limits": [
+    "Not a global provider-spend ceiling. Scope remains frozen source plus milestone contract; explicit different work has a distinct scope and returning to old work preserves usage.",
+    "No retroactive attempt rewriting or invented Growth legacy lineage. Other explicitly budgeted continuation paths stay separate.",
+    "Requires the existing per-home writer discipline; not an OS security boundary against external receipt/source modification.",
+    "No changes to Hat source/tests, grants, acceptance contracts, finished paper, existing product docs, website or presentation. No resident launch or denied-action retry."
+  ]
+}

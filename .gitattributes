@@ -4,3 +4,7 @@
 *.cmd text eol=crlf
 *.png binary
 *.zip binary
+# Field-training logs are evidence: receipts may hash them, and some have mixed line endings, so keep their exact bytes.
+TRAINER_LOG.md -text
+READ_ME_TRAINER_NOW.md -text
+training/**/*.md -text

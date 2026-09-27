@@ -1,0 +1,117 @@
+{
+  "schema": 1,
+  "utc": "2026-09-27T07:33:27Z",
+  "step": "B19 Overview setup truth and requested engineering handoff",
+  "attribution": "External trainer-authored reusable UI/tests/documentation; not configured-model Hat authorship, owner acceptance or scientific Subject improvement.",
+  "changed_code": [
+    "runesmith/app/static/js/views/home.js"
+  ],
+  "backend": {
+    "scope": "Targeted offline health, doctor, worker lifecycle and restart; not full repository",
+    "tests": 41,
+    "passed": 41,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds_junit": 34.166,
+    "receipt": "training/.tmp/b19-backend-final.xml",
+    "suites": [
+      "tests/test_overview_health.py",
+      "tests/test_doctor.py",
+      "tests/test_worker_lifecycle.py",
+      "tests/test_worker_restart.py"
+    ],
+    "assertions": [
+      "Real authenticated disposable HTTP requests /api/health and /api/health?network=0 never call provider probe",
+      "Missing pytest is reported with remedy",
+      "All retained home files except Windows-held studio.instance.lock unchanged",
+      "No current/queued/recovered/paused worker change"
+    ]
+  },
+  "browser": {
+    "scope": "Actual frontend/CSS, intercepted in-memory API; no resident Studio or real model call",
+    "loops": 149,
+    "requests": 304,
+    "errors": 0,
+    "series": "B1-B19",
+    "receipt": "training/.tmp/studio-use-loops-2026-09-27T07-31-48-802Z/receipt.json",
+    "b19_loops": 10,
+    "viewports": [
+      1440,
+      820,
+      390
+    ],
+    "screenshot_review": [
+      "B19-overview-1440.png (focused)",
+      "B19-setup-390.png (focused)",
+      "B19-overview-390.png (final full)",
+      "B19-setup-1440.png (final full)"
+    ],
+    "focused_receipt": "training/.tmp/studio-use-loops-2026-09-27T07-27-54-611Z/receipt.json",
+    "focused_passes": 10,
+    "focused_requests": 33,
+    "counts_not_additive": true
+  },
+  "development_failures": [
+    {
+      "receipt": "training/.tmp/b19-backend.xml",
+      "passed": 39,
+      "failed": 2,
+      "cause": "New test attempted to read the active Windows byte-range lock. Exact held lock byte excluded; other files still compared. No product lock change."
+    },
+    {
+      "receipt": "training/.tmp/studio-use-loops-2026-09-27T07-30-19-805Z/receipt.json",
+      "passed_loops": 145,
+      "browser_errors": 0,
+      "cause": "New test helper waited on disabled instead of the existing busy class, reading before response render. Helper corrected; product result was visible in retained failure screenshot."
+    }
+  ],
+  "distribution": "training/trainer-receipts/handoff-distribution-diagnostic-20260927.json",
+  "custody": "training/trainer-receipts/overview-readiness-audit-20260927T073050Z.json",
+  "checks": {
+    "javascript_syntax": true,
+    "tracked_diff_whitespace": true,
+    "repository_root_home_absent": true
+  },
+  "advisor": {
+    "new_consultation": false,
+    "last_consultation_utc": "2026-09-27T06:42:21Z",
+    "next_earliest_utc": "2026-09-27T07:42:21Z"
+  },
+  "new_inference_calls": 0,
+  "job_ids": [],
+  "new_provider_spend_usd": 0,
+  "estimate_coverage": "N/A; Codex trainer allowance separate and unpriced",
+  "boundaries": [
+    "No resident launch or denied-action retry",
+    "No field project implementation/test/grant/contract/route edit",
+    "No scientific paper, pre-existing product-document, website or presentation edit",
+    "No provider-capacity check or uncertain-call retry",
+    "Existing heartbeat remains; no scheduling mutation"
+  ],
+  "limitations": [
+    "Developer alpha; not clean-machine click-to-start or unattended release",
+    "B18 distribution artifact predates B19 frontend",
+    "Targeted suites do not settle historical whole-suite CRLF failure",
+    "UI policy snapshot as of opening; not live health monitor",
+    "No live inference / end-to-end authored build this slice"
+  ],
+  "file_hashes": [
+    {
+      "path": "runesmith/app/static/js/views/home.js",
+      "sha256": "a9cf5c0c0bd60cb0515000b9210d9408ec30b88689c073b53ce1d7fc74ac4c70"
+    },
+    {
+      "path": "tests/test_overview_health.py",
+      "sha256": "06b79ed6371ccef19bcf56d65d9b904a668f07a375c587a70fe64edbbd3fbd3f"
+    },
+    {
+      "path": "tests/studio_use_loops_browser.mjs",
+      "sha256": "40cdab3d127e22189b8a7babbdf27ac127116d25c4ab6fcbbbf5372d1f6672cd"
+    },
+    {
+      "path": "RUNESMITH_STUDIO_AND_RUNTIME_HANDOFF_2026-09-27.md",
+      "sha256": "c31c29747c341a67d7df2f674082ffd893b940b077afc0b2d6741d038b0a00cc"
+    }
+  ]
+}

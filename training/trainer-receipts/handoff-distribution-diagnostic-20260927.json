@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "recorded_utc": "2026-09-27T07:30:54Z",
+  "scope": "Offline isolated Windows package diagnostic, captured during handoff. Pre-B19 package snapshot; not a released artifact, browser launch or authored end-to-end build.",
+  "authored_by": "external trainer",
+  "directory": "D:/Runesmith/training/.tmp/handoff-package-b9499050e8754af5a17c1c0105a1d137",
+  "wheel": {
+    "name": "runesmith-0.1.0-py3-none-any.whl",
+    "bytes": 458681,
+    "sha256": "f39e812873f1586190df11f3f71a7f479ff77ec15dfc56408fc3840d4d512fbf",
+    "built_utc": "2026-09-27T07:13:12.1761849Z"
+  },
+  "method": [
+    "Disposable copy of pyproject.toml, README.md and runesmith package; no training homes or keys",
+    "pip wheel --no-deps --no-build-isolation --no-index --no-cache-dir",
+    "Fresh venv; offline wheel installation with --no-index --no-deps --no-cache-dir",
+    "Isolated Python (-I) imports from venv site-packages; CLI help; new home init; doctor --offline"
+  ],
+  "environment": {
+    "platform": "Windows",
+    "python": "3.13.14",
+    "pip": "26.1.2",
+    "setuptools": "83.0.0"
+  },
+  "checks": {
+    "wheel_build": true,
+    "isolated_install": true,
+    "site_packages_import": true,
+    "cli_help": true,
+    "cli_home_init": true,
+    "active_generation": "gen-326acff89a9a",
+    "ledger_records": 2,
+    "ledger_valid": true,
+    "active_generation_intact": true,
+    "generation_kernel_matches": true,
+    "pytest_installed": false,
+    "doctor_problem_count": 1,
+    "doctor_process_exit": 0,
+    "inference_probed": false
+  },
+  "installed_assets_checked": [
+    "app/static/index.html",
+    "app/static/js/support-reports.js",
+    "app/static/js/views/mission.js",
+    "app/static/js/views/dashboards.js",
+    "app/support_reports.py",
+    "app/workspace_ownership.py"
+  ],
+  "limitations": [
+    "Base dependencies exclude pytest; optional code extra is needed for code-object checks",
+    "CLI init local instrument template is not fresh Studio instrument policy",
+    "No resident Studio, user browser or click-to-start path was launched",
+    "No model call or clean-machine unattended build",
+    "Wheel predates B19 Overview changes"
+  ],
+  "new_inference_calls": 0,
+  "new_provider_spend_usd": 0,
+  "estimate_coverage": "N/A; Codex trainer allowance not priced"
+}

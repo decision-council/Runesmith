@@ -1,0 +1,50 @@
+{
+  "schema": "runesmith.trainer-route-review.v1",
+  "observed_at": "2026-09-27T06:35:04.696212Z",
+  "read_only": true,
+  "new_inference_requests": 0,
+  "openrouter": {
+    "method": "GET",
+    "url": "https://openrouter.ai/api/v1/credits",
+    "total_credits_usd": 109,
+    "total_usage_usd": 108.892598535,
+    "remaining_usd": 0.10740146499999526
+  },
+  "milliner": {
+    "base_url": "http://127.0.0.1:8765",
+    "method": "GET",
+    "scope": "Four exact configured model detail records, not connection or authoring tests",
+    "models": [
+      {
+        "id": "gemini:gemini-3.1-flash-lite-preview",
+        "daily_remaining": 0,
+        "daily_limit": 500,
+        "breaker": "closed",
+        "reset": "approximately 2026-09-27T07:00:00Z",
+        "note": "Provider-calibrated daily exhaustion."
+      },
+      {
+        "id": "gemini2:gemini-3.1-flash-lite",
+        "local_daily_remaining": 500,
+        "breaker": "open",
+        "retry_after_seconds": 1494.7,
+        "note": "Restored provider daily exhaustion overrides optimistic local counter."
+      },
+      {
+        "id": "gemini3:gemini-3.1-flash-lite",
+        "local_daily_remaining": 500,
+        "breaker": "open",
+        "retry_after_seconds": 1494.9,
+        "note": "Restored provider daily exhaustion overrides optimistic local counter."
+      },
+      {
+        "id": "openrouter:anthropic/claude-opus-4.5",
+        "breaker": "closed",
+        "past_successes": 3,
+        "note": "Catalog presence/past success only. No price in the inspected projection; capacity/affordability not established."
+      }
+    ]
+  },
+  "decision": "Preserve SupportHat m7's one remaining ordinary attempt. No inference, rerouting or credit change in B18. An elapsed reset time is not proof of new capacity; recheck before later work.",
+  "attribution": "External trainer read-only API inspection. No keys retained in this receipt."
+}

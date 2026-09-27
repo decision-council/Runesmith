@@ -1,0 +1,312 @@
+{
+  "utc": "2026-09-27T06:17:54Z",
+  "new_model_calls": 0,
+  "scope": "Read-only home receipts and Support/Growth source identity; no live PRHat scan.",
+  "projects": [
+    {
+      "project": "SupportHat",
+      "utc": "2026-09-27T06:17:54Z",
+      "lock_available": true,
+      "resident": false,
+      "recorded_current": false,
+      "queued_intentions": 0,
+      "recovery_hold": false,
+      "paused": false,
+      "pending_authors": 0,
+      "manual_waiting": 0,
+      "auto_work": false,
+      "kaizen": false,
+      "plan_role": [
+        "author"
+      ],
+      "accounting": {
+        "summary": {
+          "requests": 6,
+          "terminal": 6,
+          "unresolved": 0,
+          "costed_requests": 4,
+          "estimated_usd": 0.32907398,
+          "attempt_reconciled_requests": 4,
+          "aggregate_only_requests": 0,
+          "token_complete_requests": 6
+        },
+        "coverage": {
+          "scanned": 6,
+          "valid": 6,
+          "invalid": 0,
+          "omitted": 0,
+          "duplicates": 0
+        }
+      },
+      "m7_failed_job": {
+        "id": "sha256:0e1bb21063080ef42f69837eb6418092d7d09616c8201fdffb2f21ebc8648d0d",
+        "instrument": "paid-deepseek",
+        "job_id": "mj_3514978f176848a89e60",
+        "job_ids": [
+          "mj_3514978f176848a89e60"
+        ],
+        "state": "terminal",
+        "outcome": "failed",
+        "usage": {
+          "tokens_in": 62430,
+          "tokens_out": 36000,
+          "observed_tokens_in": 62430,
+          "observed_tokens_out": 36000,
+          "attempts": 3,
+          "token_complete_attempts": 3,
+          "token_basis": "attempts",
+          "est_usd": null,
+          "reported_est_usd": 0,
+          "cost_status": "aggregate_mismatch"
+        }
+      },
+      "source_digest": "4a93c8e6050949db9f7c645d652fccff88653a6f1e32a1a9a7558c4eda01a523",
+      "protected_count": 53,
+      "protected_unchanged": true,
+      "milestones": [
+        {
+          "id": "m1",
+          "status": "done"
+        },
+        {
+          "id": "m2",
+          "status": "done"
+        },
+        {
+          "id": "m2-compat",
+          "status": "done"
+        },
+        {
+          "id": "m3",
+          "status": "done"
+        },
+        {
+          "id": "m4",
+          "status": "done"
+        },
+        {
+          "id": "m5",
+          "status": "done"
+        },
+        {
+          "id": "m6",
+          "status": "done"
+        },
+        {
+          "id": "m7",
+          "status": "open"
+        },
+        {
+          "id": "m8",
+          "status": "open"
+        }
+      ],
+      "latest_draft": {
+        "id": "d202609270035308828",
+        "milestone": "m6",
+        "state": "applied",
+        "verified": true
+      },
+      "ordinary_author_allowance": {
+        "milestone": "m7",
+        "escalation_eligible": false,
+        "escalation_used": false,
+        "scope": "2dc6b5e25d3711a81d12dd506024f7d0f805b68246d8735da01181ba854c1403",
+        "scope_aliases": [
+          "2dc6b5e25d3711a81d12dd506024f7d0f805b68246d8735da01181ba854c1403",
+          "7146086fd5a7082699b459a9818013a340d80c81e7114b819cee7a113f0de7c7"
+        ],
+        "contract": "babbed24a6067a6fab243470abf3546027eb56b3a38c1defd2bf666467bbd2ae",
+        "snapshot_digest": "4a93c8e6050949db9f7c645d652fccff88653a6f1e32a1a9a7558c4eda01a523",
+        "limit": 3,
+        "used": 2,
+        "remaining": 1,
+        "attempts": [
+          {
+            "id": "cbd7f7ad1d5d488fafb1982f89bdce90.json",
+            "state": "failed",
+            "digest": "fb96e6f39530a49ef5cb608f591bfacef8ab6bb4648966a0b2722b46d6a40323"
+          },
+          {
+            "id": "e9279162a6044b3093e527a70eafd08d.json",
+            "state": "failed",
+            "digest": "b14fc6efc28ed9eba33ff368e7f00ebc1d13e17eef0fd463ab764c45dbe6cb73"
+          }
+        ],
+        "escalations": [],
+        "known": true,
+        "reuse_draft": null,
+        "blockers": [],
+        "can_draft": true
+      },
+      "m7_drafts": 0
+    },
+    {
+      "project": "GrowthHat",
+      "utc": "2026-09-27T06:17:58Z",
+      "lock_available": true,
+      "resident": false,
+      "recorded_current": false,
+      "queued_intentions": 0,
+      "recovery_hold": false,
+      "paused": false,
+      "pending_authors": 0,
+      "manual_waiting": 0,
+      "auto_work": false,
+      "kaizen": false,
+      "plan_role": [
+        "author"
+      ],
+      "accounting": {
+        "summary": {
+          "requests": 13,
+          "terminal": 13,
+          "unresolved": 0,
+          "costed_requests": 12,
+          "estimated_usd": 0.78811,
+          "attempt_reconciled_requests": 12,
+          "aggregate_only_requests": 0,
+          "token_complete_requests": 13
+        },
+        "coverage": {
+          "scanned": 13,
+          "valid": 13,
+          "invalid": 0,
+          "omitted": 0,
+          "duplicates": 0
+        }
+      },
+      "source_digest": "4cf544972e5cf976e6276ef40d83df7fee6c09829a8493165dfd7d6fde93cdb5",
+      "protected_count": 106,
+      "protected_unchanged": true,
+      "milestones": [
+        {
+          "id": "m1",
+          "status": "done"
+        },
+        {
+          "id": "m2",
+          "status": "done"
+        },
+        {
+          "id": "b35344355f2be-s1",
+          "status": "done"
+        },
+        {
+          "id": "bcd2bb85584d3-s1",
+          "status": "done"
+        },
+        {
+          "id": "bcd2bb85584d3-s2",
+          "status": "done"
+        },
+        {
+          "id": "b35344355f2be-s2",
+          "status": "done"
+        },
+        {
+          "id": "m3",
+          "status": "done"
+        },
+        {
+          "id": "bfe7ebbf2fb67-s1",
+          "status": "done"
+        },
+        {
+          "id": "bfe7ebbf2fb67-s2",
+          "status": "done"
+        },
+        {
+          "id": "bfe7ebbf2fb67-s3",
+          "status": "done"
+        },
+        {
+          "id": "m4",
+          "status": "done"
+        },
+        {
+          "id": "m5",
+          "status": "open"
+        },
+        {
+          "id": "m6",
+          "status": "open"
+        },
+        {
+          "id": "m7",
+          "status": "open"
+        },
+        {
+          "id": "m8",
+          "status": "open"
+        }
+      ],
+      "latest_draft": {
+        "id": "d2026092701292460f1",
+        "milestone": "m5",
+        "state": "needs_revision",
+        "verified": false
+      },
+      "ordinary_author_allowance": {
+        "milestone": "m5",
+        "escalation_eligible": false,
+        "escalation_used": false,
+        "scope": "0684b8d4b30715984c18654cf78d084154b7a8e903f4fb93b3e86e606e16451b",
+        "scope_aliases": [
+          "0684b8d4b30715984c18654cf78d084154b7a8e903f4fb93b3e86e606e16451b"
+        ],
+        "contract": "f8cca63f035ad8253667a51713835726b971b13ea7a946e26585d1e8cf07a430",
+        "snapshot_digest": "4cf544972e5cf976e6276ef40d83df7fee6c09829a8493165dfd7d6fde93cdb5",
+        "limit": 3,
+        "used": 0,
+        "remaining": null,
+        "attempts": [],
+        "escalations": [],
+        "known": false,
+        "reuse_draft": null,
+        "blockers": [
+          "No unambiguous ordinary author allowance for this lineage. No new budget granted."
+        ],
+        "can_draft": false,
+        "recorded_attempts": 0
+      }
+    },
+    {
+      "project": "PRHat",
+      "utc": "2026-09-27T06:18:06Z",
+      "lock_available": true,
+      "resident": false,
+      "recorded_current": false,
+      "queued_intentions": 0,
+      "recovery_hold": false,
+      "paused": false,
+      "pending_authors": 0,
+      "manual_waiting": 0,
+      "auto_work": false,
+      "kaizen": false,
+      "plan_role": [
+        "author"
+      ],
+      "accounting": {
+        "summary": {
+          "requests": 0,
+          "terminal": 0,
+          "unresolved": 0,
+          "costed_requests": 0,
+          "estimated_usd": null,
+          "attempt_reconciled_requests": 0,
+          "aggregate_only_requests": 0,
+          "token_complete_requests": 0
+        },
+        "coverage": {
+          "scanned": 0,
+          "valid": 0,
+          "invalid": 0,
+          "omitted": 0,
+          "duplicates": 0
+        }
+      },
+      "live_root_scanned": false
+    }
+  ]
+}

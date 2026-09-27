@@ -1,0 +1,32 @@
+{
+  "observed_at": "2026-09-25T21:10:00.3996361Z",
+  "source": "http://127.0.0.1:3007/v1/watch",
+  "collection": "trainer read-only aggregate snapshot; no recipient content",
+  "run": {
+    "run_id": "20260925T203002Z-4c6287",
+    "status": "completed",
+    "started_at": "2026-09-25T20:30:02.486Z",
+    "ended_at": "2026-09-25T20:52:47.974Z",
+    "code_revision": "4b65359db0a6d7b4713329c425d85d6a455bcdc7",
+    "side_effects_allowed": true,
+    "primary_constraint": "nothing eligible was queued for drain",
+    "abandoned": false
+  },
+  "sends": {
+    "total": 53, "non_terminal": 19, "sent_last_24h": 1, "read_errors": 0,
+    "by_state": {"gated": 29, "unknown": 5, "sent": 15, "parked": 2, "scheduled": 2},
+    "by_disposition": {"redrafted": 2, "retired": 8, "intake_unreadable": 2, "cancelled": 2, "pending": 19, "reoffer_scheduled": 18, "redraft_requested": 2}
+  },
+  "replies": {"processed_total": 0, "by_class": {}, "malformed_lines_skipped": 0},
+  "sequences": {"total": 30, "active": 30, "due_now": 27, "overdue": 25, "next_due_at": null, "read_errors": 0},
+  "discovery": {"discovered": 36, "enriched": 36, "drafted": 35, "read_errors": 0},
+  "coverage_counts": {
+    "pitches": {"known": 21, "unknown": 0},
+    "genuine_responses": {"known": 0, "unknown": 0},
+    "placements": {"known": 0, "unknown": 199},
+    "independent_decisions": {"known": 0, "unknown": 0},
+    "product_uses": {"known": 0, "unknown": 0}
+  },
+  "backup_pass": true,
+  "attribution": "PRHat's pre-existing live operation; not a Runesmith field-training improvement"
+}
