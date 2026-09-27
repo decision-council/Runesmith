@@ -29,6 +29,10 @@
   - Its acceptance is the project's **own tests, frozen as they are now**, embedded in one self-contained acceptance file. Rewriting the tests cannot pass it; only fixing the code can.
   - Automatic apply, only if the owner ticks it, may write only the code folders, never the tests.
   - Rounds say plainly when no tests were run, or when a project is skipped for its layout, and point to this path.
+  - **Rounds measure what the repair organ cannot serve (J3-G2).** The organ's test discovery and the map's test probe use pytest, which a clean install does not have, so out of the box a round could not see failing tests at all.
+    - A project without a `src/` folder, or any project where pytest is missing, is now measured with Python's own unittest, on a throwaway copy, if the owner allows running its tests.
+    - The round says "N of M tests fail … use Fix the failing tests", and the Overview offers the fix from that measurement.
+    - Without permission, the round says it has not run the tests and how to allow it, instead of implying all is well.
   - `runesmith/app/fix_tests.py`, `/api/fix-tests`, browser loop B22.
 - **Small Python projects are recognised (J3-B1).** In journey J3 (an existing project with failing tests), the common flat layout (a package folder and `tests/`, a README, no packaging files) was mapped as a "document collection". So the introduction suggested "Tend my documents", the tests were never run, and a round reported **"nothing to repair"** while five tests failed.
   - A folder now counts as a Python project with any common marker (`requirements.txt`, `Pipfile` and `tox.ini` too), or with Python code at the top plus its tests.

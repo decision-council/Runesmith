@@ -13,12 +13,14 @@ The caller owns the Workspace instance lock, as with other Studio mutations.
 """
 from __future__ import annotations
 
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from runesmith import atomic
 from runesmith.app.acceptance_contracts import publish_expectations
-from runesmith.app.workspace import WorkspaceError, _now
+from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 
 TEST_DIRS = ("tests", "test")
 SKIP = {"__pycache__", ".git", ".runesmith", ".venv", "venv", "node_modules"}
@@ -87,11 +89,40 @@ def code_paths(root: Path) -> list[str]:
     return paths
 
 
+def measure(ws, path: Path, name: str) -> dict[str, Any]:
+    """Run a project's tests once with Python's own unittest, on a throwaway copy: no pytest needed (J3-G2).
+
+    Rounds use it for projects the repair organ cannot serve (no src/ folder, or no pytest installed), and only when
+    the owner allows running the project's tests.
+    """
+    from runesmith.app.building import _run_checks
+    folder = ws.home / "fix-tests"
+    folder.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="measure-", dir=folder, ignore_cleanup_errors=True) as directory:
+        stage = Path(directory) / "project"
+        shutil.copytree(path, stage, ignore=shutil.ignore_patterns(*SKIP, "*.pyc"))
+        result = _run_checks(stage, "project", Path(directory) / "tests.txt", timeout_s=300)
+    record = {"object": name, "path": str(path), "status": result.get("status"), "ran": result.get("ran") or 0,
+              "failures": result.get("failures") or 0, "errors": result.get("errors") or 0,
+              "failing": [d.get("test") for d in result.get("failure_details") or []], "utc": _now()}
+    measured = _read_json(folder / "MEASURED.json", {})
+    measured[str(path)] = record
+    _write_json(folder / "MEASURED.json", measured)
+    return record
+
+
 def offer(ws) -> dict[str, Any] | None:
-    """What the Overview offers: the mapped Python project whose tests do not all pass, if any."""
+    """What the Overview offers: a Python project whose tests do not all pass, from a round's measurement or the map."""
+    measured = _read_json(ws.home / "fix-tests" / "MEASURED.json", {})
     for obj in (ws.environment_map() or {}).get("objects", []):
         if obj.get("kind") != "python_repository":
             continue
+        record = measured.get(obj.get("path"))
+        if record and record["ran"] and record["failures"] + record["errors"]:
+            return {"object": obj.get("name"), "path": obj.get("path"),
+                    "tests_green": round(1 - (record["failures"] + record["errors"]) / record["ran"], 3),
+                    "code_paths": code_paths(Path(obj["path"])), "test_files": len(project_test_files(Path(obj["path"]))),
+                    "measured_utc": record["utc"]}
         rungs = {r.get("rung"): r.get("status") for r in obj.get("ladder") or []}
         if rungs.get("tests_pass") == "not_achieved":
             green = next((o.get("value") for o in obj.get("objectives") or [] if o.get("id") == "tests_green"), None)

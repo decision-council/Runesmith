@@ -19,6 +19,7 @@ to the home's ledger by the kernel as usual.
 from __future__ import annotations
 
 import calendar
+import importlib.util
 import json
 import queue
 import threading
@@ -769,10 +770,29 @@ class Worker:
         served: dict[str, str] = _read_json(served_path, {})
         fresh: list[dict[str, Any]] = []
         for obj in objects:
-            if not (Path(obj["path"]) / "src").is_dir():
-                statuses[obj["name"]] = "skipped: the shipped repair organ needs a src/ layout"
-                self.say(f"{obj['name']} keeps its code at the top, not in a src/ folder, which Runesmith's repair "
-                         "organ needs. Use “Fix the failing tests” on the Overview: it works for any layout.", "warn")
+            flat = not (Path(obj["path"]) / "src").is_dir()
+            if flat or importlib.util.find_spec("pytest") is None:
+                # The repair organ (the measured path) needs a src/ folder and pytest. Anything else is measured with
+                # Python's own unittest and offered "Fix the failing tests", which works for any project (J3).
+                why = ("keeps its code at the top, not in a src/ folder" if flat
+                       else "needs pytest, which is not installed here")
+                if not settings["probe_tests"]:
+                    statuses[obj["name"]] = "not measured: running this project's tests is off"
+                    self.say(f"Runesmith has not run {obj['name']}'s tests, so it cannot tell whether anything is "
+                             "broken. Turn on “Run this project’s tests while mapping” to let it check them.")
+                    continue
+                from runesmith.app.fix_tests import measure
+                self._set("discovering", f"Running {obj['name']}'s tests on a throwaway copy")
+                measured = measure(ws, Path(obj["path"]), obj["name"])
+                failing = measured["failures"] + measured["errors"]
+                statuses[obj["name"]] = f"measured: {failing} of {measured['ran']} tests fail"
+                if failing:
+                    self.say(f"{failing} of {measured['ran']} tests fail in {obj['name']}. Runesmith's repair organ "
+                             f"{why}; use “Fix the failing tests” on the Overview, which works for any project.", "warn")
+                elif measured["ran"]:
+                    self.say(f"All {measured['ran']} tests pass in {obj['name']}.", "success")
+                else:
+                    self.say(f"No tests ran in {obj['name']}: Runesmith looks for them in a tests/ folder.")
                 continue
             self._set("discovering", f"Running {obj['name']}'s tests on a throwaway copy")
             self.say(f"Running {obj['name']}'s tests on a throwaway copy")

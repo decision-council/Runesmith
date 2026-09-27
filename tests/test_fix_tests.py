@@ -102,3 +102,21 @@ def test_the_studio_route_allows_automatic_apply_only_with_an_explicit_true(tmp_
     assert api_fix_tests(studio, {}, None) == {"offer": None}
     assert api_fix_tests_start(studio, {}, {"allow_apply": "yes"})["allow_apply"] is False
     assert not ws.settings()["build_apply"]
+
+
+def test_a_round_measures_a_project_the_repair_organ_cannot_serve_and_the_fix_is_offered(tmp_path):
+    # J3: a flat layout (no src/), or no pytest installed. With test runs allowed, the round runs the project's tests
+    # with Python's own unittest and says how many fail; the Overview then offers Fix the failing tests.
+    from runesmith.app.worker import EventBus, Worker
+    ws = project(tmp_path)
+    scripted(ws, [], roles=("repair",))
+    ws.update_settings({"onboarded": True, "probe_tests": False})
+    worker = Worker(ws, EventBus())
+    worker._job_round()
+    assert offer(ws) is None                                            # not allowed to run the tests: no claim
+    assert any("has not run" in line["text"] for line in worker.snapshot()["lines"])
+    ws.update_settings({"probe_tests": True})
+    worker._job_round()
+    shown = offer(ws)
+    assert shown and shown["tests_green"] == 0.5 and shown["code_paths"] == ["shop"]
+    assert any("1 of 2 tests fail" in line["text"] for line in worker.snapshot()["lines"])
