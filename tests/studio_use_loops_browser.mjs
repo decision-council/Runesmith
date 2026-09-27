@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const dependencies=process.env.RUNESMITH_TEST_NODE_MODULES;
 const {chromium}=require(dependencies?path.join(dependencies,'playwright'):'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19').split(','));
+const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20').split(','));
 const artifacts=path.join(root,'training','.tmp','studio-use-loops-'+new Date().toISOString().replace(/[:.]/g,'-'));
 mkdirSync(artifacts,{recursive:true});
 const executable=[chromium.executablePath(),'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -50,7 +50,7 @@ const fixtureWork={counts:{},draft_counts:{waiting:1},proposals:[],drafts:[recov
   build_memory:{total:0,items:[]},pending_authors:[],build_corrections:[],
   build_escalation:{eligible:false,milestone:'m1',attempts:1,used:false,
     allowance:{known:true,can_draft:true,used:1,remaining:2,limit:3,blockers:[]}}};
-let ownerBrief='',fixturePlan=null,heldPlans=[];
+let ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={};
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
 const planningBlocks=()=>[
@@ -226,7 +226,7 @@ await context.route('**/*',async route=>{
     if(req.method()==='POST')ownerBrief=body.text;
     data={text:ownerBrief,blueprints:[],candidates:[],updated:null};
   } else if(p==='/api/plan')data={plan:fixturePlan,milestones:fixturePlan?.milestones||[],ready:true,
-    planning_blockers:planningBlocks(),held_plans:heldPlans,breakdowns:[],acceptance_expectations:fixtureExpectations,current_checks:[],
+    planning_blockers:planningBlocks(),held_plans:heldPlans,breakdowns:[],acceptance_expectations:fixtureExpectations,acceptance_checks:fixtureAcceptance,current_checks:[],
     readiness:Object.fromEntries((fixturePlan?.milestones||[]).map(m=>[m.id,{ready:true,unmet:[]}]))};
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
   else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false};
@@ -265,6 +265,7 @@ await context.route('**/*',async route=>{
   } else if(/^\/api\/manual\/[^/]+\/skip$/.test(p)){
     const id=p.split('/')[3];manualRequests=manualRequests.filter(r=>r.id!==id);data={skipped:true};
   }
+  else if(/^\/api\/plan\/milestones\/[^/]+\/acceptance\/(approve|discard)$/.test(p))data={ok:true,fixture_only:true};
   else if(p==='/api/inference/discover')data={found:[]};
   else if(p==='/api/worker/run'||/^\/api\/measurements\/[^/]+\/report$/.test(p)){
     if(body?.job==='revise'&&authorRevisionConflict){await route.fulfill({status:409,json:{error:'Revision quote unavailable or stale.'}});return;}
@@ -1792,6 +1793,57 @@ try{
     posts=requests.slice(chooseStart).filter(r=>r.method==='POST');
     assert.equal(posts.length,1);assert.deepEqual((typeof posts[0].body==='string'?JSON.parse(posts[0].body):posts[0].body),{policy_chosen:true});
     loops.push({id:'B19.11',case:'Explicit first-run choices: a switch posts only its key with policy_chosen; Keep these choices posts only policy_chosen',result:'passed'});
+  }
+  if(selected.has('B20')){
+    // Acceptance checks a non-programmer approves (G1, G1.1-G1.3, G3 from out-of-box journey R1).
+    const start=requests.length;
+    fixturePlan={version:1,summary:'Reading log',milestones:[{id:'m1',title:'Books per month',status:'open',detail:'python -m readinglog months',done_when:'Counts per month'}]};
+    const checks=[{test:'test_counts',says:'Each month shows its number of books.'},
+      {test:'test_bad_date',says:'A date that does not exist is refused.',unstated:['2026-02-30']}];
+    const block=()=>page.locator('[aria-label="Acceptance checks for Books per month"]');
+    const posts=()=>requests.slice(start).filter(r=>r.method==='POST');
+    fixtureAcceptance={m1:{approved:null,proposal:{id:'p1',checks,assumes:['The list file is chosen with --file.'],
+      dry_run:{verdict:'fails_now',ran:2,failures:2,errors:0},revision:null,code:'import unittest',drafted_by:'Fixture chat'}}};
+    await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>window.mount('goals'));
+    let text=await block().innerText();
+    assert(text.includes('Proposed acceptance checks'),text);assert(text.includes('They assume'));assert(text.includes('The list file is chosen with --file.'));
+    assert(text.includes('Also requires the exact text: “2026-02-30”'));assert(text.includes('2 of 2 fail, as expected'));
+    assert(!/\bnull\b|undefined/.test(text),text);
+    loops.push({id:'B20.01',case:'A proposal shows its sentences, assumptions, unstated exact text and trial result, with no stray null',result:'passed'});
+    await block().getByRole('button',{name:'Use these checks',exact:true}).click();
+    const confirm=page.getByRole('dialog');
+    assert((await confirm.innerText()).includes('Some checks require exact text'));
+    await confirm.getByRole('button',{name:'Use these checks',exact:true}).click();await confirm.waitFor({state:'hidden'});
+    await page.waitForFunction(()=>true);
+    const approve=posts().filter(r=>r.path==='/api/plan/milestones/m1/acceptance/approve').at(-1);
+    assert.deepEqual(approve.body,{proposal:'p1'});
+    loops.push({id:'B20.02',case:'Use these checks confirms in plain words and posts only the proposal id',result:'passed'});
+    fixtureAcceptance={m1:{approved:{provenance:'model-proposed, owner-approved',proposed_by:'Fixture chat',checks},proposal:null}};
+    await page.evaluate(()=>window.mount('goals'));text=await block().innerText();
+    assert(text.includes('Your acceptance checks'));assert(text.includes('the checks may be wrong'));assert(!/\bnull\b/.test(text),text);
+    await block().getByRole('button',{name:'Ask for new checks',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('[aria-label="Acceptance checks for Books per month"] button.busy'));
+    const asked=posts().filter(r=>r.path==='/api/worker/run').at(-1);
+    assert.deepEqual(asked.body,{job:'propose_acceptance',params:{milestone:'m1'}});
+    loops.push({id:'B20.03',case:'Approved checks offer Ask for new checks, which only queues a proposal',result:'passed'});
+    fixtureAcceptance={m1:{approved:{provenance:'model-proposed, owner-approved',proposed_by:'Fixture chat',checks},
+      proposal:{id:'p2',checks:checks.slice(0,1),assumes:[],dry_run:{verdict:'passes_now',ran:1,failures:0,errors:0},
+        revision:{after:'passes_now'},code:'import unittest',drafted_by:'Fixture chat'}}};
+    await page.evaluate(()=>window.mount('goals'));text=await block().innerText();
+    assert(text.includes('New checks proposed to replace yours'));assert(text.includes('Runesmith already asked for a revision once'));
+    assert.equal(await block().getByRole('button',{name:'Ask for new checks',exact:true}).count(),0);
+    const before=posts().length;
+    await block().getByRole('button',{name:'Replace my checks',exact:true}).click();
+    const ask=page.getByRole('dialog');await ask.getByRole('button',{name:'Replace my checks',exact:true}).click();
+    assert.equal(posts().length,before);                                             // no reason, nothing sent
+    await block().getByRole('button',{name:'Replace my checks',exact:true}).click();
+    await page.getByRole('dialog').locator('textarea').fill('A correct README failed the old example check.');
+    await page.getByRole('dialog').getByRole('button',{name:'Replace my checks',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('[role=dialog]'));
+    const replaced=posts().filter(r=>r.path==='/api/plan/milestones/m1/acceptance/approve').at(-1);
+    assert.deepEqual(replaced.body,{proposal:'p2',replace:true,reason:'A correct README failed the old example check.'});
+    loops.push({id:'B20.04',case:'New checks next to approved ones replace them only with a reason; an empty reason sends nothing',result:'passed'});
+    fixtureAcceptance={};fixturePlan=null;
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));

@@ -227,11 +227,21 @@ export default async function render(root, ctx) {
       const acc = data.acceptance_checks?.[m.id];
       const accBlock = h('div.mt-8', {'aria-label': `Acceptance checks for ${m.title}`});
       if (acc?.approved) {
-        accBlock.append(h('b.small', '✓ Your acceptance checks'),
+        // Element.append would print a null part as the word "null"; empty parts are dropped.
+        accBlock.append(...[h('b.small', '✓ Your acceptance checks'),
           h('div.tiny.muted', acc.approved.provenance === 'owner file' ? 'Your own checks file. Automatic apply for this milestone is judged by it.'
             : `Proposed by ${acc.approved.proposed_by || 'a model'}, approved by you. Automatic apply for this milestone is judged by them; builders see only their sentences, never the code.`),
-          acc.approved.checks ? h('ul.small', acc.approved.checks.map((c) => h('li', c.says, exactText(c)))) : null);
-      } else if (acc?.proposal) {
+          acc.approved.checks ? h('ul.small', acc.approved.checks.map((c) => h('li', c.says, exactText(c)))) : null,
+          !acc.proposal && ['open', 'doing'].includes(m.status) ? h('div.mt-8',
+            h('div.tiny.muted', 'If a build that looks right fails these checks, the checks may be wrong. Ask for new ones: you read them and decide whether they replace these.'),
+            h('button.btn.sm.mt-8', { disabled: !data.ready, onclick: (e) => withBusy(e.currentTarget, async () => {
+              await post('/api/worker/run', { job: 'propose_acceptance', params: { milestone: m.id } });
+              toast('Asking for new acceptance checks. They appear here next to yours; nothing changes until you choose.', 'good', 6000); }) },
+              icon('refresh'), 'Ask for new checks')) : null].filter(Boolean));
+      }
+      if (acc?.proposal) {
+        // A proposal next to approved checks replaces them only if the owner says so, with a reason.
+        const replacing = Boolean(acc.approved);
         const p = acc.proposal;
         // A trial run on today's project: checks that already pass may not test what an unbuilt milestone adds.
         const dry = p.dry_run || {};
@@ -249,23 +259,31 @@ export default async function render(root, ctx) {
           ? `The first checks ${firstTry}; asking for a revision did not work (${p.revision.error}).`
           : `Revised once: the first checks ${firstTry}.`);
         const unstated = p.checks.some((c) => c.unstated?.length);
-        accBlock.append(h('b.small', 'Proposed acceptance checks: do these describe “done”?'),
+        accBlock.append(...[h('b.small', replacing ? 'New checks proposed to replace yours: do these describe “done” better?' : 'Proposed acceptance checks: do these describe “done”?'),
           h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c)))),
           p.assumes?.length ? h('div.small.mt-8', h('b', 'They assume (your milestone does not say this):'), h('ul.small', p.assumes.map((a) => h('li', a)))) : null,
           trial, revised,
           h('details', h('summary.tiny', `Show the code (proposed by ${p.drafted_by || 'a model'})`), h('pre.code', p.code)),
           h('div.row.wrap.mt-8',
             h('button.btn.sm.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
+              if (replacing) {
+                const reason = await askText({ title: `Replace your checks for “${m.title}”?`, multiline: true, confirm: 'Replace my checks',
+                  text: 'Say why, for example “a correct build failed the old checks”. Your current checks are kept in a file, and the new sentences become the milestone’s public expectations.' });
+                if (reason === null) return;
+                if (!reason.trim()) { toast('Say why the checks are replaced; it is kept with them.', 'warn'); return; }
+                await post(`/api/plan/milestones/${m.id}/acceptance/approve`, { proposal: p.id, replace: true, reason: reason.trim() });
+                toast('Your checks were replaced. The old ones are kept.', 'good'); drawPlan(); return;
+              }
               if (!(await confirmDialog({ title: `Use these checks for “${m.title}”?`,
                 text: (dry.verdict === 'passes_now' ? 'Note: they already pass on your project today. ' : '') + (unstated ? 'Some checks require exact text their sentences do not say (shown under them); whoever builds the milestone is told it too. ' : '') + (p.assumes?.length ? 'They also assume what is listed under the checks. ' : '') + 'They decide when this milestone is done. Work is applied automatically only when they pass, and only if you allow automatic apply. Their sentences become the milestone’s public expectations, so whoever builds it knows what “done” means; the code stays private. You can replace them later, with a reason.',
                 confirm: 'Use these checks', icon: 'check' }))) return;
               await post(`/api/plan/milestones/${m.id}/acceptance/approve`, { proposal: p.id });
-              toast('Acceptance checks saved for this milestone.', 'good'); drawPlan(); }) }, icon('check'), 'Use these checks'),
+              toast('Acceptance checks saved for this milestone.', 'good'); drawPlan(); }) }, icon('check'), replacing ? 'Replace my checks' : 'Use these checks'),
             h('button.btn.sm.ghost', { onclick: (e) => withBusy(e.currentTarget, async () => {
               const reason = await askText({ title: 'Discard these checks?', text: 'Optional: say why. It is kept with the proposal.', multiline: true, confirm: 'Discard' });
               if (reason === null) return;
-              await post(`/api/plan/milestones/${m.id}/acceptance/discard`, { proposal: p.id, reason }); drawPlan(); }) }, icon('x'), 'Discard')));
-      } else if (['open', 'doing'].includes(m.status)) {
+              await post(`/api/plan/milestones/${m.id}/acceptance/discard`, { proposal: p.id, reason }); drawPlan(); }) }, icon('x'), 'Discard'))].filter(Boolean));
+      } else if (!acc?.approved && ['open', 'doing'].includes(m.status)) {
         accBlock.append(h('div.small.muted', 'No acceptance checks yet. Automatic apply needs them, and you approve them in plain words.'),
           h('button.btn.sm.mt-8', { disabled: !data.ready, onclick: (e) => withBusy(e.currentTarget, async () => {
             await post('/api/worker/run', { job: 'propose_acceptance', params: { milestone: m.id } });

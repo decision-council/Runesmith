@@ -17,10 +17,14 @@
     - Whatever remains is shown under the sentence ("Also requires the exact text: …") and published with it, so the builder is always told.
   - **A Checker role.** Proposing checks takes only a few calls, and they decide what "done" means. So Thinking power now has a Checker role. It uses the Planner's model unless the owner picks another, for example their chat window, while a free API model keeps building.
     - In the journey, the free model built well but wrote weak checks across four rounds. The stronger free route (Kimi K3 through NVIDIA) timed out after 211 s on every call.
+  - **Replacing checks from the Studio (G3).** In the journey, a correct README failed a faulty check, and there was no way to replace approved checks from the page. Approved checks now offer "Ask for new checks", with a plain hint that a build which looks right may be failing wrong checks. New checks proposed next to approved ones replace them only through "Replace my checks" with a reason; the old file is kept.
+  - A stray "null" no longer appears under proposals and owner files (B2).
+  - Browser loop B20 now covers the acceptance-check page: the proposal display, approval, "Ask for new checks" and replacing with a reason. B20 fails on the previous page.
   - **On approval, the sentences become the milestone's public expectations.** Whoever builds the milestone now knows what "done" means, while the code stays private. A failing check is reported to the builder by its sentence, never by its assertion. Owner-written expectations are kept.
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **Plain words when a model does not answer (F15).** A timed-out free model used to show "every route failed - nvidia:moonshotai/kimi-k3 timeout". The owner now reads what happened and what to try: the model didn't answer in time, is busy or at its free limit, refused the key, or its answer hasn't arrived yet (and won't be requested twice). The gateway's own words follow, shortened.
 - **No endless rechecking (F14).** With scheduled work on, every round used to check the same waiting draft again, writing new evidence each time, although nothing had changed. That is hundreds of identical checks a day at a 5-minute interval.
   - A waiting draft whose source, public expectations and owner acceptance are unchanged now keeps its last verdict.
   - If it passed only its own checks, the round says it is waiting for the owner and needs acceptance checks.
