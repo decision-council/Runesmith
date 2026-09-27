@@ -351,7 +351,9 @@ class Router:
     A role (``repair``, ``kaizen`` ...) names what a call is for; the router
     decides which instrument answers. Output failures return at once (one call
     charged); transport failures back off and finally raise
-    :class:`TransportCensored`.
+    :class:`TransportCensored`. A call the gateway refused before admitting it
+    (nothing ran, nothing was charged) moves straight on to the role's next
+    instrument, each at most once per attempt, even when retries are off.
     """
 
     def __init__(self, instruments: Mapping[str, Instrument], roles: Mapping[str, str | list[str]],
@@ -375,6 +377,19 @@ class Router:
         for delay in (0,) + self.backoff_s:
             if delay:
                 self._sleep(delay)
+            outcome = self._attempt(role, names, attempt, prompt=prompt, system=system, schema=schema,
+                                    max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort)
+            attempt = outcome.attempts
+            if outcome.ok or outcome.error_kind == "output":
+                return outcome
+            if outcome.receipt.get('no_retry'):
+                raise TransportCensored(outcome.error or 'Saved remote request requires review', receipt=outcome.receipt)
+            errors.append(outcome.error)
+        raise TransportCensored(f"role {role!r}: no response after {attempt} attempts; last: {errors[-1] if errors else ''}")
+
+    def _attempt(self, role, names, attempt, *, prompt, system, schema, max_tokens, key, reasoning_effort):
+        refused = set()
+        while True:
             name = names[attempt % len(names)]          # rotate over declared fallbacks
             instrument = self.instruments[name]
             outcome = instrument.complete(prompt=prompt, system=system, schema=schema, max_tokens=max_tokens,
@@ -394,9 +409,6 @@ class Router:
                 self._on_call({"role": role, "key": key, "attempt": attempt, "ok": outcome.ok,
                                "error_kind": outcome.error_kind, "error": (outcome.error or "")[:300] or None,
                                "latency_s": round(outcome.latency_s, 3), **outcome.receipt})
-            if outcome.ok or outcome.error_kind == "output":
+            refused.add(name)
+            if outcome.ok or not outcome.receipt.get('not_admitted') or set(names) <= refused:
                 return outcome
-            if outcome.receipt.get('no_retry'):
-                raise TransportCensored(outcome.error or 'Saved remote request requires review', receipt=outcome.receipt)
-            errors.append(outcome.error)
-        raise TransportCensored(f"role {role!r}: no response after {attempt} attempts; last: {errors[-1] if errors else ''}")

@@ -33,8 +33,10 @@ def read_request(directory, request_id):
 def _outcome(instrument, record, started):
     from runesmith.instruments import CallOutcome
     unresolved = record['state'] not in ('terminal', 'refused')
+    # A refusal at submission never became a job: nothing ran and nothing was charged (``not_admitted``).
     extra = {'request_id': record['id'], 'job_id': record.get('job_id'),
-             'remote_state': record['state'], 'unresolved': unresolved, 'no_retry': True}
+             'remote_state': record['state'], 'unresolved': unresolved, 'no_retry': True,
+             'not_admitted': record['state'] == 'refused' and not record.get('job_id')}
     if unresolved:
         return CallOutcome(False, error_kind='transport',
             error='Remote outcome unresolved; retrieve the saved job, do not resubmit.',
