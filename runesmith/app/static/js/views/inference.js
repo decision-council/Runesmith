@@ -122,7 +122,8 @@ export default async function render(root, ctx) {
       const save = h('button.btn.primary', icon('check'), p.kind === 'manual' ? 'Save chat instrument' : 'Save and test');
       save.addEventListener('click', () => withBusy(save, async () => {
         const spec = { kind: p.kind, preset: p.id, model: model.value.trim(), base_url: (p.id === 'custom' || p.id === 'milliner' || p.local) ? base.value.trim() : p.base_url, label: p.label };
-        if (p.kind === 'openai') spec.json_mode = 'json_object';
+        if (p.kind === 'openai') spec.json_mode = p.json_mode || 'json_object';      // LM Studio refuses json_object
+        if (p.max_request_tokens) spec.max_request_tokens = p.max_request_tokens;      // a free tier's per-minute window
         if (p.kind === 'milliner') spec.fallback_models = fallbacks.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
         const roles = roleBoxes.filter((x) => x.cb.checked).map((x) => x.r);
         const saved = await post('/api/inference/instruments', { name: name.value.trim(), spec, key: key.value.trim() || undefined, roles });

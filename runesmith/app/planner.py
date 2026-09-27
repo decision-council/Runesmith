@@ -278,7 +278,9 @@ def why_no_answer(error) -> str:
     """Why a model call brought no answer, in plain words and with what to try; the gateway's words follow, short (F15)."""
     raw = str(error)
     low = raw.lower()
-    if 'unresolved' in low:
+    if 'is not running on this computer' in low or 'nothing answers at' in low:
+        plain = 'the model server on this computer is not running: start it, then try again'
+    elif 'unresolved' in low:
         plain = 'the answer has not arrived yet; Runesmith kept the request and will not send it twice'
     elif 'timeout' in low or 'timed out' in low:
         plain = ('the model did not answer in time (a free service may be busy): try again later, '
@@ -304,6 +306,8 @@ def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_toke
         raise failure from error
     if isinstance(outcome.data, dict) and outcome.data.get("skipped_by_owner"):
         raise SkippedByOwner("you skipped the request, so nothing changed")
+    if not outcome.ok and outcome.error_kind == "config":
+        raise PlannerUnavailable(outcome.error or "the model service refused this request")
     if not outcome.ok or not isinstance(outcome.data, dict):
         raise PlannerUnavailable(f"the model's answer was not usable: {(outcome.error or 'no JSON')[:200]}")
     missing = [k for k in schema.get("required", []) if k not in outcome.data]

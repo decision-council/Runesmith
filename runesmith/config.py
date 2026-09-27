@@ -60,8 +60,21 @@ def load_config(home: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _ollama_address(spec: dict[str, Any]) -> bool:
+    """An OpenAI-style instrument pointed at Ollama: its native API is used instead, for the context window (LS1)."""
+    from urllib.parse import urlparse
+    url = urlparse(str(spec.get("base_url") or ""))
+    return spec.get("preset") == "ollama" or (url.port == 11434 and url.path.rstrip("/").endswith("/v1"))
+
+
 def build_instrument(name: str, spec: dict[str, Any], home: Path | None = None) -> Instrument:
     kind = spec.get("kind")
+    if kind == "ollama" or (kind == "openai" and _ollama_address(spec)):
+        from runesmith.instruments import OllamaInstrument
+        base = str(spec["base_url"]).rstrip("/")
+        base = base[:-3] if base.endswith("/v1") else base
+        return OllamaInstrument(name, spec["model"], base_url=base, timeout_s=float(spec.get("timeout_s", 900)),
+                                max_context=int(spec.get("max_context", 32768)))
     if kind == "scripted":                      # offline demos and tests: answers are replayed in order
         return ScriptedInstrument(name, spec.get("answers", []))
     if kind == "openai":
@@ -76,7 +89,8 @@ def build_instrument(name: str, spec: dict[str, Any], home: Path | None = None) 
         return OpenAICompatInstrument(name, spec["model"], base_url=spec["base_url"], api_key=key,
                                       timeout_s=float(spec.get("timeout_s", 600)),
                                       json_mode=spec.get("json_mode", "json_object"),
-                                      tolerant_json=bool(spec.get("tolerant_json", True)))
+                                      tolerant_json=bool(spec.get("tolerant_json", True)),
+                                      max_request_tokens=spec.get("max_request_tokens"))
     if kind == "milliner":
         if spec.get("token_secret"):
             from runesmith.keystore import KeyStore

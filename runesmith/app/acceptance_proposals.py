@@ -251,6 +251,8 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
         raise PlannerUnavailable('no acceptance checks: ' + why_no_answer(error)) from error
     if isinstance(out.data, dict) and out.data.get('skipped_by_owner'):
         raise SkippedByOwner('you skipped the request, so nothing changed')
+    if not out.ok and out.error_kind == "config":
+        raise PlannerUnavailable(out.error or "the model service refused this request")
     if not out.ok:
         raise PlannerUnavailable(f"the model's answer was not usable: {(out.error or 'no JSON')[:200]}")
     checkpoint()

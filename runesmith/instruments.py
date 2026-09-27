@@ -261,6 +261,38 @@ class MillinerInstrument(Instrument):
         return CallOutcome(True, data=data, text=payload.get("text"), latency_s=latency, receipt=receipt)
 
 
+def _estimate_tokens(*texts: str) -> int:
+    """A cautious token estimate (about three characters a token) for window checks before a request is sent."""
+    return sum(len(t or "") for t in texts) // 3 + 16
+
+
+CONTEXT_OVERFLOW = ("exceeds the available context size", "exceed_context_size", "maximum context length",
+                    "context length of only", "context_length_exceeded", "exceeds the context size")
+
+
+def _permanent(status: int, message: str) -> str | None:
+    """Plain words for a refusal that no retry can change, or None (research: context overflow, 413, 404)."""
+    low = message.lower()
+    if any(p in low for p in CONTEXT_OVERFLOW):
+        return ("The request is longer than this model's context window on that server. Load the model with a larger "
+                "context length (LM Studio: when loading the model; llama.cpp: --ctx-size 16384), or give this role a "
+                "model with a larger window.")
+    if status == 413 or "request too large" in low:
+        return ("The request is too large for this service's limit (on a free tier, its tokens-per-minute window). "
+                "Give this role a model with a larger window.")
+    if status == 404 or "model_not_found" in low or "does not exist" in low:
+        return "The service does not know this model or address. Check the model's exact name in its model list."
+    return None
+
+
+def _unreachable(base_url: str, error: Exception) -> str:
+    local = any(h in base_url for h in ("127.0.0.1", "localhost", "[::1]"))
+    if local:
+        return (f"Nothing answers at {base_url}: the model server on this computer is not running. Start it "
+                f"(LM Studio: Developer, Start Server; llama.cpp: llama-server), then try again. ({type(error).__name__})")
+    return f"{type(error).__name__}: {error}"
+
+
 class OpenAICompatInstrument(Instrument):
     """Any OpenAI-compatible chat endpoint: Ollama, LM Studio, vLLM, Groq, OpenRouter, ..."""
 
@@ -268,10 +300,11 @@ class OpenAICompatInstrument(Instrument):
 
     def __init__(self, name: str, model: str, *, base_url: str, api_key: Callable[[], str] | None = None,
                  timeout_s: float = 600.0, json_mode: str = "json_object", transport: Transport = http_json,
-                 tolerant_json: bool = True) -> None:
+                 tolerant_json: bool = True, max_request_tokens: int | None = None) -> None:
         super().__init__(name, model)
         self.base_url, self._api_key, self.timeout_s = base_url.rstrip("/"), api_key, timeout_s
         self.json_mode, self._transport, self.tolerant_json = json_mode, transport, tolerant_json
+        self.max_request_tokens = max_request_tokens      # e.g. a free tier's tokens-per-minute window
 
     def complete(self, *, prompt, system, schema, max_tokens, key, reasoning_effort=None) -> CallOutcome:
         headers = {"Content-Type": "application/json"}
@@ -291,15 +324,31 @@ class OpenAICompatInstrument(Instrument):
             body["response_format"] = {"type": "json_object"}
         if reasoning_effort:
             body["reasoning_effort"] = reasoning_effort
+        needed = _estimate_tokens(instruction, prompt) + max_tokens
+        if self.max_request_tokens and needed > self.max_request_tokens:
+            return CallOutcome(False, error_kind="config", error=(
+                f"This request needs about {needed} tokens (the text plus room for the answer), more than this service "
+                f"accepts at once ({self.max_request_tokens} tokens a minute on its free tier). Give this role a model "
+                "with a larger window."))
         started = time.monotonic()
-        try:
-            status, payload = self._transport("POST", f"{self.base_url}/chat/completions", headers, body, self.timeout_s)
-        except (URLError, OSError, TimeoutError) as error:
-            return CallOutcome(False, error_kind="transport", error=f"{type(error).__name__}: {error}",
-                               latency_s=time.monotonic() - started)
+        fallback = None
+        while True:
+            try:
+                status, payload = self._transport("POST", f"{self.base_url}/chat/completions", headers, body, self.timeout_s)
+            except (URLError, OSError, TimeoutError) as error:
+                return CallOutcome(False, error_kind="transport", error=_unreachable(self.base_url, error),
+                                   latency_s=time.monotonic() - started)
+            message = "" if 200 <= status < 300 else f"http_{status} " + json.dumps(payload.get("error", payload))[:500]
+            if status == 400 and "response_format" in message.lower() and "response_format" in body and fallback is None:
+                body.pop("response_format")                 # a server that rejects this JSON mode: once, without it
+                fallback = "none"
+                continue
+            break
         latency = time.monotonic() - started
         if not 200 <= status < 300:
-            message = f"http_{status} " + json.dumps(payload.get("error", payload))[:500]
+            plain = _permanent(status, message)
+            if plain:
+                return CallOutcome(False, error_kind="config", error=f"{plain} ({message[:300]})", latency_s=latency)
             return CallOutcome(False, error_kind=classify(message), error=message, latency_s=latency)
         try:
             choice = payload["choices"][0]
@@ -310,11 +359,83 @@ class OpenAICompatInstrument(Instrument):
         usage = payload.get("usage") or {}
         receipt = {"provider": self.base_url, "model": payload.get("model", self.model),
                    "tokens_in": usage.get("prompt_tokens"), "tokens_out": usage.get("completion_tokens")}
+        if fallback:
+            receipt["json_mode_fallback"] = fallback
         if finish == "length":
             return CallOutcome(False, text=text, error_kind="output", error="truncated: finish_reason=length",
                                latency_s=latency, receipt=receipt)
         try:
             data = parse_json_answer(text, tolerant=self.tolerant_json)
+        except (ValueError, json.JSONDecodeError) as error:
+            return CallOutcome(False, text=text, error_kind="output", error=f"invalid_json: {error}"[:600],
+                               latency_s=latency, receipt=receipt)
+        return CallOutcome(True, data=data, text=text, latency_s=latency, receipt=receipt)
+
+
+class OllamaInstrument(Instrument):
+    """Ollama through its native chat API, which accepts a context window per request (LS1).
+
+    Ollama's OpenAI-style /v1 address cannot raise its default window (4,096 tokens on modest machines), and an
+    overflowing prompt silently loses its beginning, where Runesmith's instructions are. So each request asks for a
+    window that fits it, and the answer's own count of tokens read shows whether the whole request arrived.
+    """
+
+    kind = "ollama"
+
+    def __init__(self, name: str, model: str, *, base_url: str = "http://127.0.0.1:11434", timeout_s: float = 900.0,
+                 transport: Transport = http_json, min_context: int = 8192, max_context: int = 32768) -> None:
+        super().__init__(name, model)
+        self.base_url, self.timeout_s, self._transport = base_url.rstrip("/"), timeout_s, transport
+        self.min_context, self.max_context = min_context, max_context
+
+    def complete(self, *, prompt, system, schema, max_tokens, key, reasoning_effort=None) -> CallOutcome:
+        instruction = system
+        if schema is not None:
+            instruction += "\nReply with one JSON object that satisfies this JSON schema:\n" + canonical(schema)
+        estimate = _estimate_tokens(instruction, prompt)
+        needed = estimate + max_tokens + 256
+        if needed > self.max_context:
+            return CallOutcome(False, error_kind="config", error=(
+                f"This request needs about {needed} tokens (the text plus room for the answer), more than the "
+                f"{self.max_context}-token window allowed for this Ollama model. Allow it a larger window, or give "
+                "this role a model with a larger window."))
+        window = min(self.max_context, max(self.min_context, -(-needed // 2048) * 2048))
+        body: dict[str, Any] = {"model": self.model, "stream": False,
+                                "messages": [{"role": "system", "content": instruction},
+                                             {"role": "user", "content": prompt}],
+                                "options": {"num_ctx": window, "num_predict": max_tokens}}
+        if schema is not None:
+            body["format"] = schema
+        started = time.monotonic()
+        try:
+            status, payload = self._transport("POST", f"{self.base_url}/api/chat", {"Content-Type": "application/json"},
+                                              body, self.timeout_s)
+        except (URLError, OSError, TimeoutError) as error:
+            return CallOutcome(False, error_kind="transport", latency_s=time.monotonic() - started, error=(
+                f"Ollama is not running on this computer (nothing answers at {self.base_url}): open the Ollama app "
+                f"(it sits in the system tray) or run 'ollama serve', then try again. ({type(error).__name__})"))
+        latency = time.monotonic() - started
+        if not 200 <= status < 300:
+            message = str(payload.get("error") or payload)[:500]
+            if "not found" in message.lower():
+                return CallOutcome(False, error_kind="config", latency_s=latency, error=(
+                    f"The model '{self.model}' is not downloaded yet: run 'ollama pull {self.model}' (or choose one "
+                    f"that is), then try again. ({message[:200]})"))
+            return CallOutcome(False, error_kind=classify(message), error=f"http_{status} {message}", latency_s=latency)
+        text = (payload.get("message") or {}).get("content") or ""
+        read = payload.get("prompt_eval_count")
+        receipt = {"provider": "ollama", "model": payload.get("model", self.model), "tokens_in": read,
+                   "tokens_out": payload.get("eval_count"), "num_ctx": window}
+        if isinstance(read, int) and read < estimate * 0.5:
+            return CallOutcome(False, text=text, error_kind="config", latency_s=latency, receipt=receipt, error=(
+                f"Ollama read only {read} of about {estimate} tokens of this request, so its answer cannot be trusted. "
+                "This Ollama may be too old to accept a window per request: update Ollama, or set "
+                "OLLAMA_CONTEXT_LENGTH=32768 and restart it."))
+        if payload.get("done_reason") == "length":
+            return CallOutcome(False, text=text, error_kind="output", error="truncated: done_reason=length",
+                               latency_s=latency, receipt=receipt)
+        try:
+            data = parse_json_answer(text, tolerant=True)
         except (ValueError, json.JSONDecodeError) as error:
             return CallOutcome(False, text=text, error_kind="output", error=f"invalid_json: {error}"[:600],
                                latency_s=latency, receipt=receipt)
@@ -380,8 +501,8 @@ class Router:
             outcome = self._attempt(role, names, attempt, prompt=prompt, system=system, schema=schema,
                                     max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort)
             attempt = outcome.attempts
-            if outcome.ok or outcome.error_kind == "output":
-                return outcome
+            if outcome.ok or outcome.error_kind in ("output", "config"):
+                return outcome                          # "config": a refusal that no retry can change (LS1)
             if outcome.receipt.get('no_retry'):
                 raise TransportCensored(outcome.error or 'Saved remote request requires review', receipt=outcome.receipt)
             errors.append(outcome.error)
