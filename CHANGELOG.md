@@ -24,6 +24,12 @@
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **Fix the failing tests, for any layout (J3).** Runesmith's repair organ, the measured g0/C7 path, works on projects with a `src/` folder, and it stays unchanged. For any other layout, a round skipped the project and said nothing useful.
+  - The Overview now offers **"Fix the failing tests"** whenever the map shows failing tests. It adds a milestone, "Make the failing tests pass", through the proven Build path.
+  - Its acceptance is the project's **own tests, frozen as they are now**, embedded in one self-contained acceptance file. Rewriting the tests cannot pass it; only fixing the code can.
+  - Automatic apply, only if the owner ticks it, may write only the code folders, never the tests.
+  - Rounds say plainly when no tests were run, or when a project is skipped for its layout, and point to this path.
+  - `runesmith/app/fix_tests.py`, `/api/fix-tests`, browser loop B22.
 - **Small Python projects are recognised (J3-B1).** In journey J3 (an existing project with failing tests), the common flat layout (a package folder and `tests/`, a README, no packaging files) was mapped as a "document collection". So the introduction suggested "Tend my documents", the tests were never run, and a round reported **"nothing to repair"** while five tests failed.
   - A folder now counts as a Python project with any common marker (`requirements.txt`, `Pipfile` and `tox.ini` too), or with Python code at the top plus its tests.
 - **Local model servers and free gateways work as their docs say (LS1).** The research (official docs, with sources and dates) is in `docs/journeys/local_servers_research_2026-09-27.json`. It is tested against faithful local stand-ins (`tests/local_standins.py`), because these servers cannot run on the development machine; the evidence level is recorded as "docs-conformant".

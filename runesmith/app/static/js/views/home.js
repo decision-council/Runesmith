@@ -192,6 +192,10 @@ export default async function render(root, { app, navigate, refreshState }) {
     return item;
   })));
 
+  // ---- fix the failing tests (J3): the owner's own tests, frozen, decide; builders change only the code
+  const fixCard = h('section.card.mt-24', { 'aria-label': 'Fix the failing tests', hidden: true });
+  get('/api/fix-tests').then((f) => { if (!closed && f.offer) drawFix(fixCard, f.offer, navigate); }).catch(() => {});
+
   // ---- try what was built (G2): the owner runs the project's own program, on a practice copy unless they choose
   const tryCard = h('section.card.mt-24', { 'aria-label': 'Try what was built', hidden: true });
   get('/api/try').then((t) => { if (!closed && t.suggestions?.length) drawTry(tryCard, t); }).catch(() => {});
@@ -220,9 +224,27 @@ export default async function render(root, { app, navigate, refreshState }) {
   caps.append(h('p.tiny.faint.mt-8', 'Bands: bad · minimal · optimal. "Unknown" means there is no evidence yet, not that things are fine.'));
 
   root.append(hero, policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
-    h('div.grid.two.mt-24', objects, next), tryCard, h('div.grid.two.mt-24', live, caps));
+    h('div.grid.two.mt-24', objects, next), fixCard, tryCard, h('div.grid.two.mt-24', live, caps));
   function kpisWrap(k) { k.classList.remove('four'); k.classList.add('two'); return k; }
   return () => {closed=true;healthSerial++;offs.forEach((off) => off());};
+}
+
+function drawFix(card, o, navigate) {
+  const share = o.tests_green == null ? 'Some of its tests fail.' : `${Math.round(o.tests_green * 100)}% of its tests pass.`;
+  const auto = h('input', { type: 'checkbox', 'aria-label': 'Apply the fix automatically when every test passes' });
+  card.append(h('div.card-head', h('h3', icon('hammer'), 'Fix the failing tests'), h('span.badge', o.object)),
+    h('p.small', `${share} Runesmith can fix the code for you. Your tests, as they are now, decide when it is done; it changes the code only, never the tests.`),
+    h('label.row.mt-8', auto, `Apply the fix automatically when every test passes (it may write only: ${o.code_paths.join(', ')})`),
+    h('div.row.wrap.mt-8', h('button.btn.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
+      if (!(await confirmDialog({ title: 'Fix the failing tests?', confirm: 'Fix them', icon: 'hammer',
+        text: `Runesmith adds a milestone, “Make the failing tests pass”. Your ${o.test_files} test file(s) are frozen as they are now and decide when it is done. ` +
+          (auto.checked ? 'When every test passes, the fix is applied to your code automatically; your tests are never changed.' : 'You review the fix and apply it yourself.') }))) return;
+      await post('/api/fix-tests', { allow_apply: auto.checked });
+      await post('/api/worker/run', { job: 'build' });
+      toast('Fixing the failing tests: follow it in Goals & plan and Activity.', 'good', 6000);
+      navigate('goals');
+    }) }, icon('hammer'), 'Fix the failing tests')));
+  card.hidden = false;
 }
 
 function drawTry(card, t) {

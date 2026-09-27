@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const dependencies=process.env.RUNESMITH_TEST_NODE_MODULES;
 const {chromium}=require(dependencies?path.join(dependencies,'playwright'):'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21').split(','));
+const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22').split(','));
 const artifacts=path.join(root,'training','.tmp','studio-use-loops-'+new Date().toISOString().replace(/[:.]/g,'-'));
 mkdirSync(artifacts,{recursive:true});
 const executable=[chromium.executablePath(),'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -50,7 +50,7 @@ const fixtureWork={counts:{},draft_counts:{waiting:1},proposals:[],drafts:[recov
   build_memory:{total:0,items:[]},pending_authors:[],build_corrections:[],
   build_escalation:{eligible:false,milestone:'m1',attempts:1,used:false,
     allowance:{known:true,can_draft:true,used:1,remaining:2,limit:3,blockers:[]}}};
-let ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30};
+let ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30},fixFixture={offer:null};
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
 const planningBlocks=()=>[
@@ -266,6 +266,8 @@ await context.route('**/*',async route=>{
     const id=p.split('/')[3];manualRequests=manualRequests.filter(r=>r.id!==id);data={skipped:true};
   }
   else if(/^\/api\/plan\/milestones\/[^/]+\/acceptance\/(approve|discard)$/.test(p))data={ok:true,fixture_only:true};
+  else if(p==='/api/fix-tests'&&req.method()==='GET')data=fixFixture;
+  else if(p==='/api/fix-tests')data={milestone:'m9',frozen_files:4,code_paths:['invoice'],allow_apply:body.allow_apply===true};
   else if(p==='/api/try')data=tryFixture;
   else if(p==='/api/try/run')data={command:body.command,real:body.real===true,exit_code:0,timed_out:false,seconds:0.2,stdout:'2026-01-30  Dune by Frank Herbert',stderr:'',utc:'2026-09-27T22:00:00Z'};
   else if(p==='/api/try/reset')data={created_utc:'2026-09-27T22:00:00Z',files:6};
@@ -1891,6 +1893,37 @@ try{
     assert(requests.slice(start).some(r=>r.path==='/api/try/reset'&&r.method==='POST'));
     loops.push({id:'B21.03',case:'The practice copy can be started again from the real folder',result:'passed'});
     tryFixture={suggestions:[],practice:null,timeout_s:30};
+  }
+  if(selected.has('B22')){
+    // Fix the failing tests (journey J3): plain numbers, Cancel sends nothing, automatic apply only when chosen.
+    const start=requests.length;
+    fixFixture={offer:{object:'invoice-tools',path:'D:/fixture/invoice-tools',tests_green:0.375,code_paths:['invoice'],test_files:4}};
+    const base={workspace:{name:'invoice-tools',path:'D:/fixture/invoice-tools',empty:false},
+      settings:{onboarded:true,auto_work:false,kaizen:false,probe_tests:true,policy_chosen:true,interval_minutes:60,build_steps:false,build_apply:false},
+      ready:{any:true},worker:{paused:false,current:null,recovery:null},manual_waiting:0,
+      proposals:{waiting:0,applied:0},drafts:{waiting:0,applied:0},objects:[],plan:{milestones:0},
+      goals:[],brief:'',round_utc:null,mapped_utc:null,repairs:{accepted:0,judged:0},generations:1};
+    await page.setViewportSize({width:1440,height:1100});
+    await page.evaluate(async state=>{window.homeState=state;window.navigation=null;await window.mount('home');},base);
+    const card=page.getByRole('region',{name:'Fix the failing tests',exact:true});
+    await card.waitFor();
+    const text=await card.innerText();
+    assert(text.includes('38% of its tests pass'),text);assert(text.includes('it may write only: invoice'));assert(text.includes('never the tests'));
+    loops.push({id:'B22.01',case:'The Overview offers to fix failing tests in plain numbers, naming what it may write',result:'passed'});
+    await card.getByRole('button',{name:'Fix the failing tests',exact:true}).click();
+    assert((await page.getByRole('dialog').innerText()).includes('You review the fix and apply it yourself'));
+    await page.getByRole('dialog').getByRole('button',{name:'Cancel',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('[role=dialog]'));
+    assert(!requests.slice(start).some(r=>r.method==='POST'));
+    await card.getByLabel('Apply the fix automatically when every test passes',{exact:true}).check();
+    await card.getByRole('button',{name:'Fix the failing tests',exact:true}).click();
+    assert((await page.getByRole('dialog').innerText()).includes('applied to your code automatically'));
+    await page.getByRole('dialog').getByRole('button',{name:'Fix them',exact:true}).click();
+    await page.waitForFunction(()=>Array.isArray(window.navigation)&&window.navigation[0]==='goals');
+    const posts=requests.slice(start).filter(r=>r.method==='POST');
+    assert.deepEqual(posts.map(r=>[r.path,r.body]),[['/api/fix-tests',{allow_apply:true}],['/api/worker/run',{job:'build'}]]);
+    loops.push({id:'B22.02',case:'Cancel sends nothing; confirming freezes the tests, starts one build and opens Goals & plan',result:'passed'});
+    fixFixture={offer:null};
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));

@@ -458,6 +458,22 @@ def api_acceptance_expectations(s: Studio,q,body,milestone_id):
     return result
 
 
+@route('GET', r'/api/fix-tests')
+def api_fix_tests(s: Studio, q, body):
+    from runesmith.app.fix_tests import offer
+    return {"offer": offer(_ws(s))}
+
+
+@route('POST', r'/api/fix-tests')
+def api_fix_tests_start(s: Studio, q, body):
+    """Fix the failing tests (J3): the owner's own tests, frozen, decide; builders change only the code."""
+    from runesmith.app.fix_tests import start
+    result = start(_ws(s), allow_apply=body.get('allow_apply') is True)
+    s.bus.publish('plan', {})
+    s.bus.publish('settings', _ws(s).settings())
+    return result
+
+
 @route('GET', r'/api/try')
 def api_try(s: Studio, q, body):
     from runesmith.app.try_it import status

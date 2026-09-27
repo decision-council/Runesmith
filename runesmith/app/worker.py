@@ -742,8 +742,10 @@ class Worker:
             self.say("Observe mode: mapped and watching. Switch to Propose in Settings to let Runesmith work.")
             return self._finish_round([], statuses, {}, "observed")
         if not objects:
-            self.say("No code objects with tests here yet. Draft a plan under Goals & Plan to start something new.")
-            return self._finish_round([], statuses, {}, "nothing to repair")
+            # Honest: no tests ran, so this round cannot say that nothing is broken (journey J3).
+            self.say("No Python project with tests was found here, so no tests were run. To build something new, "
+                     "draft a plan under Goals & plan.")
+            return self._finish_round([], statuses, {}, "no project with tests found")
         ready = ws.ready()
         if not ready["repair"]:
             self.say("No Worker model is set up, so Runesmith can map but not repair. Add one under Inference.", "warn")
@@ -769,6 +771,8 @@ class Worker:
         for obj in objects:
             if not (Path(obj["path"]) / "src").is_dir():
                 statuses[obj["name"]] = "skipped: the shipped repair organ needs a src/ layout"
+                self.say(f"{obj['name']} keeps its code at the top, not in a src/ folder, which Runesmith's repair "
+                         "organ needs. Use “Fix the failing tests” on the Overview: it works for any layout.", "warn")
                 continue
             self._set("discovering", f"Running {obj['name']}'s tests on a throwaway copy")
             self.say(f"Running {obj['name']}'s tests on a throwaway copy")
