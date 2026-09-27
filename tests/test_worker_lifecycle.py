@@ -101,3 +101,17 @@ def test_stop_ends_current_job_but_does_not_pause_or_overlap_queued_job(tmp_path
     assert order == ['first-start', 'first-end', 'second-start']
     assert [r['result'] for r in worker.history] == ['stopped', 'done']
     assert not worker.snapshot()['stop_requested']
+
+
+def test_the_queue_records_who_asked_for_each_job(tmp_path):
+    # F16 (out-of-box journey R1): builds the schedule chains after an applied milestone were recorded as the owner's.
+    from runesmith.app.worker import EventBus, Worker
+    from runesmith.app.workspace import Workspace
+    worker = Worker(Workspace(tmp_path), EventBus())
+    assert worker.enqueue("map")["by"] == "owner"
+    assert worker.enqueue("round", by="schedule")["by"] == "schedule"
+    with pytest.raises(ValueError, match="requester"):
+        worker.enqueue("health", by="somebody")
+    import inspect
+    source = inspect.getsource(Worker._execute)
+    assert "self.enqueue('build', by='schedule')" in source and "self.enqueue('breakdown', by='schedule'" in source

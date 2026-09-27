@@ -24,6 +24,10 @@
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **Honest receipts and a clear pause (F16–F18).**
+  - Builds the schedule chains after an applied milestone are now recorded as started by the schedule, not the owner.
+  - The top-bar Pause says what it does: it holds *all* work, scheduled rounds and the jobs you start. While paused, the status shows how many jobs are waiting ("Paused · 1 waiting until you resume"), so a job requested during a pause no longer waits silently.
+  - A replaced proposal is marked "replaced" in its record, next to the kept file.
 - **Plain words when a model does not answer (F15).** A timed-out free model used to show "every route failed - nvidia:moonshotai/kimi-k3 timeout". The owner now reads what happened and what to try: the model didn't answer in time, is busy or at its free limit, refused the key, or its answer hasn't arrived yet (and won't be requested twice). The gateway's own words follow, shortened.
 - **No endless rechecking (F14).** With scheduled work on, every round used to check the same waiting draft again, writing new evidence each time, although nothing had changed. That is hundreds of identical checks a day at a 5-minute interval.
   - A waiting draft whose source, public expectations and owner acceptance are unchanged now keeps its last verdict.

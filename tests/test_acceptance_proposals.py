@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pytest
 
 from runesmith.app.acceptance_proposals import acceptance_file, approve, discard, dry_run, propose, status, validate
@@ -94,6 +95,8 @@ def test_replacing_approved_checks_needs_a_reason_and_keeps_the_old_file(tmp_pat
     approve(ws, "m1", newer["id"], replace=True, reason="the date check moves to its own milestone")
     assert len(status(ws)["m1"]["approved"]["checks"]) == 1
     assert list((ws.home / "acceptance").glob("m1.replaced-*.py.txt"))
+    record = json.loads((ws.home / "acceptance-proposals" / "m1.json").read_text(encoding="utf-8"))
+    assert [p["state"] for p in record["proposals"]] == ["replaced", "approved"]   # the record says which file decides
 
 
 def test_discarded_proposals_are_kept_but_never_used(tmp_path):

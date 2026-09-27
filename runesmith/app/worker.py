@@ -329,7 +329,10 @@ class Worker:
                 thread.join(max(0, deadline - time.monotonic()))
         return not (self._thread.is_alive() or self._watch.is_alive())
 
-    def enqueue(self, kind: str, **params: Any) -> dict[str, Any]:
+    def enqueue(self, kind: str, *, by: str = "owner", **params: Any) -> dict[str, Any]:
+        """Queue one job. ``by`` records who asked: the owner, or the schedule continuing its own work."""
+        if by not in ("owner", "schedule"):
+            raise ValueError(f"unknown requester {by!r}")
         if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "breakdown", "propose_acceptance", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
             raise ValueError(f"unknown job {kind!r}")
         from runesmith.app.build_jobs import BuildJob, PARAMETERS
@@ -346,7 +349,7 @@ class Worker:
                     return json.loads(json.dumps(job))
             if len(self._jobs) >= MAX_JOBS:
                 raise WorkspaceError('The queue is full; inspect waiting jobs before adding more.')
-            job = {"id": uuid.uuid4().hex, "kind": kind, "params": params, "queued": _now(), "by": "owner"}
+            job = {"id": uuid.uuid4().hex, "kind": kind, "params": params, "queued": _now(), "by": by}
             validate_job(job)
             job = json.loads(json.dumps(job, allow_nan=False))
             try:
@@ -544,10 +547,10 @@ class Worker:
                 legacy = False  # Keep the failure receipt; malformed policy cannot restart work.
             if (schedule_next and legacy and job['kind'] == 'build' and outcome.get('advanced') and self.ws.settings()['auto_work']
                     and not self.paused and not self._closing and not self._stop_after_step):
-                self.enqueue('build')
+                self.enqueue('build', by='schedule')
             if (schedule_next and legacy and job['kind']=='build' and outcome.get('replan_needed') and self.ws.settings()['auto_work']
                     and not self.paused and not self._closing and not self._stop_after_step):
-                self.enqueue('breakdown',milestone=outcome['milestone'])
+                self.enqueue('breakdown', by='schedule', milestone=outcome['milestone'])
         return dict(done, outcome=outcome)
 
     # --------------------------------------------------------------------- jobs --

@@ -98,7 +98,7 @@ function renderShell(root) {
   } },
     h('span.led'), h('span.ellipsis', 'Starting…'));
   const runBtn = h('button.btn.primary.sm', { title: 'Run a round now: map, find work, work, report', onclick: (e) => runNow(e.currentTarget) }, icon('play'), h('span', 'Run now'));
-  const pauseBtn = h('button.btn.sm', { title: 'Pause or resume scheduled work', onclick: (e) => togglePause(e.currentTarget) }, icon('pause'), h('span', 'Pause'));
+  const pauseBtn = h('button.btn.sm', { title: 'Pause or resume all work: scheduled rounds and the jobs you start', onclick: (e) => togglePause(e.currentTarget) }, icon('pause'), h('span', 'Pause'));
   const commentBtn = h('button.btn.sm.icon', { title: 'Comment on anything (C)', 'aria-label': 'Comment mode: comment on anything (C)', 'aria-pressed': 'false',
     onclick: toggleCommentMode }, icon('note'));
   const cmdBtn = h('button.btn.sm.ghost', { title: 'Command palette (Ctrl+K)', 'aria-label': 'Command palette (Ctrl+K)', onclick: openPalette }, icon('command'), h('span.kbd', 'Ctrl K'));
@@ -169,7 +169,7 @@ function updatePill() {
   let cls = 'idle', text;
   if (s.manual_waiting) { cls = 'needs'; text = `Needs you: ${s.manual_waiting} request to relay to a chat model`; }
   else if (w.current) { cls = 'busy'; text = w.detail || `${w.status}…`; }
-  else if (w.paused) { cls = 'paused'; text = 'Paused'; }
+  else if (w.paused) { cls = 'paused'; const waiting = (w.queue || []).length; text = waiting ? `Paused · ${waiting} waiting until you resume` : 'Paused'; }
   else if (!s.ready.any) { cls = 'needs'; text = 'Mapping only: add thinking power to let it work'; }
   else if (w.next_round_utc) { text = `Idle · next round ${ago(w.next_round_utc)}`; }
   else text = s.settings.auto_work ? 'Idle' : 'Idle · scheduled work is off';
@@ -314,7 +314,7 @@ function openPalette() {
     { label: 'Switch folder', icon: 'folder', run: () => import('./views/settings.js').then((m) => m.openFolderPicker()) },
     { label: 'Replay the introduction', icon: 'flame', run: () => { location.hash = '#/genesis'; location.reload(); } },
     { label: 'Open the intro in cinema mode (for sharing)', icon: 'maximize', run: () => window.open('/cinema', '_blank') },
-    { label: 'Pause or resume', icon: 'pause', run: () => togglePause(shell.pauseBtn) },
+    { label: 'Pause or resume all work', icon: 'pause', run: () => togglePause(shell.pauseBtn) },
     { label: 'Stop the current job after this step', icon: 'stop', run: () => post('/api/worker/stop', {}).then(() => toast('Stopping after the current step.', 'good')) },
     { label: 'Toggle light / dark', icon: 'sun', run: cycleTheme },
     { label: 'Keyboard shortcuts', icon: 'keyboard', key: '?', run: showShortcuts },

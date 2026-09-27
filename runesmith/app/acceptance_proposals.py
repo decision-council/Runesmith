@@ -387,6 +387,8 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
     for other in record['proposals']:
         if other is not proposal and other.get('state') == 'proposed':
             other.update(state='superseded')
+        elif other is not proposal and other.get('state') == 'approved':
+            other.update(state='replaced', replaced_utc=_now())      # its file is kept as *.replaced-*.py.txt
     _write_json(path, record)
     ws.ledger.append('acceptance.approved', {'milestone': milestone_id, 'proposal': proposal_id, 'sha256': file_sha,
                                              'proposed_by': proposal.get('drafted_by'), 'replaced': bool(reason.strip())})
