@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 
 from runesmith import cli
+import pytest
+
 from runesmith.envmap import build_environment_map, classify_object
 from runesmith.memory import Memory
 from runesmith.selfmap import CAPABILITY_LADDERS, band, build_self_map
@@ -200,3 +202,34 @@ def test_discover_triages_a_real_missing_dependency_end_to_end(tmp_path):
     assert by_file["tests/test_net.py"]["triage"]["kind"] == "environment"
     assert "a_third_party_package_that_is_not_installed_anywhere" in by_file["tests/test_net.py"]["triage"]["reason"]
     assert "triage" not in by_file["tests/test_ops.py"]                  # a real source defect stays repairable
+
+
+@pytest.mark.parametrize("layout,kind", [
+    ({"shop/__init__.py": "", "tests/test_shop.py": "", "README.md": "# shop"}, "python_repository"),   # J3-B1
+    ({"tool.py": "", "test_tool.py": "", "README.md": "# tool"}, "python_repository"),
+    ({"requirements.txt": "", "app.py": ""}, "python_repository"),
+    ({"README.md": "# notes", "guide.md": "text"}, "document_collection"),
+    ({"tests/test_orphan.py": "", "README.md": "# only tests"}, "document_collection"),
+])
+def test_small_python_projects_are_recognised_without_packaging_files(tmp_path, layout, kind):
+    for rel, text in layout.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text, encoding="utf-8")
+    assert classify_object(tmp_path) == kind
+
+
+def test_a_flat_project_with_failing_tests_is_probed_and_its_failures_found(tmp_path):
+    # J3: a package, its tests and a README; one test fails. Mapping with probing must run the tests.
+    (tmp_path / "shop").mkdir()
+    (tmp_path / "shop" / "__init__.py").write_text("def total(a, b):\n    return a - b\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests" / "test_shop.py").write_text(
+        "import unittest\nfrom shop import total\n\n\nclass T(unittest.TestCase):\n"
+        "    def test_total(self):\n        self.assertEqual(total(2, 3), 5)\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# shop\n", encoding="utf-8")
+    probed = build_environment_map(tmp_path, probe=True)
+    root = next(o for o in probed["objects"] if o["root"])
+    assert root["kind"] == "python_repository"
+    rungs = {r["rung"]: r["status"] for r in root["ladder"]}
+    assert rungs["tests_collect"] == "achieved" and rungs["tests_pass"] == "not_achieved"

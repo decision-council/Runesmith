@@ -106,13 +106,32 @@ def _walk(root: Path) -> list[Path]:
     return [path for path, _, _ in _scan(root)]
 
 
+PYTHON_MARKERS = {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile", "tox.ini"}
+
+
+def _python_at_top(path: Path, names: set[str]) -> bool:
+    """A module, or a package folder (with __init__.py or __main__.py), directly in ``path``."""
+    return any(n.endswith(".py") for n in names) or any(
+        (path / n).is_dir() and ((path / n / "__init__.py").is_file() or (path / n / "__main__.py").is_file())
+        for n in names)
+
+
+def _python_tests(path: Path, names: set[str]) -> bool:
+    return (any(n.startswith("test_") and n.endswith(".py") for n in names)
+            or any((path / d).is_dir() and next((path / d).glob("test*.py"), None) is not None for d in ("tests", "test")))
+
+
 def classify_object(path: Path) -> str:
     names = {p.name for p in path.iterdir()} if path.is_dir() else set()
-    if names & {"pyproject.toml", "setup.py", "setup.cfg"}:
+    if names & PYTHON_MARKERS:
         return "python_repository"
     if "package.json" in names:
         return "node_repository"
     if (path / "src").is_dir() and (path / "tests").is_dir() and next((path / "src").rglob("*.py"), None):
+        return "python_repository"
+    # The flat layout of many small projects: a package or module and its tests, with no packaging files (J3-B1:
+    # its README used to make it a "document collection", so its failing tests were never run).
+    if _python_at_top(path, names) and _python_tests(path, names):
         return "python_repository"
     if path.is_dir() and any(n.lower().endswith((".html", ".htm")) for n in names):
         return "website"
