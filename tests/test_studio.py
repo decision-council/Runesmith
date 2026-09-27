@@ -561,3 +561,17 @@ def test_a_home_onboarded_before_the_choices_keeps_its_behaviour(tmp_path):
     (tmp_path / "fresh").mkdir()
     fresh = Workspace(tmp_path / "fresh")
     assert not fresh.settings()["auto_work"] and not fresh.settings()["probe_tests"] and not fresh.settings()["kaizen"]
+
+
+def test_a_key_kept_in_a_local_settings_file_makes_an_instrument_usable(tmp_path):
+    """Keys can stay in the owner's own .env file: Runesmith reads them at call time and only names them."""
+    ws = Workspace(tmp_path)
+    config = ws.config()
+    config["instruments"]["from-file"] = {"kind": "milliner", "base_url": "http://127.0.0.1:8765", "model": "m",
+                                          "token_env_file": str(tmp_path / "gateway.env"), "token_key": "GATEWAY_TOKEN"}
+    config["instruments"]["no-key"] = {"kind": "milliner", "base_url": "http://127.0.0.1:8765", "model": "m"}
+    ws.save_config(config)
+    assert ws._usable("from-file", config["instruments"]["from-file"])
+    assert not ws._usable("no-key", config["instruments"]["no-key"])
+    listed = {i["name"]: i for i in ws.inference()["instruments"]}
+    assert listed["from-file"]["key"]["env"] == f"GATEWAY_TOKEN in {tmp_path / 'gateway.env'}"

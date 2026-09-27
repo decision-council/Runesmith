@@ -39,6 +39,7 @@ import os
 from collections import deque
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
+from runesmith import atomic
 
 HEALTHY, SUSPECTED, BLOCKED, RECOVERING, CAPACITY = (
     "HEALTHY", "SUSPECTED_BLOCKAGE", "SUBJECT_BLOCKED", "RECOVERING", "CAPACITY_CONSTRAINED")
@@ -151,7 +152,7 @@ class Attention:
         state["recent"] = list(self.recent)
         tmp = Path(str(path) + ".tmp")
         tmp.write_text(json.dumps(state, indent=1) + "\n", encoding="utf-8")
-        os.replace(tmp, path)
+        atomic.replace(tmp, path)
 
     @classmethod
     def load(cls, path: Path) -> "Attention | None":

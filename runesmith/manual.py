@@ -43,6 +43,7 @@ from typing import Any, Callable
 
 from runesmith.canon import canonical
 from runesmith.instruments import CallOutcome, Instrument
+from runesmith import atomic
 
 REPLY_FORMAT = """\
 ---
@@ -102,7 +103,7 @@ def _paths(directory: Path, rid: str) -> dict[str, Path]:
 def _atomic_write(path: Path, text: str) -> None:
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
     tmp.write_bytes(text.encode("utf-8"))
-    os.replace(tmp, path)
+    atomic.replace(tmp, path)
 
 
 def _utc() -> str:

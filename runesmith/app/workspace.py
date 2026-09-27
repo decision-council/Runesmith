@@ -38,6 +38,7 @@ from runesmith.keystore import KeyStore
 from runesmith.ledger import Ledger
 from runesmith.notes import NoteStore
 from runesmith.objects.code import encode_like
+from runesmith import atomic
 
 LIBRARY = Path(__file__).resolve().parent.parent / "library"
 ROLES = ("repair", "kaizen", "plan")
@@ -98,12 +99,20 @@ def _read_json(path: Path, default: Any) -> Any:
         return default
 
 
+def _key_file_ref(spec: dict[str, Any]) -> str | None:
+    """A key read from a local settings file at call time (``*_env_file`` + ``*_key``), named but never read here."""
+    for prefix in ("api_key", "token"):
+        if spec.get(prefix + "_env_file") and spec.get(prefix + "_key"):
+            return f"{spec[prefix + '_key']} in {spec[prefix + '_env_file']}"
+    return None
+
+
 def _write_json(path: Path, value: Any) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".{uuid.uuid4().hex[:6]}.tmp")
     tmp.write_bytes((json.dumps(value, indent=1, default=str) + "\n").encode("utf-8"))
-    tmp.replace(path)
+    atomic.replace(tmp, path)
 
 
 def _tail_lines(path: Path, limit: int) -> list[str]:
@@ -352,7 +361,7 @@ class Workspace:
                 "preset": spec.get("preset"), "label": spec.get("label") or (preset or {}).get("label") or name,
                 "local": bool((preset or {}).get("local")) or "127.0.0.1" in base_url or "localhost" in base_url,
                 "key": {"secret": secret, "saved": bool(secret and self.keys.has(secret)),
-                        "env": spec.get("api_key_env") or spec.get("token_env"),
+                        "env": spec.get("api_key_env") or spec.get("token_env") or _key_file_ref(spec),
                         "needed": (preset or {}).get("key", "optional")},
                 "usable": self._usable(name, spec),
                 "roles": [role for role in ROLES if name in (config["roles"].get(role) or [])],
@@ -369,7 +378,7 @@ class Workspace:
             return False
         preset = PRESET_BY_ID.get(spec.get("preset") or "") or {}
         needs_key = preset.get("key") == "required" or spec.get("kind") == "milliner"
-        if needs_key and not (secret or spec.get("api_key_env") or spec.get("token_env")):
+        if needs_key and not (secret or spec.get("api_key_env") or spec.get("token_env") or _key_file_ref(spec)):
             return False
         if spec.get("kind") in ("openai", "milliner") and not (spec.get("base_url") and spec.get("model")):
             return False

@@ -18,6 +18,7 @@ from typing import Any
 
 from runesmith.canon import digest, digest_tree
 from runesmith.ledger import utc_now
+from runesmith import atomic
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 ORGANS_ROOT = PACKAGE_ROOT / "organs"
@@ -112,5 +113,5 @@ def activate(home: Path, generation_id: str, *, expected: str | None) -> str:
         raise GenerationError(f"{generation_id} does not verify")
     tmp = Path(home) / ".ACTIVE.tmp"
     tmp.write_text(generation_id + "\n", encoding="ascii")
-    os.replace(tmp, Path(home) / "ACTIVE")
+    atomic.replace(tmp, Path(home) / "ACTIVE")
     return generation_id

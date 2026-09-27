@@ -30,6 +30,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from runesmith import atomic
 
 
 def fisher_one_sided(a_success: int, a_total: int, b_success: int, b_total: int) -> float:
@@ -114,7 +115,7 @@ class Trial:
     def save(self, path: Path) -> None:
         tmp = Path(str(path) + ".tmp")
         tmp.write_text(json.dumps(asdict(self), indent=1) + "\n", encoding="utf-8")
-        os.replace(tmp, path)
+        atomic.replace(tmp, path)
 
     @classmethod
     def load(cls, path: Path) -> "Trial | None":

@@ -22,6 +22,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable
+from runesmith import atomic
 
 _NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _lock = threading.Lock()
@@ -46,7 +47,7 @@ class KeyStore:
             os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
         except OSError:                                    # Windows: owner-only is the profile's default
             pass
-        os.replace(tmp, self.path)
+        atomic.replace(tmp, self.path)
 
     def set(self, name: str, value: str) -> None:
         if not _NAME.match(name or ""):
