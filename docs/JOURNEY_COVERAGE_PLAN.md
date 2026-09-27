@@ -112,7 +112,9 @@ A script reads every journey's recorded setting changes (ledger `settings.change
 | **J9** | Keyboard only, screen reader names, phone, light and dark | Chat window | Any | Theme | Command palette, comment mode | Accessibility notes |
 | **J10** | A terminal user | Scripted and free API | CLI only | CLI only | Every CLI verb: run, kaizen, discover, selfmap, envmap, trial, repair, report, demo, generations, manual | Appendix: the command line |
 
-Order, by release risk: J2 (running now), J1, J4, J3, J7, J5, J8, J9, J6, J10, and J0 last, on the release candidate.
+| **J11** | A creative tool, built through the Studio: a browser-based animation and video composer (HTML/JS, no build tools), exporting WebM straight from the browser | Free API models build; the Checker is the strongest free route | Checks + apply + schedule | Modes and switches changed as the project grows | A larger, visual, non-CLI project: acceptance checks for a web page; long unattended runs | Its output makes the presentation material and the project's graphics |
+
+Order, by release risk: J2 (running now), J1, J4, J3, J7, J5, J8, J9, J6, J10, then J11, the creative tool (Lars, 2026-09-28: "can help us make the presentation material"), and J0 last, on the release candidate.
 
 ## 6. The protocol for every live journey (R1's, kept)
 
