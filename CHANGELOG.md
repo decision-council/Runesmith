@@ -2,6 +2,23 @@
 
 ## Unreleased: release hardening (2026-09-27)
 
+**From out-of-box journey R1.** A first-time-user run on a clean export, a fresh profile and a Python without pytest completed with zero rescues (`D:/oob/JOURNEY_LOG.md`, research folder). The run surfaced the following.
+- **Acceptance checks you approve in plain words (G1).** Automatic apply needs the owner's own acceptance checks, and few owners can write a unittest file.
+  - A milestone now offers "Propose acceptance checks". A separate model call writes black-box checks from the milestone's own words, with one plain sentence per check.
+  - The owner reads the sentences (the code is one click away) and chooses "Use these checks" or "Discard".
+  - Approval freezes the file with its provenance, *model-proposed, owner-approved*. Replacing approved checks needs a reason and keeps the old file.
+  - Proposals are validated: unittest only, no network modules, and every test must carry a sentence.
+- **Windows-safe saves (B1).** Saving a draft could fail with "Access is denied" when the Studio page read the file at that moment. `runesmith/atomic.py` retries briefly on a Windows sharing violation.
+- **Keys in a local settings file.** An instrument whose key is read from a file at call time (`*_env_file` + `*_key`) now counts as ready, so an owner can keep keys in their own `.env` file rather than pasting them into the UI.
+- **Friction fixes:**
+  - "Recheck" explains and offers to turn checking on;
+  - one name for the checking setting;
+  - plain check words, and a calm write dialog when a draft's own tests passed;
+  - the owner is asked whether a checked milestone is done;
+  - "applied so far" counts drafts;
+  - milestone cards no longer squeeze to one word per line;
+  - the introduction ends on the Overview.
+
 **First-run safety.**
 - A new home starts with scheduled work, running the project's tests while mapping, and self-improvement all **off**. Finishing the introduction switches none of them on.
 - The Overview's "How Runesmith may work here" panel asks for each choice in plain words, with the switch right there. "Getting set up" keeps a step open until the owner has chosen.

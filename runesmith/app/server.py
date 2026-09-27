@@ -324,7 +324,7 @@ def api_worker_run(s: Studio, q, body):
                "source_baseline":{"reason"},
                "allocate_check":{"draft_id","quote_id","reason"},
                "reconcile_check":{"draft_id","quote_id","reason"},
-               "correct":{"attempt"}, "breakdown":{"milestone"}}.get(job, set())
+               "correct":{"attempt"}, "breakdown":{"milestone"}, "propose_acceptance":{"milestone"}}.get(job, set())
     params = {k: v for k, v in (body.get("params") or {}).items() if k in allowed}
     return s.worker.enqueue(job, **params)
 
@@ -402,7 +402,9 @@ def api_plan(s: Studio, q, body):
     from runesmith.app.building import current_file_reviews
     from runesmith.app.planner import plan_readiness
     from runesmith.app.work_modes import planning_blockers, held_plans
+    from runesmith.app.acceptance_proposals import status as acceptance_status
     return {"plan": ws.plan(), "milestones": ws.milestones(), "ready": ws.ready()["plan"], 'breakdowns':proposals(ws),
+            'acceptance_checks':acceptance_status(ws),
             'acceptance_expectations':{m['id']:expectations(ws,m['id']) for m in (ws.plan() or {}).get('milestones',[])},
             'current_checks':current_file_reviews(ws), 'readiness':plan_readiness(ws.plan()),
             'planning_blockers':planning_blockers(ws),
@@ -453,6 +455,23 @@ def api_acceptance_expectations(s: Studio,q,body,milestone_id):
     result=publish_expectations(_ws(s),milestone_id,body.get('criteria'),body.get('reason'),
                                 interfaces=body.get('interfaces'),expected_digest=body['expected_digest'])
     s.bus.publish('plan',{});s.bus.publish('work',{})
+    return result
+
+
+@route('POST', r'/api/plan/milestones/([A-Za-z0-9_-]+)/acceptance/approve')
+def api_acceptance_approve(s: Studio,q,body,milestone_id):
+    from runesmith.app.acceptance_proposals import approve
+    result=approve(_ws(s),milestone_id,str(body.get('proposal') or ''),replace=bool(body.get('replace')),
+                   reason=str(body.get('reason') or ''))
+    s.bus.publish('plan',{})
+    return result
+
+
+@route('POST', r'/api/plan/milestones/([A-Za-z0-9_-]+)/acceptance/discard')
+def api_acceptance_discard(s: Studio,q,body,milestone_id):
+    from runesmith.app.acceptance_proposals import discard
+    result=discard(_ws(s),milestone_id,str(body.get('proposal') or ''),reason=str(body.get('reason') or ''))
+    s.bus.publish('plan',{})
     return result
 
 

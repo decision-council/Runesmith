@@ -330,7 +330,7 @@ class Worker:
         return not (self._thread.is_alive() or self._watch.is_alive())
 
     def enqueue(self, kind: str, **params: Any) -> dict[str, Any]:
-        if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "breakdown", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
+        if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "breakdown", "propose_acceptance", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
             raise ValueError(f"unknown job {kind!r}")
         from runesmith.app.build_jobs import BuildJob, PARAMETERS
         if kind in PARAMETERS:
@@ -503,7 +503,7 @@ class Worker:
         try:
             from runesmith.app.work_modes import guard_job
             guard_job(self.ws, job['kind'])  # A switch may have changed since enqueue.
-            if job['kind'] in {'plan', 'goalposts', 'draft', 'build', 'round', 'escalate', 'supplement', 'revise', 'correct', 'breakdown'}:
+            if job['kind'] in {'plan', 'goalposts', 'draft', 'build', 'round', 'escalate', 'supplement', 'revise', 'correct', 'breakdown', 'propose_acceptance'}:
                 from runesmith.app.environment_intent import require_intent
                 require_intent(self.ws)
             handler = getattr(self, f"_job_{job['kind']}")
@@ -645,6 +645,17 @@ class Worker:
                                    milestone,checkpoint=checkpoint)
         self.bus.publish('plan',{'breakdown':proposal['id']})
         return {'summary':f"Proposed {len(proposal['steps'])} prerequisites for {milestone}; original goal unchanged. Review under Goals & plan."}
+
+    def _job_propose_acceptance(self, milestone: str) -> dict[str, Any]:
+        from runesmith.app.acceptance_proposals import propose
+        def checkpoint():
+            self._work_checkpoint()
+            if self._stop_after_step or self._closing or self.paused: raise StopRequested()
+        self._set('planning', 'Proposing acceptance checks for a milestone (you approve them)')
+        self.say('Asking the planner model to propose acceptance checks from the milestone’s own words')
+        proposal = propose(self.ws, self.ws.router(on_call=self._on_call, backoff_s=()), milestone, checkpoint=checkpoint)
+        self.bus.publish('plan', {'acceptance': proposal['id']})
+        return {'summary': f"Proposed {len(proposal['checks'])} acceptance checks for {milestone}. Read and approve them under Goals & plan; nothing is used until you do."}
 
     def _job_build(self, draft_id: str | None = None, author_only: bool = False) -> dict[str, Any]:
         return self._run_build_job('build',

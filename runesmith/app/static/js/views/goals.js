@@ -219,6 +219,38 @@ export default async function render(root, ctx) {
               })},icon('route'),'Propose smaller steps') : null,
             h('button.btn.sm.ghost', { onclick: async () => { const t = await askText({ title: 'Edit milestone', value: m.title, confirm: 'Save' }); if (t) { await post(`/api/plan/milestones/${m.id}`, { title: t }); drawPlan(); } } }, icon('pencil'), 'Edit'))),
         h('span', { class: `badge ${cls}` }, label));
+      // Acceptance checks the owner approves in plain words: automatic apply for this milestone is judged by them.
+      const acc = data.acceptance_checks?.[m.id];
+      const accBlock = h('div.mt-8', {'aria-label': `Acceptance checks for ${m.title}`});
+      if (acc?.approved) {
+        accBlock.append(h('b.small', '✓ Your acceptance checks'),
+          h('div.tiny.muted', acc.approved.provenance === 'owner file' ? 'Your own checks file. Automatic apply for this milestone is judged by it.'
+            : `Proposed by ${acc.approved.proposed_by || 'a model'}, approved by you. Automatic apply for this milestone is judged by them; build authors never see them.`),
+          acc.approved.checks ? h('ul.small', acc.approved.checks.map((c) => h('li', c.says))) : null);
+      } else if (acc?.proposal) {
+        const p = acc.proposal;
+        accBlock.append(h('b.small', 'Proposed acceptance checks: do these describe “done”?'),
+          h('ul.small', p.checks.map((c) => h('li', c.says))),
+          h('details', h('summary.tiny', `Show the code (proposed by ${p.drafted_by || 'a model'})`), h('pre.code', p.code)),
+          h('div.row.wrap.mt-8',
+            h('button.btn.sm.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
+              if (!(await confirmDialog({ title: `Use these checks for “${m.title}”?`,
+                text: 'They decide when this milestone is done. Work is applied automatically only when they pass, and only if you allow automatic apply. Build authors never see them. You can replace them later, with a reason.',
+                confirm: 'Use these checks', icon: 'check' }))) return;
+              await post(`/api/plan/milestones/${m.id}/acceptance/approve`, { proposal: p.id });
+              toast('Acceptance checks saved for this milestone.', 'good'); drawPlan(); }) }, icon('check'), 'Use these checks'),
+            h('button.btn.sm.ghost', { onclick: (e) => withBusy(e.currentTarget, async () => {
+              const reason = await askText({ title: 'Discard these checks?', text: 'Optional: say why. It is kept with the proposal.', multiline: true, confirm: 'Discard' });
+              if (reason === null) return;
+              await post(`/api/plan/milestones/${m.id}/acceptance/discard`, { proposal: p.id, reason }); drawPlan(); }) }, icon('x'), 'Discard')));
+      } else if (['open', 'doing'].includes(m.status)) {
+        accBlock.append(h('div.small.muted', 'No acceptance checks yet. Automatic apply needs them, and you approve them in plain words.'),
+          h('button.btn.sm.mt-8', { disabled: !data.ready, onclick: (e) => withBusy(e.currentTarget, async () => {
+            await post('/api/worker/run', { job: 'propose_acceptance', params: { milestone: m.id } });
+            toast('Proposing acceptance checks for this milestone. They appear here for you to read and approve.', 'good', 6000); }) },
+            icon('check'), 'Propose acceptance checks'));
+      }
+      if (accBlock.childNodes.length) item.append(accBlock);
       const expectations = data.acceptance_expectations?.[m.id];
       const currentCheck = data.current_checks?.find(c=>c.milestone===m.id);
       if(currentCheck) item.append(h('div.callout.mt-8',h('div',currentCheck.summary,
@@ -323,6 +355,7 @@ export default async function render(root, ctx) {
       h('label.row', checks, 'Check drafts by running their tests (Python unittest, in a throwaway working copy)'),
       h('label.row.mt-8', apply, 'Apply checked drafts automatically (needs your own acceptance checks for the milestone)'),
       h('div.label-text.mt-8', 'Allowed files or folders, comma separated'), paths,
+      h('p.small.muted', 'Automatic apply needs acceptance checks for each milestone. Use “Propose acceptance checks” on a milestone above and approve them in plain words; nothing is applied automatically without them.'),
       h('p.tiny.faint', `Owner acceptance files: ${build.acceptance_folder} / <milestone-id>.py (unittest). Working copies are not an OS sandbox.`),
       h('div.row.wrap', save, h('button.btn.primary', {onclick:async()=>{await post('/api/worker/run',{job:'build'});toast('Build step queued. Follow it under Work.', 'good');}}, icon('play'), 'Build next step')),
       build.last ? h('p.small.mt-8', build.last.summary) : null);

@@ -105,7 +105,8 @@ def validate_job(job):
         BuildJob(kind, params)
     else:
         allowed = {'map': {'probe'}, 'round': set(), 'plan': set(), 'goalposts': set(), 'health': set(),
-                   'draft': {'milestone'}, 'breakdown': {'milestone'}, 'mode': {'mode'}, 'measure': {'measurement'}}
+                   'draft': {'milestone'}, 'breakdown': {'milestone'}, 'propose_acceptance': {'milestone'},
+                       'mode': {'mode'}, 'measure': {'measurement'}}
         if kind not in allowed or set(params) - allowed[kind]:
             raise WorkspaceError('Invalid saved job kind or parameters; inspect recovery records.')
         for name, value in params.items():
