@@ -1,8 +1,23 @@
 // Goals & plan: what the owner wants, in their words; the brief and blueprints; the plan the Planner drafts.
 import { h, icon, get, post, del, bus, toast, commentable, openNotes, clear, ago, plural, humanize, withBusy,
-  confirmDialog, askText, drawer, empty, debounce } from '../core.js';
+  confirmDialog, askText, drawer, empty, debounce, modal } from '../core.js';
 
-const STATUS = { open: ['', 'open'], doing: ['rune', 'in progress'], done: ['good', 'done'], dropped: ['', 'dropped'] };
+// A milestone in the owner's words: what it should do and when it is done, not only a title. Checkers and builders
+// read all three; an owner's own milestone used to get a title and nothing else (journey J11-G7).
+function milestoneForm(heading, m = {}) {
+  return new Promise((resolve) => {
+    const title = h('input.input', { value: m.title || '', placeholder: 'e.g. A first page that lists tasks', 'aria-label': 'Title' });
+    const detail = h('textarea.textarea', { rows: 3, placeholder: 'What it should do, in your own words (optional)', 'aria-label': 'What it should do' }, m.detail || '');
+    const done = h('input.input', { value: m.done_when || '', placeholder: 'e.g. Opening the page shows the list (optional)', 'aria-label': 'Done when' });
+    modal({ title: heading, body: h('div.col.gap-8', h('label.col', h('span.small', 'Title'), title),
+      h('label.col', h('span.small', 'What it should do'), detail), h('label.col', h('span.small', 'Done when'), done)),
+      onClose: (v) => resolve(v || null),
+      actions: [{ label: 'Cancel', kind: 'ghost', value: null }, { label: 'Save', kind: 'primary', onClick: (close) => close(title.value.trim()
+        ? { title: title.value.trim(), detail: detail.value.trim(), done_when: done.value.trim() } : null) }] });
+  });
+}
+
+const STATUS ={ open: ['', 'open'], doing: ['rune', 'in progress'], done: ['good', 'done'], dropped: ['', 'dropped'] };
 // Exact text a check's code requires that its sentence does not say (found by Runesmith, not by the model).
 const exactText = (c) => c.unstated?.length
   ? h('div.tiny.warn', 'Also requires the exact text: ' + c.unstated.map((x) => `“${x}”`).join(', '))
@@ -185,7 +200,7 @@ export default async function render(root, ctx) {
       await post('/api/worker/run', { job: 'plan' }); toast('The Planner is drafting. This page updates when it is done.', 'good', 6000);
     }));
     clear(planCard).append(h('div.card-head', h('h3', icon('route'), 'Plan'), plan ? h('span.badge', `v${plan.version} · ${plan.drafted_by || 'owner'} · ${ago(plan.utc)}`) : null,
-      h('div.actions', h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, showAuthorContext)}, icon('eye'), 'Author context'), h('button.btn.sm', { onclick: async () => { const t = await askText({ title: 'Add a milestone', placeholder: 'e.g. A first page that lists tasks', confirm: 'Add' }); if (t) { await post('/api/plan/milestones', { title: t }); drawPlan(); } } }, icon('plus'), 'Milestone'), draftBtn)));
+      h('div.actions', h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, showAuthorContext)}, icon('eye'), 'Author context'), h('button.btn.sm', { onclick: async () => { const f = await milestoneForm('Add a milestone'); if (f) { await post('/api/plan/milestones', f); drawPlan(); } } }, icon('plus'), 'Milestone'), draftBtn)));
     if(planningBlocks.length)planCard.append(h('div.callout.warn',h('div',planningBlocks.join(' '),
       h('div.row.wrap.mt-8',
         data.autonomy==='observe' ? h('button.btn.sm.primary',{onclick:(e)=>withBusy(e.currentTarget,async()=>{
@@ -244,7 +259,7 @@ export default async function render(root, ctx) {
                 await post('/api/worker/run',{job:'breakdown',params:{milestone:m.id}});
                 toast('Runesmith is proposing smaller prerequisites from the evidence. The goal stays unchanged.','good',6000);
               })},icon('route'),'Propose smaller steps') : null,
-            h('button.btn.sm.ghost', { onclick: async () => { const t = await askText({ title: 'Edit milestone', value: m.title, confirm: 'Save' }); if (t) { await post(`/api/plan/milestones/${m.id}`, { title: t }); drawPlan(); } } }, icon('pencil'), 'Edit'))),
+            h('button.btn.sm.ghost', { onclick: async () => { const f = await milestoneForm('Edit milestone', m); if (f) { await post(`/api/plan/milestones/${m.id}`, f); drawPlan(); } } }, icon('pencil'), 'Edit'))),
         h('span', { class: `badge ${cls}` }, label));
       // Acceptance checks the owner approves in plain words: automatic apply for this milestone is judged by them.
       const acc = data.acceptance_checks?.[m.id];

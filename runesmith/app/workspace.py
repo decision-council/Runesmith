@@ -744,7 +744,7 @@ class Workspace:
                     return m
         raise KeyError(milestone_id)
 
-    def add_milestone(self, title: str, detail: str = "", track: str = "") -> dict[str, Any]:
+    def add_milestone(self, title: str, detail: str = "", track: str = "", done_when: str = "") -> dict[str, Any]:
         title = (title or "").strip()
         if not title:
             raise WorkspaceError("a milestone needs a title")
@@ -752,7 +752,7 @@ class Workspace:
             plan = self.plan() or {"summary": "", "milestones": [], "tracks": [], "first_steps": [], "questions": [],
                                    "drafted_by": "owner", "utc": _now(), "version": 1}
             milestone = {"id": "m" + uuid.uuid4().hex[:6], "title": title[:200], "detail": (detail or "").strip()[:1500],
-                         "track": (track or "").strip()[:60], "done_when": "", "status": "open"}
+                         "track": (track or "").strip()[:60], "done_when": str(done_when or "").strip()[:400], "status": "open"}
             plan["milestones"].append(milestone)
             _write_json(self.home / "PLAN.json", plan)
         self.ledger.append("milestone.added", {"id": milestone["id"]})

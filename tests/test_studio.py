@@ -662,3 +662,16 @@ def test_a_fix_whose_files_changed_no_longer_waits(tmp_path):
     assert listed[second]["outdated"] is True and listed[first]["outdated"] is False
     assert ws.work()["counts"] == {"applied": 1, "outdated": 1} and ws.state()["proposals"] == {"applied": 1, "outdated": 1}
     assert ws.apply_proposal(second)["ok"] is False                     # Apply agrees: the files changed
+
+
+def test_an_owners_milestone_keeps_what_it_should_do_and_when_it_is_done(studio):
+    # Journey J11-G7: the owner added "Ready-made styles"; the dialog took only a title, so Checkers and builders had
+    # nothing but those words to go on.
+    status, added, _ = call(studio, "POST", "/api/plan/milestones", {"title": "Ready-made styles",
+                                                                     "detail": "Runes, blueprint and paper looks.",
+                                                                     "done_when": "Choosing a style changes the stage."})
+    assert status == 200 and added["detail"] == "Runes, blueprint and paper looks."
+    assert added["done_when"] == "Choosing a style changes the stage."
+    status, edited, _ = call(studio, "POST", f"/api/plan/milestones/{added['id']}", {"title": "Styles", "detail": "",
+                                                                                    "done_when": "A project remembers its style."})
+    assert status == 200 and edited["title"] == "Styles" and edited["done_when"] == "A project remembers its style."

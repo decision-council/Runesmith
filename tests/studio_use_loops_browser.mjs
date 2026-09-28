@@ -287,6 +287,7 @@ await context.route('**/*',async route=>{
     }
     data={ok:true,fixture_only:true};
   }
+  else if(p==='/api/plan/milestones'&&req.method()==='POST')data={id:'mnew',status:'open',...body};
   else {await route.fulfill({status:400,json:{error:'Unimplemented fixture route: '+p}});return;}
   await route.fulfill({json:data});
 });
@@ -2006,6 +2007,35 @@ try{
     assert.equal(await page.getByRole('button',{name:'Adopt prerequisites',exact:true}).count(),1);
     fixtureBreakdowns=[];
     loops.push({id:'B20.08',case:'A proposed breakdown for a finished milestone is not offered for adoption',result:'passed'});
+
+    // B20.09 (journey J11-G7): an owner's milestone gets what it should do and when it is done, not only a title
+    const formStart=requests.length;
+    await page.getByRole('button',{name:'Milestone',exact:true}).click();
+    const form=page.locator('.modal',{hasText:'Add a milestone'});
+    await form.waitFor();
+    // the dialog puts the cursor in its first field shortly after opening; typing before that races it
+    await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Title');
+    await form.getByLabel('Title',{exact:true}).fill('Ready-made styles');
+    await form.getByLabel('What it should do',{exact:true}).fill('Runes, blueprint and paper looks for a clip.');
+    await form.getByLabel('Done when',{exact:true}).fill('Choosing a style changes how the stage looks.');
+    await form.getByRole('button',{name:'Save',exact:true}).click();
+    await page.waitForTimeout(300);
+    assert.deepEqual(requests.slice(formStart).filter(r=>r.method==='POST').map(r=>[r.path,r.body]),
+      [['/api/plan/milestones',{title:'Ready-made styles',detail:'Runes, blueprint and paper looks for a clip.',done_when:'Choosing a style changes how the stage looks.'}]]);
+    await page.locator('[aria-label="Acceptance checks for Books per month"]').waitFor();
+    const editStart=requests.length;
+    await page.evaluate(()=>{const found=[...document.querySelectorAll('#page button')].filter(x=>x.innerText.trim()==='Edit').find(x=>{
+      let n=x;for(let k=0;k<8&&n;k++){if((n.innerText||'').startsWith('Books per month'))return true;n=n.parentElement;}return false;});
+      found.setAttribute('data-loop','edit-books-per-month');});
+    await page.locator('[data-loop="edit-books-per-month"]').click();
+    const edit=page.locator('.modal',{hasText:'Edit milestone'});
+    await edit.waitFor();
+    assert.equal(await edit.getByLabel('Title',{exact:true}).inputValue(),'Books per month');
+    assert.equal(await edit.getByLabel('Done when',{exact:true}).inputValue(),'Counts per month');
+    await edit.getByRole('button',{name:'Cancel',exact:true}).click();
+    await page.waitForTimeout(200);
+    assert.equal(requests.slice(editStart).filter(r=>r.method==='POST').length,0);
+    loops.push({id:'B20.09',case:'Adding or editing a milestone takes what it should do and when it is done; Cancel sends nothing',result:'passed'});
     fixtureAcceptance={};fixturePlan=null;
   }
   if(selected.has('B21')){

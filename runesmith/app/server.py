@@ -542,7 +542,8 @@ def api_goalposts(s: Studio, q, body):
 
 @route("POST", r"/api/plan/milestones")
 def api_milestone_add(s: Studio, q, body):
-    milestone = _ws(s).add_milestone(body.get("title", ""), body.get("detail", ""), body.get("track", ""))
+    milestone = _ws(s).add_milestone(body.get("title", ""), body.get("detail", ""), body.get("track", ""),
+                                     body.get("done_when", ""))
     s.bus.publish("plan", {})
     return milestone
 
