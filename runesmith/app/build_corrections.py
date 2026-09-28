@@ -67,12 +67,14 @@ def correction_candidates(ws):
             continue
         answers=_answers(ws,attempt); history=_corrections(ws,path.stem)
         if not answers:continue
+        # A correction whose answer never arrived blocks the next one until the owner sets it aside (journey J2-F18).
+        late=next((row.get('id') for row in history if row.get('state') in ('started','uncertain')),None)
         rows.append({'attempt':path.stem,'milestone_contract':attempt.get('contract'),
                      'path':attempt['feedback']['path'],'error':attempt.get('error'),
                      'snapshot_current':attempt.get('snapshot_digest')==current_snapshot,
                      'corrections':len(history),'remaining':max(0,MAX_CORRECTIONS-len(history)),
-                     'last_state':history[-1].get('state') if history else None,
-                     'eligible':len(history)<MAX_CORRECTIONS and attempt.get('snapshot_digest')==current_snapshot})
+                     'last_state':history[-1].get('state') if history else None,'late_correction':late,
+                     'eligible':len(history)<MAX_CORRECTIONS and not late and attempt.get('snapshot_digest')==current_snapshot})
     return sorted(rows,key=lambda row:row['attempt'],reverse=True)
 
 
@@ -84,8 +86,8 @@ def abandon_uncertain_correction(ws,key,reason,*,by='owner'):
         raise WorkspaceError('Record the evidence used to reconcile this uncertain correction.')
     with ws._lock:
         path=ws.home/'build-corrections'/(key+'.json');record=_read_json(path,{})
-        if record.get('state')!='uncertain':
-            raise WorkspaceError('Only an uncertain correction can be abandoned after review.')
+        if record.get('state') not in ('uncertain','started'):
+            raise WorkspaceError('Only a correction whose answer never arrived can be set aside.')
         _write_json(path,dict(record,state='abandoned',reconciled_by=by,reconciled_utc=_now(),
                               reconciliation_reason=reason[:2000]))
         ws.ledger.append('build.correction_reconciled',{'id':key,'state':'abandoned','by':by,
@@ -108,7 +110,8 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
         raise WorkspaceError('Choose a recorded admission refusal with structured feedback.')
     history=_corrections(ws,attempt_id)
     if any(row.get('state') in ('started','uncertain') for row in history):
-        raise PlannerUnavailable('An interrupted correction needs reconciliation before another call.')
+        raise PlannerUnavailable('The last correction’s answer has not arrived. Set it aside under Work & proposals '
+                                 '→ Drafts before asking again.')
     if len(history)>=MAX_CORRECTIONS:
         raise PlannerUnavailable('Two correction continuations were used; replan from the retained evidence.')
     answers=_answers(ws,attempt)
@@ -191,7 +194,9 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
             _write_json(receipt_path,dict(receipt,state='transport_failed',error=str(error)[:300],finished=_now()))
             raise PlannerUnavailable(why_no_answer(error)+' Nothing was used up: the correction can be asked again.') from error
         _write_json(receipt_path,dict(receipt,state='uncertain',error=str(error)[:300],finished=_now()))
-        raise PlannerUnavailable('Correction transport was uncertain; inspect its receipt before retrying.') from error
+        raise PlannerUnavailable('The correction’s answer did not arrive in time. Runesmith kept the request and '
+                                 'does not pay for it twice; under Work & proposals → Drafts you can set it aside '
+                                 'and ask again.') from error
     except Exception as error:
         _write_json(receipt_path,dict(receipt,state='uncertain',error=type(error).__name__+': '+str(error)[:300],finished=_now()))
         raise

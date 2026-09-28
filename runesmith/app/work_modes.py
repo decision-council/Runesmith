@@ -31,8 +31,11 @@ def configuration(ws):
                           or body.get('schema') not in {'runesmith.work-modes.v1', SCHEMA}
                           or not isinstance(body.get('modes'), list)):
         raise WorkspaceError('Work-mode configuration is unreadable; do not reset it automatically.')
+    # Until modes are saved, a round's own work shows as on; for someone who chose to just look, none of it is, so
+    # saving this page never switches on work they did not ask for (journey J5-F5).
+    looking = ws.settings().get('autonomy') == 'observe'
     body = body or {'schema': SCHEMA, 'infer_purpose': True, 'modes': [
-        _default_mode(k, k in {'map_plan', 'build', 'troubleshoot'}) for k in DESCRIPTIONS]}
+        _default_mode(k, not looking and k in {'map_plan', 'build', 'troubleshoot'}) for k in DESCRIPTIONS]}
     revision = digest(body)
     migrated = body['schema'] == 'runesmith.work-modes.v1'
     if migrated:

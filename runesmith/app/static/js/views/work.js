@@ -221,7 +221,17 @@ function drawDrafts(body, w, reload, ctx) {
     body.append(h('div.callout.warn.mt-8', icon('wrench'), h('div.grow',
       h('b', `An answer for ${c.path} could not be used`),
       h('div.small', String(c.error || 'It did not fit the files as they are.').replace(/^[A-Za-z]+(Unavailable|Error): /, '')),
-      h('div.tiny.muted', `The model can be asked to correct it, told exactly why it was refused (${c.remaining} of 2 corrections left). It cannot touch other files, and your checks still decide.`)),
+      // A correction whose answer never arrived blocks the next one; the owner can set it aside (journey J2-F18).
+      h('div.tiny.muted', c.late_correction ? 'The last correction’s answer did not arrive in time. Runesmith kept the request and does not pay for it twice, so it asks again only after you set that one aside.'
+        : `The model can be asked to correct it, told exactly why it was refused (${c.remaining} of 2 corrections left). It cannot touch other files, and your checks still decide.`)),
+      c.late_correction ? h('button.btn.sm', {onclick:(e)=>withBusy(e.currentTarget,async()=>{
+        const reason=await askText({title:'Set the late correction aside?',text:'If its answer arrives later, it is not used, and it counts as one of the two corrections. Say why, for the record.',
+          placeholder:'e.g. waited an hour and nothing arrived',confirm:'Set it aside',multiline:true});
+        if (reason===null) return;
+        if (!reason.trim()) { toast('Say why, for the record: nothing was changed.','warn'); return; }
+        await post(`/api/build/corrections/${c.late_correction}/set-aside`,{reason});
+        toast(c.remaining>1?'Set aside. You can ask for a correction again.':'Set aside. Both corrections are used; Goals & plan may offer smaller steps.','good',6000);
+      })},icon('x'),'Set it aside') :
       h('button.btn.sm', {disabled:!c.eligible, onclick:(e)=>withBusy(e.currentTarget,async()=>{
         const ok=await confirmDialog({title:'Ask the model to correct this answer?',
           text:'One model call, with the reason it was refused and the files as they are. It cannot add other files, and the project tests and your checks still decide.',confirm:'Run correction'});

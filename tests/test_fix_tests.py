@@ -115,6 +115,8 @@ def test_a_round_measures_a_project_the_repair_organ_cannot_serve_and_the_fix_is
     worker._job_round()
     assert offer(ws) is None                                            # not allowed to run the tests: no claim
     assert any("has not run" in line["text"] for line in worker.snapshot()["lines"])
+    # J6-F2: the round's summary said "nothing new", as if the tests had been run and nothing had changed.
+    assert list(ws.ledger.events("studio.round"))[-1]["data"]["outcome"] == "tests not run: running this project's tests is off"
     ws.update_settings({"probe_tests": True})
     worker._job_round()
     shown = offer(ws)

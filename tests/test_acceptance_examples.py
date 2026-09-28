@@ -7,6 +7,7 @@ however it words its output.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -454,3 +455,35 @@ def test_a_file_a_check_starts_with_is_shown_whole_to_the_owner_and_the_builder(
                                        "expect": {"shows": ["rect1"]}}]}]}
     shaped = validate_examples(answer, "A project file format read by node motion.mjs.")
     assert project in shaped["checks"][0]["exact"]
+
+
+NODE_MILESTONE = ("Project file: node motion.mjs FILE --at SECONDS reads a Runesmith Motion project and prints each "
+                  "object at that time; a file that is not a project is refused with an error message.")
+NODE_EXAMPLES = {"examples": [{"name": "not a project", "says": "A file that is not a project is refused with an error.",
+                               "files": [{"name": "bad.motion.json", "text": '{"not_a_project": true}'}],
+                               "steps": [{"run": ["node", "motion.mjs", "bad.motion.json", "--at", "0"],
+                                          "expect": {"exit": "error"}}]}]}
+READ = "import { readFileSync } from 'node:fs';\nconst project = JSON.parse(readFileSync(process.argv[2], 'utf8'));\n"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_a_node_program_that_crashes_does_not_pass_a_check_that_expects_an_error(tmp_path):
+    # Journey J11-G2: the checks promised "nothing stops with a Python crash report" for a program run by node. A missing
+    # motion.mjs (before the milestone) or an uncaught exception also ends with an error, so such a check passed before
+    # anything was built.
+    shaped = validate_examples(NODE_EXAMPLES, NODE_MILESTONE)
+    assert shaped["dropped"] == [] and "Python" not in shaped["checks"][0]["exact"]
+    programs = {"before": None,
+                "crashes": READ + "if (!project.version) throw new Error('not a project');\nconsole.log('ok');\n",
+                "refuses": READ + "if (!project.version) { console.error(process.argv[2] + ' is not a project'); process.exit(1); }\n"}
+    verdicts = {}
+    for name, source in programs.items():
+        stage = tmp_path / name / "project"
+        stage.mkdir(parents=True)
+        if source is not None:
+            (stage / "motion.mjs").write_text(source, encoding="utf-8")
+        checks = tmp_path / name / "acceptance.py"
+        checks.write_text(shaped["code"], encoding="utf-8")
+        verdicts[name] = _run_checks(stage, json.dumps([str(checks)]), tmp_path / name / "log.txt", timeout_s=240)
+    assert {n: v["ok"] for n, v in verdicts.items()} == {"before": False, "crashes": False, "refuses": True}, {
+        n: v.get("output", "")[-600:] for n, v in verdicts.items()}

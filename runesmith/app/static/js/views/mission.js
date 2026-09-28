@@ -77,7 +77,7 @@ export default async function render(root, ctx) {
     const modes=data.modes.map(({id,name,executor,enabled,instructions,measurement_ids})=>({id,name,executor,enabled,instructions,measurement_ids:[...measurement_ids]}));
     const modesCard=h('div.card');const rows=h('div.col.gap-16.mt-16');const dirtyLabel=h('p.tiny.faint','Saved configuration');
     const mark=()=>{dirty=true;dirtyLabel.textContent='Unsaved changes — save modes before running them.';runButtons.forEach(b=>b.disabled=true);};
-    const infer=h('input',{type:'checkbox',checked:data.infer_purpose,'aria-label':'Infer purpose without explicit direction',onchange:mark});
+    const infer=h('input',{type:'checkbox',checked:data.infer_purpose,'aria-label':'Let the Planner guess the purpose when you have not said it',onchange:mark});
     const drawMode=(mode)=>{
       const existing=data.modes.find(r=>r.id===mode.id);
       const checkbox=h('input',{type:'checkbox',checked:mode.enabled,'aria-label':`${mode.name} enabled`,onchange:e=>{mode.enabled=e.target.checked;mark();}});
@@ -110,9 +110,10 @@ export default async function render(root, ctx) {
           await post('/api/mission/modes',{revision:data.revision,modes,infer_purpose:infer.checked,reason:reason.value});dirty=false;await load();ctx.refreshState();toast('Modes saved; permissions and scheduling unchanged.','good');
         })},icon('check'),'Save modes')),
       ...(data.legacy_upgrade?[h('p.callout.warn','Older mode settings: Map & Plan and purpose inference start off. Saving upgrades the settings explicitly; no automatic new activity.')]:[]),
-      h('div.card.flat.mt-16',h('label.row',infer,h('b','Infer purpose without explicit direction')),
-        h('p.small.muted','When on, the planner may propose a purpose from the environment and label its assumptions. When off, planning needs an owner brief, goal or selected blueprint. Restrictions are always read. An existing plan can drive Build with Map & Plan off.'),
-        h('p.tiny.muted','Read-only map refresh remains available. Existing inferred plans keep their provenance; this switch does not adopt them or grant production authority.')),rows,
+      // Plain words for an owner, not a specification (journey J5-F7).
+      h('div.card.flat.mt-16',h('label.row',infer,h('b','Let the Planner guess the purpose when you have not said it')),
+        h('p.small.muted','When on, the Planner may suggest what this folder is for from what it finds, and says what it assumed. When off, it plans only from what you wrote: a brief, a goal or a document you chose. What you marked as off-limits is always respected. A plan you already have can still be built with Map & Plan off.'),
+        h('p.tiny.muted','Mapping the folder, which only reads, still works. A plan made from a guess stays marked as a guess; this switch does not adopt it or allow anything more.')),rows,
       h('div.row.mt-16',customName,executor,h('button.btn',{onclick:()=>{
         if(!customName.value.trim())return;
         const id='custom-'+Date.now().toString(36)+'-'+modes.length;

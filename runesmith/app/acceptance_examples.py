@@ -470,7 +470,7 @@ def exact(example) -> str:
         parts.append('every link between the Markdown pages leads to an existing file')
     if example.get('pages_reachable'):
         parts.append('every Markdown page can be reached by following links from the front page')
-    text = '; '.join(parts) + ('; and nothing stops with a Python crash report.' if example['steps'] else '.')
+    text = '; '.join(parts) + ('; and nothing stops with a crash report.' if example['steps'] else '.')
     return (text[:1].upper() + text[1:])[:900]
 
 
@@ -577,6 +577,7 @@ SKIP = {".git", ".runesmith", "__pycache__", ".pytest_cache"}
 WORK = "rs-example-"
 STEP_TIMEOUT = 30
 TRACEBACK = "Traceback (most recent call last)"
+NODE_VERSION = re.compile(r"Node\.js v\d+\.\d+\.\d+")
 PLACEHOLDER = re.compile(r"\b[A-Z]{2,}\b|YYYY|<[^>]*>|\.\.\.")
 NUMBER = re.compile(r"\d+(?:\.\d+)?")
 LINK = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+[\"'][^\"']*[\"'])?\s*\)")
@@ -692,8 +693,16 @@ def execute(case, argv, label, copy, env, stdin=""):
     return done.returncode, (done.stdout or "") + "\n" + (done.stderr or "")
 
 
+def node_crashed(output):
+    """An uncaught Node.js error: its stack ("    at ..."), then the runtime's version as the last line. A program
+    that reports an error on purpose prints neither (journey J11-G2)."""
+    lines = output.rstrip().splitlines()
+    return bool(lines) and NODE_VERSION.fullmatch(lines[-1].strip()) is not None and "\n    at " in output
+
+
 def check_output(case, label, expect, code, output, default_exit):
     case.assertNotIn(TRACEBACK, output, label + " stopped with a Python crash report:\n" + output[-1500:])
+    case.assertFalse(node_crashed(output), label + " stopped with an uncaught Node.js error:\n" + output[-1500:])
     wanted = expect.get("exit") or default_exit
     if wanted == "ok":
         case.assertEqual(code, 0, label + " did not finish normally:\n" + output[-1500:])

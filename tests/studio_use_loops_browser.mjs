@@ -450,7 +450,7 @@ try{
     const beforeWork=requests.filter(r=>r.path==='/api/worker/run').length;
     loops.push({id:'B3.01',case:'Inference-off empty state and planning blockers are visible',result:'passed',evidence:'Frontend fixture; no-call enforcement separately tested in Python.'});
 
-    await page.getByLabel('Infer purpose without explicit direction',{exact:true}).check();
+    await page.getByLabel('Let the Planner guess the purpose when you have not said it',{exact:true}).check();
     assert(await mapRun().isDisabled()); // Unsaved switch cannot dispatch.
     await page.getByLabel('Mode change reason').fill('B3 permit attributed inference');
     await page.getByRole('button',{name:'Save modes',exact:true}).click();
@@ -2199,6 +2199,29 @@ try{
     fixtureWork.proposals=oldProposals;
     loops.push({id:'B26.03',case:'A fix whose files changed since it was made says it no longer fits and offers no Apply',result:'passed'});
     loops.push({id:'B26.02',case:'A draft whose milestone a later draft finished is marked superseded, says so plainly and offers no write or recheck',result:'passed'});
+    // B26.04 (journey J2-F18): a correction whose answer never arrived offers to set it aside, not a call that must fail
+    const oldCorrections=fixtureWork.build_corrections;
+    fixtureWork.build_corrections=[{attempt:'a1',path:'readinglog/cli.py',error:'Exact edit refused',remaining:1,corrections:1,eligible:false,late_correction:'c0123456789ab'}];
+    await page.evaluate(async()=>{window.cleanup?.();document.querySelector('#page').replaceChildren();
+      const module=await import('/static/js/views/work.js');
+      window.cleanup=await module.default(document.querySelector('#page'),{sub:['drafts'],app:{state:{proposals:{waiting:0},drafts:{}}},navigate(){}});});
+    const late=page.locator('#page .callout',{hasText:'readinglog/cli.py'}).first();
+    await late.waitFor();
+    assert((await late.innerText()).includes('did not arrive in time'));
+    assert.equal(await late.getByRole('button',{name:'Correct retained answer',exact:true}).count(),0);
+    const asideStart=requests.length;
+    await late.getByRole('button',{name:'Set it aside',exact:true}).click();
+    await page.getByRole('button',{name:'Set it aside',exact:true}).last().click();          // blank reason: nothing sent
+    await page.waitForTimeout(150);
+    assert.equal(requests.slice(asideStart).filter(r=>r.method==='POST').length,0);
+    await late.getByRole('button',{name:'Set it aside',exact:true}).click();
+    await page.locator('.modal textarea').fill('waited an hour and nothing arrived');
+    await page.getByRole('button',{name:'Set it aside',exact:true}).last().click();
+    await page.waitForTimeout(200);
+    const aside=requests.slice(asideStart).filter(r=>r.method==='POST');
+    assert.deepEqual(aside.map(r=>[r.path,r.body.reason]),[['/api/build/corrections/c0123456789ab/set-aside','waited an hour and nothing arrived']]);
+    fixtureWork.build_corrections=oldCorrections;
+    loops.push({id:'B26.04',case:'A correction whose answer never arrived offers “Set it aside” with a reason, not a call that must fail',result:'passed'});
     fixtureWork.drafts=oldDrafts;
   }
   assert.deepEqual(errors,[]);

@@ -830,7 +830,11 @@ class Worker:
             else:
                 self.say(f"No tests ran in {obj['name']}: Runesmith looks for them in a tests/ folder.")
         if not organ_objects:
-            return self._finish_round([], statuses, {}, "tests fail: fix offered" if fix_offered else "nothing new")
+            # Not "nothing new" when the tests were not run at all (journey J6-F2).
+            unmeasured = any(status.startswith("not measured") for status in statuses.values())
+            return self._finish_round([], statuses, {}, "tests fail: fix offered" if fix_offered
+                                      else "tests not run: running this project's tests is off" if unmeasured
+                                      else "nothing new")
         ready = ws.ready()
         if not ready["repair"]:
             self.say("No Worker model is set up, so Runesmith can map but not repair. Add one under Thinking power.", "warn")

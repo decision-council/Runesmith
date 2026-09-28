@@ -721,6 +721,18 @@ def api_activate(s: Studio, q, body, generation_id):
     return result
 
 
+@route("POST", r"/api/build/corrections/(c[a-z0-9]+)/set-aside")
+def api_set_aside_correction(s: Studio, q, body, key):
+    """The owner sets aside a correction whose answer never arrived, so another can be asked (journey J2-F18)."""
+    from runesmith.app.build_corrections import abandon_uncertain_correction
+    running = s.worker.current
+    if running and running.get("kind") == "correct":
+        raise WorkspaceError("A correction is running now; wait for it to finish.")
+    result = abandon_uncertain_correction(_ws(s), key, str((body or {}).get("reason") or ""))
+    s.bus.publish("work", {"correction_set_aside": key})
+    return result
+
+
 @route("GET", r"/api/notes")
 def api_notes(s: Studio, q, body):
     ws = _ws(s)

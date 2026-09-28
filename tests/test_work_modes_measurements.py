@@ -401,3 +401,13 @@ def test_measuring_says_the_number_in_plain_words(ws):
     definition(ws, id='share', name='Share sold', source_kind='csv', path='reports/week-*.csv', aggregation='ratio',
                field='sold', denominator_field='baked')
     assert Worker(ws, EventBus())._job_measure('share')['summary'].startswith('Share sold: 85.0% from')   # not 0.85
+
+
+def test_saving_modes_after_choosing_to_just_look_switches_no_work_on(tmp_path):
+    # Journey J5-F5: the bakery owner chose "Just explore" and turned on Operations; saving the page also made Map &
+    # Plan, Build and Troubleshoot explicitly on, because the unsaved page showed them on.
+    ws = Workspace(tmp_path)
+    ws.update_settings({'autonomy': 'observe'})
+    assert not any(row['enabled'] for row in modes.configuration(ws)['modes'])
+    ws.update_settings({'autonomy': 'propose'})
+    assert {row['id'] for row in modes.configuration(ws)['modes'] if row['enabled']} == {'map_plan', 'build', 'troubleshoot'}

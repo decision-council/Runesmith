@@ -104,7 +104,21 @@ def test_a_correction_no_route_accepted_spends_nothing_and_blocks_nothing(tmp_pa
     [row] = [json.loads(p.read_text()) for p in (ws.home / 'build-corrections').glob('*.json')]
     candidate = next(c for c in correction_candidates(ws) if c['attempt'] == attempt_id)
     if unresolved:                                     # an answer may exist remotely: reconcile before another call
-        assert row['state'] == 'uncertain' and 'uncertain' in str(failure.value) and candidate['remaining'] == MAX_CORRECTIONS - 1
+        assert row['state'] == 'uncertain' and 'did not arrive' in str(failure.value) and candidate['remaining'] == MAX_CORRECTIONS - 1
+        # J2-F18: the page offered "Correct retained answer", which could only fail; now it offers to set it aside.
+        assert not candidate['eligible'] and candidate['late_correction'] == row['id']
+        from types import SimpleNamespace
+        from runesmith.app.server import api_set_aside_correction
+        from runesmith.app.worker import EventBus
+        studio = SimpleNamespace(ws=ws, bus=EventBus(), worker=SimpleNamespace(current={'kind': 'correct'}))
+        with pytest.raises(WorkspaceError, match='running now'):
+            api_set_aside_correction(studio, {}, {'reason': 'waited'}, row['id'])
+        studio.worker.current = None
+        with pytest.raises(WorkspaceError, match='Record the evidence'):
+            api_set_aside_correction(studio, {}, {'reason': ' '}, row['id'])
+        assert api_set_aside_correction(studio, {}, {'reason': 'waited an hour'}, row['id'])['state'] == 'abandoned'
+        candidate = next(c for c in correction_candidates(ws) if c['attempt'] == attempt_id)
+        assert candidate['eligible'] and candidate['late_correction'] is None and candidate['remaining'] == MAX_CORRECTIONS - 1
     else:
         assert row['state'] == 'transport_failed' and 'Nothing was used up' in str(failure.value)
         assert candidate['remaining'] == MAX_CORRECTIONS and candidate['eligible']
