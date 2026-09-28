@@ -602,3 +602,16 @@ def test_file_checks_inside_a_step_and_too_many_texts_are_forgiven():
     assert any("1 more texts to find in out.svg" in d for d in shaped["dropped"])
     assert any("does not contain some text" in d for d in shaped["dropped"])
     assert answer["examples"][0]["steps"][0]["expect"]["exists"] == ["out.svg"]          # the answer itself is kept
+
+
+def test_texts_that_follow_from_the_milestone_and_the_input_are_kept():
+    # Journey J11-G8: every expected SVG text ("<svg", "<rect", 'x="10"') was dropped as wording the milestone does not
+    # state, so the frame's content was not checked at all.
+    project = '{"project": {"width": 100}, "timeline": [{"time": 0, "elements": [{"id": "a", "type": "rect", "x": 10, "color": "red"}]}]}'
+    answer = {"examples": [{"name": "frame", "says": "The frame is an SVG with the rectangle where it is.",
+                            "files": [{"name": "p.motion.json", "text": project}],
+                            "steps": [{"run": ["node", "motion.mjs", "p.motion.json", "--at", "0", "--svg", "out.svg"]}],
+                            "contains": [{"name": "out.svg", "texts": ["<svg", "<rect", 'x="10"', 'fill="red"']}]}]}
+    shaped = validate_examples(answer, "Frames: node motion.mjs FILE --at SECONDS --svg OUT.svg writes an SVG file.")
+    assert shaped["examples"][0]["contains"] == [{"name": "out.svg", "texts": ["<svg", "<rect", 'x="10"', "red"]}]
+    assert any('fill="red"' in d and "checked instead" in d for d in shaped["dropped"])   # the input's word, not its layout

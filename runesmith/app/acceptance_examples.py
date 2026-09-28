@@ -329,8 +329,19 @@ def _ground(example, milestone_text, source_text):
     known = milestone_text.lower() + ' ' + inputs
     changed = []
 
+    def plain(value):
+        return ' ' + ' '.join(re.findall(r'[a-z0-9]+', value.lower())) + ' '
+
+    known_words = plain(known)
+
     def grounded(text, extra=''):
-        return text.lower() in known or bool(extra and text.lower() in extra)
+        if text.lower() in known or bool(extra and text.lower() in extra):
+            return True
+        # The same words in the same order, ignoring punctuation and spacing: "<svg" follows from a milestone that says
+        # SVG, and 'x="10"' from an input with "x": 10. A guessed layout ("Added Tea", "No books") still does not
+        # (journey J11-G8: every expected SVG text was dropped).
+        words = plain(text)
+        return words.strip() != '' and (words in known_words or bool(extra and words in plain(extra)))
 
     for step in example['steps']:
         expect = step.get('expect')
