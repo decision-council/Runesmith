@@ -13,7 +13,7 @@ Written 2026-09-27, after out-of-box journey R1 (`D:/oob/JOURNEY_LOG.md`). The o
 | Layer 1: every triple, real scenarios | **Done, first run (2026-09-28).** `tests/switch_sweep/sweep.py`: 45 rows, 45 hold every rule; see [journeys/LAYER1_SWEEP.md](journeys/LAYER1_SWEEP.md). Rerun before each release. |
 | Local servers and gateways (section 7) | **Docs-conformant (LS1).** Stand-ins in `tests/local_standins.py`; research in `journeys/local_servers_research_2026-09-27.json`. |
 | Prerequisites | R1 Phase B passed; G2 (Try it) and F4 (plain wording) done; removing the gate and J0 remain. |
-| Live journeys J1–J11 | Next. |
+| Live journeys J1–J11 | Under way. Logs in `D:/oob/journeys/Jn/LOG.md`.<br>**J1 PASS** (2026-09-28, 0 rescues): no key at all; an empty folder → a working stock tool tried by the owner. Found G1, G2, F1-F7.<br>**J3 PASS**: fix my failing tests.<br>**J4 PASS** (2026-09-28, 0 rescues): a documents-only folder, just look → tended with no key. Found B1-B3, G1-G3, F1-F18.<br>**J7 PASS** (10/10): a hostile environment.<br>Next: J2, J5, J6, J8, J9, J10, then J11 (the creative tool, released as the first thing made with Runesmith) and J0. |
 
 ## 1. Where we start
 
