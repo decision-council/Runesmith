@@ -472,3 +472,36 @@ def test_the_whole_folder_can_be_allowed_for_a_new_project(tmp_path):
         ws.update_settings({'build_paths':['../elsewhere']})
     result=build_step(ws,ws.router())
     assert result['advanced'] and (tmp_path/'app.py').is_file() and (tmp_path/'tests'/'test_app.py').is_file()
+
+
+
+@pytest.mark.parametrize('spent', [0, 40])
+def test_a_try_no_model_answered_uses_up_nothing(tmp_path, spent):
+    # Journey J2-B9: with every free route at capacity ("nvidia capacity reached"), each round's call failed with zero
+    # tokens, yet counted as one of the three tries, and the one more try was burned the same way.
+    from runesmith.instruments import TransportCensored
+    ws = setup(tmp_path, acceptance=True); enable(ws)
+
+    class AtCapacity:
+        def __init__(self, used=spent):
+            self.used = used
+
+        def call(self, *args, **kwargs):
+            raise TransportCensored('nvidia capacity reached; no alternative route available',
+                                    receipt={'unresolved': False, 'tokens_in': 0, 'tokens_out': self.used, 'job_id': 'mj_x'})
+    for _ in range(3):
+        with pytest.raises(Exception):
+            build_step(ws, AtCapacity())
+    states = sorted(json.loads(p.read_text())['state'] for p in (ws.home / 'build-attempts').glob('*.json'))
+    if spent:                                              # a model generated: those tries count
+        assert states == ['failed'] * 3 and build_escalation_status(ws)['eligible']
+        with pytest.raises(Exception):
+            escalate_build(ws, AtCapacity(used=0))           # no model answered: the one more try is still there
+        assert build_escalation_status(ws)['eligible']
+        with pytest.raises(Exception):
+            escalate_build(ws, AtCapacity())
+        assert not build_escalation_status(ws)['eligible']
+    else:
+        assert states == ['transport_failed'] * 3
+        state = build_escalation_status(ws)
+        assert not state['eligible'] and state['allowance']['remaining'] == 3        # all three tries are still there

@@ -342,6 +342,21 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
     return text
 
 
+def nothing_ran(error) -> bool:
+    """True when a call ended with no answer pending and no model used a token: refused at submission, turned away
+    by every route, or failed at capacity before generating. Such a call uses up no try (journey J2-B9: free
+    models at capacity burned the three tries and the one more try without a model ever answering)."""
+    remote = getattr(error, 'remote_receipt', None)
+    if not isinstance(remote, dict) or not remote or remote.get('unresolved'):
+        return False
+    if remote.get('not_admitted') or remote.get('no_route_accepted'):
+        return True
+    try:
+        return int(remote.get('tokens_in') or 0) == 0 and int(remote.get('tokens_out') or 0) == 0
+    except (TypeError, ValueError):
+        return False
+
+
 def why_no_answer(error) -> str:
     """Why a model call brought no answer, in plain words and with what to try; the gateway's words follow, short (F15)."""
     raw = str(error)

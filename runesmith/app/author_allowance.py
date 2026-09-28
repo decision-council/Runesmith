@@ -67,6 +67,8 @@ def _records(ws, folder):
                 raise ValueError('Missing allocation identity')
         except (OSError, ValueError, RecursionError):
             raise WorkspaceError(f'Damaged author allowance receipt {folder}/{path.name}; reconcile it first.') from None
+        if row.get('state') == 'transport_failed':
+            continue                    # no model answered: nothing used up, nothing to reconcile (J2-B9)
         states = {'answered', 'failed', 'recovered'} if folder == 'build-escalations' else {'answered', 'failed'}
         if row.get('state') not in states:
             raise WorkspaceError(f'Unresolved author allowance receipt {folder}/{path.name}; reconcile it before another call.')

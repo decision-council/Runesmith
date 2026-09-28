@@ -440,7 +440,9 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False):
     except Exception as error:
         if not pending:
             remote=getattr(error,'remote_receipt',{})
-            _write_json(attempt_path,dict(attempt,state='uncertain' if remote.get('unresolved') else 'failed',
+            from runesmith.app.planner import nothing_ran
+            state='uncertain' if remote.get('unresolved') else 'transport_failed' if nothing_ran(error) else 'failed'
+            _write_json(attempt_path,dict(attempt,state=state,
                                          remote_receipt=remote,error=type(error).__name__+': '+str(error)[:300],
                                          feedback=getattr(error,'feedback',None),finished=_now()))
             ws.ledger.append('build.authoring_refused',{'milestone':milestone['id'],'error':str(error)[:300],
@@ -530,8 +532,11 @@ def escalate_build(ws,router,*,checkpoint=lambda:None):
     try:
         draft=draft_files(ws,router,milestone['id'])
     except Exception as error:
-        _write_json(path,dict(receipt,state='failed',finished=_now(),error=type(error).__name__+': '+str(error)[:300],
-                              feedback=getattr(error,'feedback',None)))
+        from runesmith.app.planner import nothing_ran
+        # No model answered: the one more try is not used up (journey J2-B9).
+        _write_json(path,dict(receipt,state='transport_failed' if nothing_ran(error) else 'failed',finished=_now(),
+                              error=type(error).__name__+': '+str(error)[:300],feedback=getattr(error,'feedback',None),
+                              remote_receipt=getattr(error,'remote_receipt',None)))
         ws.ledger.append('build.escalation_failed',{'id':key,'milestone':milestone['id'],'error':str(error)[:300]})
         raise
     _write_json(path,dict(receipt,state='answered',finished=_now(),draft=draft['id'],
