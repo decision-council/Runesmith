@@ -24,7 +24,10 @@
   --accent-soft: rgba(255, 122, 48, .12); --accent-line: rgba(255, 106, 32, .45); --rune-soft: rgba(13, 170, 158, .1);
   --shadow: 0 10px 30px rgba(20, 30, 60, .10), 0 2px 6px rgba(20, 30, 60, .06); --shadow-sm: 0 1px 2px rgba(20, 30, 60, .08);
   --glass: rgba(255, 255, 255, .78); --rune: #0fb5a8; --violet: #6d4df2;
+  /* Status colours dark enough to read on a light page: 4.5:1 or more (journey J9-F6; they were 1.9-3.5:1). */
+  --good: #15803d; --warn: #b45309; --bad: #c62828;
 }
+:root[data-theme="light"] a { color: #c2410c; }   /* links: 4.8:1 or more (the ember accent was 2.4:1) */
 
 * { box-sizing: border-box; }
 svg.ic { width: 16px; height: 16px; flex: none; vertical-align: -3px; }
@@ -420,7 +423,9 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
 
 /* ---------------------------------------------------------- activity feed -- */
 .feed { display: flex; flex-direction: column; }
-.feed .ev { display: grid; grid-template-columns: 92px 22px 1fr; gap: 10px; padding: 8px 4px; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.feed .ev { display: grid; grid-template-columns: 92px 22px minmax(0, 1fr); gap: 10px; padding: 8px 4px; border-bottom: 1px dashed var(--line); font-size: 13px; }
+/* Raw event data has no spaces to break at; on a phone it must still wrap (journey J9-F2). */
+.feed .ev > div { min-width: 0; overflow-wrap: anywhere; }
 .feed .ev time { color: var(--text-3); font-size: 12px; font-family: var(--mono); padding-top: 1px; }
 .feed .ev .dot { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--bg-3); color: var(--text-2); }
 .feed .ev .dot svg { width: 13px; height: 13px; }
@@ -540,3 +545,11 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
   .map-tools { right: 14px; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
+
+/* Journey J9 (phone width): a button never grows wider than its container and may wrap on a small screen, and a
+   card may shrink inside a column, so no page is pushed sideways. */
+.btn { max-width: 100%; }
+.col > .card, .grid > * { min-width: 0; }
+@media (max-width: 640px) { .btn { white-space: normal; text-align: left; } }
+/* Paths, digests and commands in monospace have no spaces to break at; on a phone they wrap anywhere (J9). */
+.mono { overflow-wrap: anywhere; }

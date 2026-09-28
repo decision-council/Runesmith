@@ -282,6 +282,9 @@ def _permanent(status: int, message: str) -> str | None:
                 "Give this role a model with a larger window.")
     if status == 404 or "model_not_found" in low or "does not exist" in low:
         return "The service does not know this model or address. Check the model's exact name in its model list."
+    if status in (401, 403) or "invalid_api_key" in low or "invalid api key" in low:     # journey J8-F3
+        return (f"The service refused the key ({status}). Check it, or paste it again, under Thinking power; a retry "
+                "with the same key cannot help.")
     return None
 
 

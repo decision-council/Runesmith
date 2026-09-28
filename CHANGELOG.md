@@ -24,6 +24,38 @@
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **Journey J8 (every way to connect a model):** a fresh profile, with docs-conformant stand-ins on the real default ports (Ollama 11434, LM Studio 1234, llama.cpp 8080) and a key-checking OpenAI-compatible endpoint.
+  - **A wrong key is said plainly and is not retried (J8-F3).** The test showed `http_401 {"message": "Invalid API Key", …}` as a transport error, which the router would retry with the same key. A 401 or 403 is now a configuration error, sent once: "The service refused the key (401). Check it, or paste it again, under Thinking power; a retry with the same key cannot help." The test uses a key file with a typo, then the corrected file, so a key read from the owner's own file is covered too.
+  - Seen working:
+    - Thinking power discovered all three local servers, each with "Use it";
+    - the Ollama preset form, "List models" and "Save and test" ("answered with usable JSON in 0.02 s");
+    - a model not yet downloaded names the `ollama pull` command;
+    - a stopped server names the app to open.
+- **Journey J10 (a terminal user, every CLI command):** a fresh folder, a fresh profile and a Python without pytest, then the chat relay by hand.
+  - **No more tracebacks at the terminal.** `python -m runesmith` now answers any unexpected error with one plain line ("Runesmith stopped: …") and points to `runesmith doctor`; `RUNESMITH_DEBUG=1` shows the details. `generations verify` without an id crashed that way (J10-B1); it now verifies every generation.
+  - **The demo no longer shows nothing (J10-B2).** In a fresh Python, `runesmith demo` found "0 repair opportunities" and "accepted 0 of 0 repairs" without saying why: its small project's tests need pytest. It now says so, how to install it, and that the Studio works without it.
+  - Plain words:
+    - `discover` says "the tests could not run", and why, instead of "error_without_failures" (J10-F1);
+    - `status` before `init` says there is no home yet, instead of printing a default setup (J10-F2);
+    - `init` says where to choose a model, including the keyless chat window (J10-F3);
+    - a successful repair without `--apply` says it was not written (J10-F4).
+  - Seen working: a repair through the chat relay at the terminal (`manual list`, `show`, `answer --file`). Strict success, in 2 calls.
+- **Journey J9 (keyboard only, screen-reader names, phone size, light and dark):** a scripted audit of all 20 Studio pages and sub-tabs, then keyboard-only checks by hand.
+  - **The command palette pressed the wrong button (J9-B1).** "Go to Notes" + Enter opened Goals & plan: closing the palette returned the focus to the button pressed before, and the same Enter then pressed it too. Enter and Escape in the palette are now consumed.
+  - **Nothing scrolls sideways on a phone (J9-F2 to F5).** At 390 px, four pages were wider than the screen:
+    - the Activity ledger, by 601 px: raw event data has no spaces to break at;
+    - Settings → Folder & data (long folder paths) and Health (a long button label);
+    - Thinking power, by 9 px.
+
+    Ledger rows and monospace text (paths, digests, commands) now wrap anywhere; buttons never grow wider than their container and may wrap on small screens; cards may shrink inside columns. All 20 pages now fit at 390 px.
+  - **Light theme status colours are readable (J9-F6).** Green, amber, red and link text measured 1.9-3.5:1 on the light background; they now reach 4.6-5.6:1 (WCAG AA). `tests/test_theme_contrast.py` computes every text and status colour of both themes from the stylesheet, so a later tweak cannot fall below 4.5:1.
+  - **Every field has a name for screen readers (J9-F1):** the goal, allowed paths, workspace name and number fields.
+  - Checked and fine:
+    - no unnamed buttons or links, no positive tab orders, and a heading on every page;
+    - "Skip to the page" is the first Tab stop and works;
+    - the palette uses a labelled combobox and listbox;
+    - comment mode by keyboard (C, Escape) works;
+    - there is a visible focus ring everywhere.
 - **Journey J1 (no key at all, an empty folder):**
   - **Try it found no commands in the plan (J1-G1).** The plan wrote its commands in single quotes mid-sentence ("A command 'python -m stockbook list' shows every item…"). Each match ran on to the end of the line, and its quotes then failed to parse, so the Overview offered nothing to try. A command inside matching quotes now ends at its closing quote, and suggestions keep their order in the text. Mira's plan now offers 8 commands, 3 of them marked as having placeholders.
   - **The Overview speaks to a first-time owner (J1-F1, F2).** After the introduction, an empty folder said "Runesmith has a saved map of your folder… review the modes and prerequisites". It now reads "An empty folder: a clean start for Mira's stock book. To plan and build, it needs thinking power…". A folder that hasn't been mapped still never claims a map.

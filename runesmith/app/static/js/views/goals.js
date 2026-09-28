@@ -122,7 +122,7 @@ export default async function render(root, ctx) {
   const goalsCard = h('div.card');
   const drawGoals = async () => {
     const goals = await get('/api/goals');
-    const input = h('input.input', { placeholder: 'A goal, e.g. “Every test passes” or “Launch the booking page by Friday”' });
+    const input = h('input.input', { 'aria-label': 'New goal', placeholder: 'A goal, e.g. “Every test passes” or “Launch the booking page by Friday”' });
     const add = h('button.btn.primary', icon('plus'), 'Add');
     const submit = () => withBusy(add, async () => { if (!input.value.trim()) return; await post('/api/goals', { text: input.value }); input.value = ''; drawGoals(); });
     add.addEventListener('click', submit);
@@ -412,7 +412,7 @@ export default async function render(root, ctx) {
     const [settings, build] = await Promise.all([get('/api/settings'), get('/api/build')]);
     const checks = h('input', {type:'checkbox', checked:settings.build_steps});
     const apply = h('input', {type:'checkbox', checked:build.apply});
-    const paths = h('input.input.mono', {value:(settings.build_paths || []).join(', '), placeholder:'for example: src, tests, docs'});
+    const paths = h('input.input.mono', {value:(settings.build_paths || []).join(', '), 'aria-label':'Allowed files or folders', placeholder:'for example: src, tests, docs'});
     const save = h('button.btn', {onclick: () => withBusy(save, async () => {
       if (apply.checked && !build.apply && !(await confirmDialog({title:'Apply checked drafts automatically in this folder?',
         text:'Runesmith may then write only the files and folders listed below, and only when a draft passes both its own tests and your acceptance checks for the milestone. You can turn this off here at any time; backups and Undo stay available.',confirm:'Allow automatic apply'}))) return;

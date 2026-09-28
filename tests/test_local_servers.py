@@ -134,3 +134,22 @@ def test_presets_follow_the_research():
     assert PRESET_BY_ID["groq"]["max_request_tokens"] == 8000
     for local in ("lmstudio", "llamacpp"):
         assert "context" in PRESET_BY_ID[local]["setup"].lower()
+
+
+def test_a_refused_key_fails_at_once_in_plain_words_and_is_not_retried(tmp_path):
+    # Journey J8-F3: a wrong key was reported as "http_401 {...}", a transport error the router would retry.
+    from local_standins import KeyedEndpoint
+    from runesmith.app.providers import test_instrument
+    keys = tmp_path / "keys.env"                                   # a key read from the owner's own file (J8)
+    keys.write_text("HOSTED_KEY=the-rigth-test-key\n", encoding="utf-8")      # a typo
+    with KeyedEndpoint() as server:
+        spec = {"kind": "openai", "base_url": server.root + "/v1", "model": "free-model-small",
+                "api_key_env_file": str(keys), "api_key_key": "HOSTED_KEY"}
+        outcome = routed(build_instrument("hosted", spec)).call("plan", prompt="p", system="s", schema=SCHEMA,
+                                                               max_tokens=100, key="k")
+        assert not outcome.ok and outcome.error_kind == "config" and "refused the key" in outcome.error
+        assert len([r for r in server.requests if r[0] == "POST"]) == 1
+        result = test_instrument("hosted", spec, tmp_path)
+        assert not result["ok"] and result["detail"].startswith("The service refused the key (401)")
+        keys.write_text("HOSTED_KEY=the-right-test-key\n", encoding="utf-8")      # corrected in the file
+        assert test_instrument("hosted", spec, tmp_path)["ok"]

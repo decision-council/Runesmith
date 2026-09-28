@@ -350,10 +350,12 @@ function openPalette() {
   wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
   input.addEventListener('input', () => { sel = 0; draw(); });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') close();
+    // Enter and Escape are consumed: closing hands the focus back to the opener, and the same key must not then
+    // press that button too (journey J9-B1: "Go to Notes" + Enter opened Goals & plan through the focused button).
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
     else if (e.key === 'ArrowDown') { sel = Math.min(sel + 1, shown.length - 1); draw(); e.preventDefault(); }
     else if (e.key === 'ArrowUp') { sel = Math.max(sel - 1, 0); draw(); e.preventDefault(); }
-    else if (e.key === 'Enter' && shown[sel]) { close(); shown[sel].run(); }
+    else if (e.key === 'Enter' && shown[sel]) { e.preventDefault(); close(); shown[sel].run(); }
   });
   document.body.append(scrim, wrap);
   draw();

@@ -75,10 +75,16 @@ def cmd_init(args) -> None:
     from runesmith.home import init_home
     result = init_home(home_dir(args.home))
     print(f"home: {result['home']}\nactive generation: {result['active_generation']}\nconfig: {result['config']}")
+    # Journey J10-F3: say where a model is chosen, including the keyless chat window.
+    print('next: choose a model for the repair and kaizen roles in that file. Its "examples" section has ready ones, '
+          "including chat_by_hand (a chat window you relay to, no key needed). Or open the Studio: `runesmith up`.")
 
 
 def cmd_status(args) -> None:
     home = home_dir(args.home)
+    if not (home / "runesmith.json").is_file():      # journey J10-F2: it printed a default setup as if one existed
+        raise SystemExit(f"No Runesmith home here yet ({home}). Run `runesmith init`, "
+                         "or open the Studio with `runesmith up`.")
     config = load_config(home)
     report = {"version": __version__, "home": str(home), "active_generation": generations.active(home),
               "generations": [g["id"] for g in generations.list_generations(home)],
@@ -137,6 +143,9 @@ def cmd_repair(args) -> None:
     print(json.dumps({k: record.get(k) for k in ("status", "strict_success", "model_calls", "public_runs", "cycle_seconds")}))
     if args.apply and not record.get("strict_success"):
         print("not applied: the judge did not pass")
+    elif not args.apply and record.get("strict_success"):          # journey J10-F4
+        print("not written: the fix above passed the held-out judge. Run the repair again with --apply to write "
+              "such a fix into your files (it asks the model again).")
 
 
 def cmd_discover(args) -> None:
@@ -150,8 +159,18 @@ def cmd_discover(args) -> None:
     path.write_text(json.dumps(known, indent=1) + "\n", encoding="utf-8")
     _ledger(home).append("objects.discovered", {"repo": found["repo"], "status": found["status"],
                                                 "opportunities": len(found["opportunities"])})
-    print(f"{found['repo']}: {found['status']}, {len(found['opportunities'])} repair opportunities "
+    # The status in plain words, and why the tests could not run (journey J10-F1: "error_without_failures").
+    words = {"green": "all tests pass", "failing": "some tests fail", "error_without_failures": "the tests could not run",
+             "timed_out": "the tests did not finish in time"}.get(found["status"], found["status"])
+    print(f"{found['repo']}: {words}, {len(found['opportunities'])} repair opportunities "
           f"(saved to {path}; run with `repair --opportunity <index>`)")
+    if found["status"] == "error_without_failures":
+        import importlib.util
+        why = (found.get("detail") or "the test run printed no failure")
+        if importlib.util.find_spec("pytest") is None:
+            why = ("pytest is not installed for this Python: `python -m pip install pytest`, or open the Studio "
+                   "(`runesmith up`), which runs unittest tests without it")
+        print(f"  Why: {why}")
     for index, opportunity in enumerate(known[-len(found['opportunities']):] if found["opportunities"] else [],
                                         start=len(known) - len(found["opportunities"])):
         note = f"  (skipped: {opportunity['triage']['reason']})" if opportunity.get("triage") else ""
@@ -209,7 +228,15 @@ def cmd_doctor(args) -> None:
     print(f"{problems} problem(s)" if problems else "all checks passed")
 
 
+PYTEST_FOR_DEMO = ("The demo repairs a small project whose tests run with pytest, which is not installed for this Python.\n"
+                   "Install it with:  python -m pip install pytest\n"
+                   "Or open the Studio (`runesmith up`): it plans, builds, checks and tries projects without pytest.")
+
+
 def cmd_demo(args) -> None:
+    import importlib.util
+    if importlib.util.find_spec("pytest") is None:          # journey J10-B2: the demo showed "0 of 0 repairs", silently
+        raise SystemExit(PYTEST_FOR_DEMO)
     cmd_init(args)
     if args.kaizen:
         from runesmith.demo_kaizen import run_kaizen_demo
@@ -354,7 +381,16 @@ def cmd_generations(args) -> None:
             marker = "*" if g["id"] == generations.active(home) else " "
             print(f"{marker} {g['id']}  parent={g.get('parent')}  {g['label']}  {g['frozen_utc']}")
     elif args.action == "verify":
-        print(json.dumps(generations.verify(home / "generations" / args.id), indent=1))
+        # Without an id, every generation is verified (journey J10-B1: it crashed with a traceback).
+        if args.id:
+            print(json.dumps(generations.verify(home / "generations" / args.id), indent=1))
+        else:
+            ids = [g["id"] for g in generations.list_generations(home)]
+            if not ids:
+                raise SystemExit("No generations yet. Run `runesmith init` first.")
+            print(json.dumps({gid: generations.verify(home / "generations" / gid) for gid in ids}, indent=1))
+    elif args.action in ("activate", "requalify") and not args.id:
+        raise SystemExit(f"generations {args.action} needs a generation id; `runesmith generations list` shows them.")
     elif args.action == "activate":
         previous = generations.active(home)
         generations.activate(home, args.id, expected=args.expected)

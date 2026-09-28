@@ -221,3 +221,23 @@ class OverflowWordings(StandIn):
 
     def post(self, path, body, headers):
         return self.WORDINGS[self.family]
+
+
+class KeyedEndpoint(StandIn):
+    """A hosted OpenAI-compatible provider: 401 with its own words for a wrong key, answers for the right one."""
+
+    def __init__(self, key="the-right-test-key"):
+        super().__init__()
+        self.key = key
+
+    def get(self, path):
+        if path.endswith("/models"):
+            return 200, {"object": "list", "data": [{"id": "free-model-small", "object": "model"}]}
+        return 404, {"error": "not found"}
+
+    def post(self, path, body, headers):
+        if headers.get("Authorization") != f"Bearer {self.key}":
+            return 401, {"error": {"message": "Invalid API Key", "type": "invalid_request_error", "code": "invalid_api_key"}}
+        if path.endswith("/chat/completions"):
+            return 200, self.completion(body)
+        return 404, {"error": "not found"}

@@ -27,7 +27,7 @@ async function behaviour(body, ctx) {
     onclick: async (e) => { const chosen = e.currentTarget; await save({ [key]: v });
       for (const b of chosen.parentNode.children) { b.classList.toggle('on', b === chosen); b.setAttribute('aria-pressed', String(b === chosen)); } } },
     ic ? icon(ic) : null, l)));
-  const name = h('input.input', { value: s.workspace_name, style: { maxWidth: '320px' } });
+  const name = h('input.input', { value: s.workspace_name, 'aria-label': 'Name of this workspace', style: { maxWidth: '320px' } });
   name.addEventListener('change', () => save({ workspace_name: name.value }));
   const interval = h('select.select', { style: { width: '180px' }, onchange: () => save({ interval_minutes: Number(interval.value) }) },
     [[5, 'every 5 minutes'], [15, 'every 15 minutes'], [30, 'every 30 minutes'], [60, 'every hour'], [180, 'every 3 hours'], [720, 'twice a day'], [1440, 'once a day']]
@@ -39,7 +39,7 @@ async function behaviour(body, ctx) {
     exclude.has(n) ? exclude.delete(n) : exclude.add(n); e.currentTarget.classList.toggle('on'); e.currentTarget.setAttribute('aria-pressed', String(exclude.has(n))); await save({ exclude: [...exclude] }, exclude.has(n) ? `${n} will never be touched` : `${n} is included`);
     post('/api/worker/run', { job: 'map' }); } }, exclude.has(n) ? icon('lock') : null, n)) : h('span.small.faint', 'No sub-folders mapped yet.'));
   const num = (key, label, text, min, max) => {
-    const input = h('input.input', { type: 'number', min, max, value: s[key], style: { width: '100px' } });
+    const input = h('input.input', { type: 'number', min, max, value: s[key], 'aria-label': label, style: { width: '100px' } });
     input.addEventListener('change', () => save({ [key]: Number(input.value) }));
     return h('div.setting', h('div.text', h('b', label), h('span', text)), input);
   };

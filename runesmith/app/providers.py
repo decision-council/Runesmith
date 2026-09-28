@@ -157,6 +157,12 @@ def test_instrument(name: str, spec: dict[str, Any], home) -> dict[str, Any]:
     out = instrument.complete(prompt='Reply with the JSON object {"ok": true}.', system="Reply with JSON only.",
                               schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
                               max_tokens=400, key=f"runesmith-test-{int(time.time())}")
-    detail = "answered with usable JSON" if out.ok else (out.error or "no answer")[:300]
+    if out.ok:
+        detail = "answered with usable JSON"
+    elif out.error_kind == "config":                        # already plain words (a refused key, a missing model)
+        detail = (out.error or "the service refused this request")[:300]
+    else:                                                   # journey J8-F3: say what happened, then the service's words
+        from runesmith.app.planner import why_no_answer
+        detail = why_no_answer(out.error or "no answer")[:300]
     return {"ok": bool(out.ok), "latency_s": round(time.monotonic() - started, 2), "kind": out.error_kind,
             "detail": detail, "model": (out.receipt or {}).get("model") or spec.get("model")}

@@ -258,3 +258,56 @@ def test_pages_nothing_links_to_and_notes_still_to_do_are_found(tmp_path):
     assert sum(f["orphan_pages"] for f in objects.values()) == 1
     notes = sorted((name, t["document"], t["line"]) for name, f in objects.items() for t in f["todo_examples"])
     assert notes == [("recipes", "rye.md", 3), (tmp_path.name, "notes.txt", 2)]
+
+
+def test_generations_verify_without_an_id_checks_every_generation(tmp_path, capsys):
+    # Journey J10-B1: `runesmith generations verify` crashed with a traceback when no id was given.
+    home = tmp_path / ".runesmith"
+    cli.main(["--home", str(home), "init"])
+    capsys.readouterr()
+    cli.main(["--home", str(home), "generations", "verify"])
+    verified = json.loads(capsys.readouterr().out)
+    assert len(verified) == 1 and all(v["ok"] for v in verified.values())      # g0, the shipped organs
+    with pytest.raises(SystemExit, match="needs a generation id"):
+        cli.main(["--home", str(home), "generations", "activate"])
+
+
+def test_an_unexpected_error_at_the_terminal_is_one_plain_line(tmp_path):
+    # Journey J10: a person at a terminal gets what went wrong and where to look, not a Python traceback.
+    import os
+    import subprocess
+    import sys
+    home = tmp_path / ".runesmith"
+    cli.main(["--home", str(home), "init"])
+    (home / "runesmith.json").write_text("{ this is not json", encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    env = {k: v for k, v in os.environ.items() if k != "RUNESMITH_DEBUG"}
+    env["PYTHONPATH"] = str(root)
+    done = subprocess.run([sys.executable, "-m", "runesmith", "--home", str(home), "status"], cwd=str(tmp_path), env=env,
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 1 and "Traceback" not in done.stderr, done.stderr
+    assert done.stderr.startswith("Runesmith stopped:") and "runesmith doctor" in done.stderr
+    env["RUNESMITH_DEBUG"] = "1"
+    debug = subprocess.run([sys.executable, "-m", "runesmith", "--home", str(home), "status"], cwd=str(tmp_path), env=env,
+                           capture_output=True, text=True, timeout=60)
+    assert "Traceback" in debug.stderr
+
+
+def test_the_terminal_says_plainly_when_setup_is_missing(tmp_path, monkeypatch, capsys):
+    # Journey J10-F2, B2, F1: status before init printed a default setup; the demo silently showed "0 of 0 repairs"
+    # without pytest; discover said "error_without_failures".
+    import importlib.util
+    home = tmp_path / ".runesmith"
+    with pytest.raises(SystemExit, match="No Runesmith home here yet"):
+        cli.main(["--home", str(home), "status"])
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "pytest" else real(name, *a))
+    with pytest.raises(SystemExit, match="python -m pip install pytest"):
+        cli.main(["--home", str(home), "demo"])
+    assert not home.exists()                                  # nothing was set up for a demo that cannot run
+    project = tmp_path / "project"
+    (project / "tests").mkdir(parents=True)
+    (project / "tests" / "test_x.py").write_text("import unittest\n", encoding="utf-8")
+    cli.main(["--home", str(home), "discover", str(project)])
+    out = capsys.readouterr().out
+    assert "the tests could not run" in out and "Why: pytest is not installed" in out and "error_without_failures" not in out
