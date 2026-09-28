@@ -794,8 +794,10 @@ class Workspace:
         from runesmith.app.verification_allocation import allocation_status
         from runesmith.app.verification_reconciliation import reconciliation_status
         superseded = superseded_drafts(drafts, self.plan())
+        titles = {m['id']: m.get('title') for m in (self.plan() or {}).get('milestones', [])}
         for draft in drafts:
             draft['superseded_by'] = superseded.get(draft['id'])
+            draft['milestone_title'] = titles.get(draft.get('milestone'))    # not "b3a755fd75179-s1" (J2-F27)
             if draft.get('milestone'):
                 draft['requirement_supplement'] = supplement_status(self,draft)
             draft['public_feedback'] = owner_feedback(self,draft.get('verification') or {})

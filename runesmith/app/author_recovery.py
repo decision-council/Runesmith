@@ -92,7 +92,8 @@ def admit_packet(ws, packet, data, author, *, receipt=None, admission_guard=None
         raise WorkspaceError('Author source, milestone or acceptance changed; retained answer cannot be admitted')
     if (not isinstance(data,dict) or any(k not in data for k in DRAFT_SCHEMA['required'])
             or not isinstance(data['title'],str) or not isinstance(data['files'],list)):
-        raise PlannerUnavailable('Retained answer does not satisfy the draft contract')
+        # The same words as when the answer first came (journey J2-F30: "does not satisfy the draft contract").
+        raise PlannerUnavailable("the model's late answer has no title or files, so nothing was saved")
     revision=packet.get('revision')
     try:
         raw_files = data['files']

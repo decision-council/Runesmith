@@ -681,3 +681,14 @@ def test_keeping_an_eye_on_numbers_starts_by_just_looking(studio):
     # Journey J5-F1: the bakery owner found no first-run choice for watching numbers and picked "Just explore".
     status, body, _ = call(studio, "POST", "/api/genesis", {"name": "Bakery", "use_type": "numbers"})
     assert status == 200 and body["settings"]["use_type"] == "numbers" and body["settings"]["autonomy"] == "observe"
+
+
+
+def test_a_draft_names_its_milestone_by_title(tmp_path):
+    # Journey J2-F27: a draft for a smaller step read "milestone b3a755fd75179-s1".
+    ws = Workspace(tmp_path)
+    ws.save_plan({"summary": "Tool", "milestones": [{"title": "Implement CSV export utility", "done_when": "it writes"}]})
+    mid = ws.plan()["milestones"][0]["id"]
+    ws.save_draft(title="Export module", why="x", files=[{"path": "tool.py", "content": "x = 1\n"}], drafted_by="t", milestone=mid)
+    [draft] = [d for d in ws.work()["drafts"] if d.get("milestone") == mid]
+    assert draft["milestone_title"] == "Implement CSV export utility"
