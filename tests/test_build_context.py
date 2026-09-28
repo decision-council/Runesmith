@@ -234,3 +234,29 @@ def test_revision_can_edit_a_new_unapplied_file_without_inventing_live_base(tmp_
     assert files[0]['content']=='def answer(): return 9\n'
     assert files[0]['revision_base']=='candidate' and files[0]['expected_absent']
     assert 'base' not in files[0] and not (tmp_path/'new.py').exists()
+
+
+
+def test_a_javascript_module_is_a_source_file_a_draft_may_write():
+    # Journey J11-B5: the first draft of Runesmith Motion wrote motion.mjs, "outside the local verification profile",
+    # so it could not be checked and nothing could ever be applied.
+    from runesmith.app.snapshots import path_kind
+    assert [path_kind(p) for p in ("motion.mjs", "lib/tool.cjs", "src/a.mts", "app.js")] == ["model"] * 4
+
+
+def test_a_prerequisite_builder_sees_the_checks_approved_for_its_goal(tmp_path):
+    # Journey J2-G2: the "Integrate export command" step's builder chose `export --output`; the checks approved for its
+    # goal (Export library to CSV) run `export --file`, which it never saw.
+    from runesmith.app.acceptance_contracts import publish_expectations
+    from runesmith.app.workspace import _write_json
+    ws = planned(tmp_path)
+    ws.save_plan({'summary': 'Tool', 'milestones': [{'title': 'Export', 'done_when': 'export works'},
+                                                     {'title': 'CLI step', 'done_when': 'the command runs'}]})
+    plan = ws.plan()
+    goal, step = plan['milestones']
+    step['parent_id'] = goal['id']
+    _write_json(ws.home / 'PLAN.json', plan)
+    said = 'Exporting writes a CSV file. Checked exactly: running `python -m tool export --file books.csv`.'
+    publish_expectations(ws, goal['id'], [{'id': 'check.test_01_export', 'description': said}], 'approved by the owner')
+    assert 'export --file books.csv' in draft_prompt(ws, ws.plan()['milestones'][1])
+    assert 'parent_public_acceptance' in draft_prompt(ws, ws.plan()['milestones'][0])       # null for a goal itself

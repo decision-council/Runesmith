@@ -286,6 +286,9 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
                             'candidate':revision['id'],'paths':[f['path'] for f in revision['files']]}
                            if revision else None),
         "parent_milestone": next((m for m in plan.get('milestones',[]) if m['id']==milestone.get('parent_id')),None),
+        # The goal a prerequisite serves is judged by its own approved checks; its builder chose `export --output`
+        # where the goal's checks run `export --file` (journey J2-G2).
+        "parent_public_acceptance": expectations(ws, milestone['parent_id']) if milestone.get('parent_id') else None,
         "plan_summary": plan.get("summary"),
         "proposed_goalposts": [g for g in (ws.goalposts() or {}).get("goalposts", [])
                                if not g.get("milestone_ids") or milestone["id"] in g["milestone_ids"]

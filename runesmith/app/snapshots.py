@@ -12,7 +12,10 @@ import os
 from pathlib import Path
 
 POLICY = 'local-build-inputs-v1'
-SOURCE_EXTENSIONS = {'.py','.js','.ts','.tsx','.jsx','.html','.css','.toml','.json','.yaml','.yml','.ini','.cfg'}
+# JavaScript modules too (.mjs, .cjs): a node project's `motion.mjs` was "outside the local verification profile",
+# so no draft of it could be checked (journey J11-B5). The map already knew them (envmap.NODE_SOURCE_SUFFIXES).
+SOURCE_EXTENSIONS = {'.py','.js','.mjs','.cjs','.ts','.mts','.cts','.tsx','.jsx','.html','.css','.toml','.json',
+                     '.yaml','.yml','.ini','.cfg'}
 EXCLUDED_DIRS = {'.git','.runesmith','.venv','venv','node_modules','__pycache__','.tmp',
                  'var','logs','data','dist','build','secrets','credentials','private','customers'}
 LOCAL_ASSETS = {'fixtures','assets','static','templates'}
