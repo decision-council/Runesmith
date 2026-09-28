@@ -295,7 +295,8 @@ export default async function render(root, { app, navigate, refreshState }) {
   }
   caps.append(h('p.tiny.faint.mt-8', 'Bands: bad · minimal · optimal. "Unknown" means there is no evidence yet, not that things are fine.'));
 
-  root.append(hero, numbersCard(s, navigate), policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
+  // A plain DOM append prints "null" for an empty card (journey J6-B1), so only real cards are passed.
+  root.append(hero, ...[numbersCard(s, navigate)].filter(Boolean), policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
     h('div.grid.two.mt-24', objects, next), fixCard, tryCard, h('div.grid.two.mt-24', live, caps));
   function kpisWrap(k) { k.classList.remove('four'); k.classList.add('two'); return k; }
   return () => {closed=true;healthSerial++;offs.forEach((off) => off());};

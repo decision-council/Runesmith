@@ -24,6 +24,8 @@
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **Journey J6 (let it improve itself):** a developer's `tally-tools`, with six everyday bugs and 7 failing tests.
+  - **A stray "null" on the Overview (J6-B1, introduced by the J5 release).** With no measurements, the "Your numbers" card is empty, and a plain DOM append printed it as the text "null" under the hero. Only real cards are passed now, and browser loop B19.14 fails on any stray "null" on the Overview.
 - **Journey J5 (keep an eye on my numbers):** a bakery folder, with weekly till exports as CSV (`reports/week-35.csv` … `week-39.csv`) and a README: keep an eye on weekly revenue, and keep waste under 15% of what is baked.
   - **A report that arrives as a new file every week (J5-G2).** A measurement read one fixed file, so the owner would have had to edit it every week. A `*` in the file name now means the newest matching file in natural order (week-10 after week-9), for example `reports/week-*.csv`. The receipt names the file read. A pattern may match nothing yet.
   - **A share, such as sold ÷ baked (J5-G3).** "Waste under 15%" could not be expressed: no formulas. A new calculation, "Ratio: this column's total divided by another's", with its target: Share sold = sold ÷ baked, at least 85%.

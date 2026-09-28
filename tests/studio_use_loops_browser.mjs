@@ -1884,6 +1884,7 @@ try{
       assert(numbersText.includes(want),want+' in '+numbersText);
     assert(requests.slice(numbersStart).every(r=>r.method==='GET'));
     await mount(base);assert.equal(await page.getByRole('region',{name:'Your numbers',exact:true}).count(),0);
+    assert(!(await page.locator('#page').innerText()).replace(/[^a-z]+/g,' ').split(' ').includes('null'),'a stray null on the Overview');   // journey J6-B1
     loops.push({id:'B19.14',case:'The owner’s numbers show on the Overview in plain words, with targets; none defined, no card',result:'passed'});
     loops.push({id:'B19.13',case:'A mapped folder without code is told the test-runs switch has nothing to run yet; code, an outdated map or no map says nothing',result:'passed'});
   }
