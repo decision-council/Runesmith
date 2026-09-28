@@ -483,6 +483,20 @@ def _name(value, index, taken):
     return name
 
 
+def _joined(steps):
+    """Steps with a lone expectation joined to the step before it. Weak models often write what to expect as a step
+    of its own, as in [{"run": [...]}, {"expect": {...}}] (journey J11-G4: Nemotron, for m1, m2 and m5)."""
+    joined = []
+    for step in steps:
+        previous = joined[-1] if joined else None
+        if (isinstance(step, dict) and set(step) == {'expect'} and isinstance(previous, dict)
+                and any(k in previous for k in ('run', 'call', 'doc')) and 'expect' not in previous):
+            joined[-1] = dict(previous, expect=step['expect'])
+        else:
+            joined.append(step)
+    return joined
+
+
 def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> dict[str, Any]:
     """The examples as stored, the checks file rendered from them, and what Runesmith dropped; or a WorkspaceError."""
     if not isinstance(data, dict) or not isinstance(data.get('examples'), list):
@@ -497,6 +511,7 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
             raise WorkspaceError(f'{what} must be an object.')
         says = _plain(row.get('says'), f'{what}: "says"', 300)
         steps = row.get('steps') if row.get('steps') is not None else []
+        steps = _joined(steps) if isinstance(steps, list) else steps
         if not isinstance(steps, list) or len(steps) > LIMITS['steps']:
             raise WorkspaceError(f'{what} needs at most {LIMITS["steps"]} steps.')
         example: dict[str, Any] = {'test': _name(row.get('name'), index, taken), 'says': says,

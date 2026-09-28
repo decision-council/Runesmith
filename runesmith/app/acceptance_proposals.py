@@ -324,8 +324,14 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
         try:
             clean = _clean(out.data, style, data)
         except WorkspaceError as again:
+            # Both answers are kept, so what the Checker wrote can be read (journey J11-G3).
+            kept = ws.home / 'acceptance-proposals' / 'refused' / (key + '.json')
+            _write_json(kept, {'milestone': milestone_id, 'utc': _now(), 'drafted_by': drafted_by,
+                               'errors': [str(error)[:300], str(again)[:300]],
+                               'answers': [_bounded(first_answer), _bounded(out.data)]})
             raise WorkspaceError(f'Both answers broke a rule of the examples format. First: {str(error)[:200]} '
-                                 f'Then: {str(again)[:200]}') from None
+                                 f'Then: {str(again)[:200]} Both are kept in '
+                                 f'{kept.relative_to(ws.home).as_posix()}.') from None
         clean['revision'] = {'after': 'unusable', 'error': str(error)[:300], 'first_answer': _bounded(first_answer)}
         drafted_by = out.receipt.get('answered_by') or out.receipt.get('model') or drafted_by
         clean['dry_run'] = dry_run(ws, clean['code'], runs_project_code=_runs_project_code(clean))

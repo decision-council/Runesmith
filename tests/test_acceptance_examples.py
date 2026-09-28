@@ -487,3 +487,17 @@ def test_a_node_program_that_crashes_does_not_pass_a_check_that_expects_an_error
         verdicts[name] = _run_checks(stage, json.dumps([str(checks)]), tmp_path / name / "log.txt", timeout_s=240)
     assert {n: v["ok"] for n, v in verdicts.items()} == {"before": False, "crashes": False, "refuses": True}, {
         n: v.get("output", "")[-600:] for n, v in verdicts.items()}
+
+
+
+def test_an_expectation_written_as_its_own_step_joins_the_step_before_it():
+    # Journey J11-G4: Nemotron wrote [{"run": [...]}, {"expect": {...}}] for m1, m2 and m5; each answer was refused whole.
+    answer = {"examples": [{"name": "not a project", "says": "A file that is not a project is refused with an error.",
+                            "files": [{"name": "bad.motion.json", "text": "{}"}],
+                            "steps": [{"run": ["node", "motion.mjs", "bad.motion.json"]}, {"expect": {"exit": "error"}}]}]}
+    shaped = validate_examples(answer, NODE_MILESTONE)
+    assert shaped["examples"][0]["steps"] == [{"run": ["node", "motion.mjs", "bad.motion.json"], "expect": {"exit": "error"}}]
+    assert "it ends with an error" in shaped["checks"][0]["exact"]
+    alone = {"examples": [dict(answer["examples"][0], steps=[{"expect": {"exit": "error"}}])]}
+    with pytest.raises(WorkspaceError, match='needs exactly one of'):              # nothing before it to join
+        validate_examples(alone, NODE_MILESTONE)
