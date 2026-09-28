@@ -24,6 +24,16 @@
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **A hostile environment, plain words (journey J7).**
+  - **Deleting a folder's hidden `.runesmith` data no longer locks the folder out for good (J7-B1).** Runesmith used to refuse to open the folder ever again, with a Python traceback in the launcher window. That happened when someone cleaned hidden folders, restored a backup without them, or deleted the data to "reset".
+    - A data folder that lived *inside* the project cannot be "unavailable" while the project is there, the way data on an unplugged drive can. So Runesmith starts fresh in the same place and says so.
+    - Data kept elsewhere that has gone missing is still refused, as before.
+  - The launcher never shows a traceback when it cannot open a folder; it says why in one sentence.
+  - An explicitly chosen port that is already in use is explained, with what to do, instead of a raw Windows error (J7-F1).
+  - Also confirmed in J7, and passing:
+    - a path with spaces, an ampersand, parentheses and non-ASCII letters (mapping, the introduction, Try it with non-ASCII output);
+    - a second launch for the same folder points to the open Studio;
+    - an old access key after a restart is refused with "open Runesmith from its launcher to get access".
 - **Journey J3 passed**: an existing project with 5 failing tests was fixed by a free model and applied automatically in 5.5 s. The owner's own frozen tests decided, and the test files were untouched. Its smaller findings, fixed:
   - The introduction's use-type choice tells screen readers which one is selected.
   - Pressing Space (the intro's "skip ahead" key) once too often no longer types spaces into the name.

@@ -1240,7 +1240,10 @@ def bind(studio: Studio, port: int | None) -> ThreadingHTTPServer:
             httpd.server_close()
             raise
         return httpd
-    raise SystemExit(f"could not open a local port: {last}")
+    if port is not None:
+        raise SystemExit(f"Port {port} is already in use by another program. Leave out --port to let Runesmith choose "
+                         f"a free one, or choose another port. ({last})")
+    raise SystemExit(f"Runesmith could not open a local port for its window. ({last})")
 
 
 class InstanceLock:
@@ -1295,7 +1298,11 @@ class InstanceLock:
 def serve(folder: Path, *, home: Path | None = None, port: int | None = None, open_browser: bool = True,
           out: Callable[[str], None] = print) -> None:
     folder = Path(folder).expanduser().resolve()
-    probe_home = Path(Bindings(STUDIO_DIR).resolve(folder, home)['home'])
+    resolved = Bindings(STUDIO_DIR).resolve(folder, home)
+    probe_home = Path(resolved['home'])
+    if resolved.get('recreated'):
+        out(f"Runesmith's data for this folder ({probe_home.name}) was missing, so it starts fresh here. "
+            "Your own files are untouched.")
     try:
         studio = Studio(folder, home)
     except WorkspaceOwned as error:                # another writer owns this home/root, or is opening it now

@@ -63,8 +63,12 @@ def cmd_up(args) -> None:
         recent = Studio.recent()
         folder = Path(recent[0]["path"]) if recent else Path.home() / "Runesmith" / "My first project"
         folder.mkdir(parents=True, exist_ok=True)
-    serve(folder, home=Path(args.home).resolve() if args.home else None, port=args.port,
-          open_browser=not args.no_browser)
+    from runesmith.app.workspace import WorkspaceError
+    try:
+        serve(folder, home=Path(args.home).resolve() if args.home else None, port=args.port,
+              open_browser=not args.no_browser)
+    except WorkspaceError as error:                 # plain words in the launcher window, never a traceback (J7)
+        raise SystemExit(f"Runesmith could not open {folder}: {error}") from None
 
 
 def cmd_init(args) -> None:

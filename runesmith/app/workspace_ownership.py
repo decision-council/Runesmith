@@ -151,19 +151,28 @@ class Bindings:
         root = canonical(root)
         _record, rows = self._read()
         saved = next((row for row in rows if key(row['root']) == key(root)), None)
+        recreated = False
         if saved:
             destination = Path(saved['home'])
             if home is not None and key(home) != key(destination):
                 raise WorkspaceError('This root is bound to a different home; automatic rebinding is not allowed.')
             if not destination.is_dir():
-                raise WorkspaceError('The registered home is missing or unavailable; restore it before opening this root.')
+                # A home inside the folder cannot be "unavailable" while the folder is here, the way a home on an
+                # unplugged drive can: it was deleted, so starting fresh in the same place loses nothing (J7-B1).
+                if not (key(destination) == key(root / '.runesmith') and root.is_dir()):
+                    raise WorkspaceError('The registered home is missing or unavailable; restore it before opening '
+                                         'this root.')
+                recreated = True
         else:
             destination = canonical(home) if home is not None else root / '.runesmith'
         if any(key(row['home']) == key(destination) and key(row['root']) != key(root) for row in rows):
             raise WorkspaceError('This home is already bound to a different source root.')
-        return {'path': str(root), 'home': str(destination),
-                'basis': 'registered' if saved else ('explicit' if home is not None else 'default'),
-                'registered': bool(saved)}
+        result = {'path': str(root), 'home': str(destination),
+                  'basis': 'registered' if saved else ('explicit' if home is not None else 'default'),
+                  'registered': bool(saved)}
+        if recreated:                                   # only when true: the resolver's answer keeps its shape
+            result['recreated'] = True
+        return result
 
     def remember(self, root, home):
         """Called under both root and home leases, before Workspace mutates."""
