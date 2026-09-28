@@ -1971,6 +1971,26 @@ try{
     assert(await page.getByText('Not saved yet: press Save build settings.',{exact:true}).isVisible());
     assert(!requests.slice(buildStart).some(r=>r.path==='/api/settings'&&r.method==='POST'));
     loops.push({id:'B20.06',case:'An unsaved build switch survives the redraw a finishing job causes and says it is not saved yet',result:'passed'});
+
+    // B20.07 (journey J11-F3, B1): the automatic-apply dialog names what may be written; "." is the whole folder; an
+    // empty grant is not offered
+    const grantStart=requests.length;
+    const applying=page.getByLabel('Apply checked drafts automatically (needs your own acceptance checks for the milestone)',{exact:true});
+    const allowed=page.getByLabel('Allowed files or folders',{exact:true});
+    await applying.check();await allowed.fill('');
+    await page.getByRole('button',{name:'Save build settings',exact:true}).click();
+    await page.getByText('Name the files or folders Runesmith may write first',{exact:false}).first().waitFor();
+    assert.equal(await page.locator('.modal').count(),0);
+    await allowed.fill('.');
+    await page.getByRole('button',{name:'Save build settings',exact:true}).click();
+    const grantDialog=page.locator('.modal',{hasText:'Apply checked drafts automatically in this folder?'});
+    await grantDialog.waitFor();
+    assert((await grantDialog.innerText()).includes('anywhere in this folder (never in Runesmith’s own records or .git)'));
+    await grantDialog.getByRole('button',{name:'Allow automatic apply',exact:true}).click();
+    await page.waitForTimeout(300);
+    const granted=requests.slice(grantStart).filter(r=>r.path==='/api/settings'&&r.method==='POST');
+    assert.equal(granted.length,1);assert.deepEqual(granted[0].body.build_paths,['.']);assert.equal(granted[0].body.build_apply,true);
+    loops.push({id:'B20.07',case:'The automatic-apply dialog names where Runesmith may write ("." is the whole folder) and an empty grant is not offered',result:'passed'});
     fixtureAcceptance={};fixturePlan=null;
   }
   if(selected.has('B21')){

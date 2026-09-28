@@ -242,8 +242,11 @@ class Workspace:
                 value = sorted({str(v).strip() for v in value if str(v).strip()})
             if key == "build_paths":
                 value = sorted({str(v).strip().rstrip('/') for v in value if str(v).strip()})
-                if any(not self._safe_rel(v) for v in value):
-                    raise WorkspaceError("build paths must be inside this workspace and outside its private home")
+                # "." is the whole folder: for a new project nobody knows its files yet (journey J11-B1). Runesmith's
+                # own records and version-control folders stay out of reach, as for every path.
+                if any(v != '.' and not self._safe_rel(v) for v in value):
+                    raise WorkspaceError("Allowed files or folders must be inside this folder and not Runesmith's own "
+                                         "records. Use . for the whole folder.")
             if key == "workspace_name":
                 value = value.strip()[:80]
             clean[key] = value
@@ -1010,7 +1013,7 @@ class Workspace:
         while rel.startswith("./"):
             rel = rel[2:]
         path = PurePosixPath(rel)
-        if (not rel or path.is_absolute() or ":" in path.parts[0] or ".." in path.parts
+        if (not rel or not path.parts or path.is_absolute() or ":" in path.parts[0] or ".." in path.parts
                 or any(p in ("", ".") for p in path.parts) or len(rel) > 240):
             return None
         if path.parts[0] in (self.home.name, ".git", ".hg", ".svn"):

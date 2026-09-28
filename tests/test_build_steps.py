@@ -449,3 +449,20 @@ def test_a_kept_answer_an_older_runesmith_refused_can_be_checked_again_without_a
     assert done['result']=='done' and done['outcome'].get('advanced'), done
     assert 'return 42' in (tmp_path/'app.py').read_text() and 'B7 = 7' in (tmp_path/'app.py').read_text()
     assert sum(row['calls'] for row in ws.call_stats().values())==before              # no model was asked
+
+
+
+def test_the_whole_folder_can_be_allowed_for_a_new_project(tmp_path):
+    # Journey J11-B1: the owner of a new project typed "." for the files Runesmith may write; saving failed with "not
+    # found: tuple index out of range". "." now means the whole folder; Runesmith's own records stay out of reach.
+    from runesmith.app.building import _within_scope
+    from runesmith.app.workspace import WorkspaceError
+    ws=setup(tmp_path,acceptance=True)
+    assert ws._safe_rel('.') is None and ws._safe_rel('./') is None
+    ws.update_settings({'build_steps':True,'build_apply':True,'build_paths':['./']})
+    assert ws.settings()['build_paths']==['.']
+    assert _within_scope('app.py',['.']) and _within_scope('tests/test_app.py',['.']) and not _within_scope('app.py',['src'])
+    with pytest.raises(WorkspaceError,match='Use . for the whole folder'):
+        ws.update_settings({'build_paths':['../elsewhere']})
+    result=build_step(ws,ws.router())
+    assert result['advanced'] and (tmp_path/'app.py').is_file() and (tmp_path/'tests'/'test_app.py').is_file()

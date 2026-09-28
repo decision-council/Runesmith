@@ -341,7 +341,9 @@ def _unchanged_verdict(ws, draft, milestone, contract, context, checkpoint):
 
 
 def _within_scope(path, paths):
-    return any(path == prefix.rstrip('/') or path.startswith(prefix.rstrip('/') + '/') for prefix in paths)
+    """Whether a (safe, workspace-relative) path is inside the grant; "." grants the whole folder (J11-B1)."""
+    return any(prefix.rstrip('/') == '.' or path == prefix.rstrip('/') or path.startswith(prefix.rstrip('/') + '/')
+               for prefix in paths)
 
 
 def verification_inconclusive(verification):

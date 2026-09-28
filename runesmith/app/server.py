@@ -1112,6 +1112,9 @@ def make_handler(studio: Studio):
                     except WorkspaceConflict as error:
                         return self._error(409, str(error))
                     except LookupError as error:                 # KeyError and the manual relay's LookupError
+                        if isinstance(error, IndexError):        # a bug, not something missing (journey J11-B1)
+                            self._log_error(path, error)
+                            return self._error(500, f"{type(error).__name__}: {error}"[:400])
                         return self._error(404, f"not found: {str(error).strip(chr(39))}")
                     except (WorkspaceError, ValueError) as error:
                         return self._error(400, str(error))

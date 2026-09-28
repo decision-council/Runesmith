@@ -147,7 +147,8 @@ def _validate(ws,data,packet):
         for path in paths:
             if not isinstance(path,str) or ws._safe_rel(path)!=path or path.lower().endswith(('.md','.rst','.txt')):
                 raise WorkspaceError('Step paths must be workspace-relative code/test paths, not documentation.')
-            if not any(path==p.rstrip('/') or path.startswith(p.rstrip('/')+'/') for p in packet['allowed_build_paths']):
+            from runesmith.app.building import _within_scope
+            if not _within_scope(path, packet['allowed_build_paths']):
                 raise WorkspaceError('A prerequisite cannot broaden the existing build-path grant.')
             if row['kind']=='repair' and path not in packet['source_context']['inventory']:
                 raise WorkspaceError('A repair prerequisite names an absent file; candidate failures are not current-source failures.')
