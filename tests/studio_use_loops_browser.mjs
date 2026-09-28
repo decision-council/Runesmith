@@ -1099,7 +1099,7 @@ try{
       const module=await import('/static/js/views/activity.js');
       window.cleanup=await module.default(document.querySelector('#page'),{sub:[tab],navigate(){}});
     },sub);
-    const recovery={revision:'a'.repeat(32),required:true,blocked:false,error:'',waiting:1,
+    const recovery={revision:'a'.repeat(32),required:true,blocked:false,error:'',waiting:1,interrupted:'propose_acceptance',relay_set_aside:1,
       reasons:['Saved work needs review after restart. Nothing has been replayed.']};
     const queue=[{id:'waiting-fixture',kind:'map',params:{probe:false},by:'owner',queued:'2026-09-27T04:00:00Z'}];
     const reset=()=>{workerFixture={paused:true,current:null,queue:structuredClone(queue),history:[{id:'old-paid',kind:'supplement',result:'interrupted',
@@ -1109,6 +1109,9 @@ try{
     assert(await page.getByRole('button',{name:'Resume queue',exact:true}).isDisabled());
     assert(await page.getByRole('button',{name:'Keep waiting jobs · stay paused',exact:true}).isDisabled());
     assert(requests.slice(start).every(r=>r.method==='GET'));
+    const summary=await page.locator('[aria-label="Restart recovery"] p').first().innerText();
+    assert(summary.startsWith('In short: Runesmith was restarted while proposing acceptance checks, waiting for your chat window.'),summary);
+    assert(summary.includes('It changes no file in your folder')&&summary.includes('ask again when you are ready'),summary);
     loops.push({id:'B13.01',case:'Restart hold is visible and no work or acknowledgement occurs while viewing',result:'passed'});
     await page.getByText('map · waiting-fixture',{exact:true}).click();
     assert((await page.locator('#page').innerText()).includes('"probe": false'));
@@ -1715,7 +1718,7 @@ try{
     await mount({...base,manual_waiting:1,worker:{recovery:{required:true},paused:true,current:{id:'uncertain'}}});
     await hero().getByRole('button',{name:'Review restart recovery',exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>window.navigation),['activity']);
-    assert((await hero().innerText()).includes('no job has been replayed'));
+    assert((await hero().innerText()).includes('Nothing was repeated or sent twice'));
     loops.push({id:'B19.03',case:'Recovery has priority over relay/current/pause and is navigation, not replay',result:'passed'});
 
     await mount({...base,worker:{current:{id:'busy'},paused:true}});

@@ -155,7 +155,7 @@ export default async function render(root, ctx) {
       const cb = h('input', { type: 'checkbox', checked: chosen.has(c.path), onchange: () => { cb.checked ? chosen.add(c.path) : chosen.delete(c.path); } });
       picks.append(h('label.row.small', { style: { cursor: 'pointer' } }, cb, h('span.mono.grow.ellipsis', c.path), h('span.faint', `${Math.round(c.bytes / 1024)} KB`)));
     }
-    save.addEventListener('click', () => withBusy(save, async () => { await post('/api/brief', { text: ta.value, blueprints: [...chosen] }); status.textContent = 'saved just now'; toast('Brief saved. The Planner reads it next time.', 'good'); drawPlan(); drawGoalposts(); }));
+    save.addEventListener('click', () => withBusy(save, async () => { await post('/api/brief', { text: ta.value, blueprints: [...chosen] }); status.textContent = 'saved just now'; toast(chosen.size ? 'Saved. A model reads the brief and the ticked documents from now on.' : 'Brief saved. The Planner reads it next time.', 'good'); drawBrief(); drawPlan(); drawGoalposts(); }));
     // Documents never go to a model unless ticked here (code does, as source). A folder of documents therefore cannot
     // be planned, drafted or checked by a model until the owner chooses what it may read (journey J4-G2).
     const objects = ctx.app?.state?.objects || [];

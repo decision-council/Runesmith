@@ -461,7 +461,7 @@ function checkBadge(d) {
   const v = d.verification;
   if (!v) return 'unverified';
   return ({ acceptance_passed: 'its tests and your checks passed', self_checks_passed: 'its own tests passed',
-    failed: 'checks failed', inconclusive: 'checks did not finish' })[v.status] || humanize(v.status || 'unverified');
+    failed: 'checks failed', inconclusive: 'checks did not finish', unchecked: 'nothing checked it yet: add acceptance checks' })[v.status] || humanize(v.status || 'unverified');
 }
 
 async function applyDraft(btn, d, reload) {

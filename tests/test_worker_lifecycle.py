@@ -45,6 +45,7 @@ def test_interruption_preserves_remote_and_spent_receipts_without_replay(tmp_pat
     _write_json(ws.home / 'STUDIO_CURRENT.json', {'id': 'interrupted', 'kind': 'build', 'params': {}})
     worker = Worker(ws, EventBus()); worker.pause(); worker._recover()
     assert worker.paused and not worker._jobs
+    assert worker.snapshot()['recovery']['interrupted'] == 'build'     # named in the owner's plain summary (J4-F11)
     assert all(p.read_bytes() == content for p, content in protected.items())
     assert not (ws.home / 'STUDIO_CURRENT.json').exists()
     job = worker.snapshot()['history'][0]

@@ -249,6 +249,23 @@ def test_documents_are_checked_by_their_files_and_links_with_no_program_to_run(t
     assert not run_docs(tmp_path, "dead_link_left", code, built + "- [Buns](cinnamon-buns.md)\n")["ok"]
 
 
+def test_checks_on_documents_are_tried_even_when_running_project_code_is_off(tmp_path):
+    # J4-F13: file-only checks run none of the project's code, so they are tried on today's copy without that switch.
+    # J4-F12: and what they check says nothing about Python crash reports.
+    ws = Workspace(handbook(tmp_path / "handbook", index="# Recipes\n\n[Rye](rye.md)\n"))
+    ws.save_plan({"summary": "Tidy handbook", "milestones": [{"title": "Seeded loaf in the index", "detail": DOC_MILESTONE,
+                                                               "done_when": "It is linked.", "status": "open"}]})
+    ws.set_brief(blueprints=["README.md", "recipes/index.md"])
+    config = ws.config()
+    config["instruments"]["offline"] = {"kind": "scripted", "answers": [DOC_EXAMPLES]}
+    config["roles"]["plan"] = ["offline"]
+    ws.save_config(config)
+    assert not ws.settings().get("build_steps")
+    proposal = propose(ws, ws.router(), "m1")
+    assert proposal["dry_run"]["verdict"] == "fails_now", proposal["dry_run"]      # the seeded loaf is not linked yet
+    assert not any("crash report" in c["exact"] for c in proposal["checks"])
+
+
 def test_an_example_that_runs_nothing_and_checks_no_file_is_refused():
     with pytest.raises(WorkspaceError, match="needs steps, or a check on files"):
         validate_examples({"examples": [{"name": "x", "says": "x", "steps": []}]}, DOC_MILESTONE)

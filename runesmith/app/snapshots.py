@@ -17,6 +17,13 @@ EXCLUDED_DIRS = {'.git','.runesmith','.venv','venv','node_modules','__pycache__'
                  'var','logs','data','dist','build','secrets','credentials','private','customers'}
 LOCAL_ASSETS = {'fixtures','assets','static','templates'}
 MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES = 3000, 2_000_000, 32_000_000
+DOCUMENT_SUFFIXES = {'.md','.markdown','.txt','.rst'}
+
+
+def document_folder(rel):
+    """The declared-documents entry that shares every document in rel's folder: "recipes/", or "./" for the top."""
+    parent = Path(rel).parent.as_posix()
+    return ('.' if parent in ('', '.') else parent) + '/'
 
 
 class SnapshotUnsupported(RuntimeError):
@@ -42,7 +49,9 @@ def path_kind(rel, declared=()):
         return 'local'
     if p.suffix.lower() in SOURCE_EXTENSIONS:
         return 'model'
-    if rel in declared and p.suffix.lower() in {'.md','.txt','.rst'}:
+    # Declared documents: files the owner listed as build paths, or every document in a folder where the owner shared
+    # one ("recipes/"). They are verification inputs only: a model sees a document's text only if the owner ticked it.
+    if p.suffix.lower() in DOCUMENT_SUFFIXES and (rel in declared or document_folder(rel) in declared):
         return 'local'
     return None
 
@@ -57,6 +66,10 @@ def digest_files(files, declared=()):
 
 def collect_snapshot(ws):
     declared=tuple(p for p in ws.settings().get('build_paths',[]) if Path(p).suffix.lower() in {'.md','.txt','.rst'})
+    # A document the owner shared with models (Goals & plan) shares its folder with the build pipeline, so drafts can
+    # edit it or add a page beside it, and the owner's checks run on a copy that holds them (journey J4-G3).
+    shared=sorted({document_folder(b['path']) for b in ws.brief().get('blueprints',[]) if isinstance(b,dict) and b.get('path')})
+    declared=tuple(sorted(set(declared)|set(shared)))
     files={};total=0
     excluded=[]
     for directory,dirs,names in os.walk(ws.root,followlinks=False):

@@ -327,9 +327,9 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
                                  f'Then: {str(again)[:200]}') from None
         clean['revision'] = {'after': 'unusable', 'error': str(error)[:300], 'first_answer': _bounded(first_answer)}
         drafted_by = out.receipt.get('answered_by') or out.receipt.get('model') or drafted_by
-        clean['dry_run'] = dry_run(ws, clean['code'])
+        clean['dry_run'] = dry_run(ws, clean['code'], runs_project_code=_runs_project_code(clean))
     else:
-        clean['dry_run'] = dry_run(ws, clean['code'])
+        clean['dry_run'] = dry_run(ws, clean['code'], runs_project_code=_runs_project_code(clean))
         if findings(clean):
             clean, drafted_by = _revise_once(ws, router, data, clean, key, drafted_by, checkpoint,
                                              style=style, first_answer=out.data)
@@ -378,7 +378,7 @@ def _revise_once(ws, router, data, first, key, drafted_by, checkpoint, *, style=
         revised = _clean(out.data, style, data)
     except WorkspaceError as error:
         return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by
-    revised['dry_run'] = dry_run(ws, revised['code'])
+    revised['dry_run'] = dry_run(ws, revised['code'], runs_project_code=_runs_project_code(revised))
     revised['revision'] = {'after': finding, 'first_code_sha256': first['code_sha256'],
                            'first_checks': first['checks']}
     if style == 'examples':
@@ -387,14 +387,19 @@ def _revise_once(ws, router, data, first, key, drafted_by, checkpoint, *, style=
     return revised, out.receipt.get('answered_by') or out.receipt.get('model') or drafted_by
 
 
-def dry_run(ws, code: str) -> dict[str, Any]:
+def _runs_project_code(proposal) -> bool:
+    """Whether trying these checks runs the project's own code. Checks on files only (documents) do not (J4-F13)."""
+    return proposal.get('style') != 'examples' or any(e.get('steps') for e in proposal.get('examples', []))
+
+
+def dry_run(ws, code: str, *, runs_project_code: bool = True) -> dict[str, Any]:
     """Run proposed checks once against a throwaway copy of the project as it is today.
 
     Checks that already pass on an unfinished milestone may not test what it adds; checks that cannot run at all are
     broken. Runs only when the owner allows checks to execute project code (the same switch as build checks).
     """
     settings = ws.settings()
-    if settings.get('autonomy') == 'observe' or not settings.get('build_steps'):
+    if settings.get('autonomy') == 'observe' or (runs_project_code and not settings.get('build_steps')):
         return {'verdict': 'not_run', 'why': 'Checking drafts is off, so the checks were not tried.'}
     try:
         snapshot = collect_snapshot(ws)

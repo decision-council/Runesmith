@@ -196,6 +196,7 @@ class Worker:
                         same_id.get('params', {}) != interrupted.get('params', {})):
                     raise WorkspaceError('Current marker and waiting intention disagree; neither was discarded.')
                 self._add_recovery('Studio closed with a current-job marker. Inspect saved outcomes and provider receipts.')
+                self._recovery['interrupted'] = interrupted.get('kind')      # for the owner's plain summary (J4-F11)
             if self._recovery:
                 self.pause()  # Persist the hold before clearing any current marker.
                 self._save_queue(list(self._jobs))
@@ -239,6 +240,8 @@ class Worker:
                     self._save_queue([])
                     self._jobs.clear()
         orphaned = self.ws.set_aside_orphaned_requests()
+        if orphaned and self._recovery:
+            self._recovery['relay_set_aside'] = orphaned
         if orphaned:
             self.say(f"Set aside {orphaned} chat-relay request(s) from before the restart: nothing waits for them now.",
                      "warn")

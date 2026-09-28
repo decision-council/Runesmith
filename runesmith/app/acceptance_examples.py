@@ -416,7 +416,7 @@ def exact(example) -> str:
         parts.append('every link between the Markdown pages leads to an existing file')
     if example.get('pages_reachable'):
         parts.append('every Markdown page can be reached by following links from the front page')
-    text = '; '.join(parts) + '; and nothing stops with a Python crash report.'
+    text = '; '.join(parts) + ('; and nothing stops with a Python crash report.' if example['steps'] else '.')
     return (text[:1].upper() + text[1:])[:900]
 
 
@@ -595,7 +595,8 @@ def number_on_line(has, number, output):
 
 def copy_project(work):
     copy = os.path.join(work, "project")
-    shutil.copytree(PROJECT, copy, ignore=lambda folder, names: [n for n in names if n in SKIP or n.startswith(WORK)])
+    # A name starting with "%" is an unexpanded Windows variable some tool made into a folder; it is never project content.
+    shutil.copytree(PROJECT, copy, ignore=lambda folder, names: [n for n in names if n in SKIP or n.startswith((WORK, "%"))])
     return copy
 
 

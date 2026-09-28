@@ -17,7 +17,7 @@ export default async function render(root, { app, navigate, refreshState }) {
   // ---- hero: the one thing to do next
   let cta, line, extra = null;
   if (s.worker?.recovery?.required) {
-    line = 'Saved work needs restart recovery review. Inspect retained outcomes before deciding what may continue; no job has been replayed.';
+    line = 'Runesmith was restarted in the middle of a job. Nothing was repeated or sent twice, and nothing continues until you have had a look.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('activity') }, icon('alert'), 'Review restart recovery');
   } else if (s.manual_waiting) {
     line = 'A request is waiting for you to relay it to a chat model. Manual transport needs a person even when scheduling is enabled.';

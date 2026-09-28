@@ -84,8 +84,10 @@ def _run_checks(stage: Path, kind: str, logs: Path, *, timeout_s=None, inventory
     limit=CHECK_TIMEOUT_S if timeout_s is None else timeout_s
     if not isinstance(limit,int) or isinstance(limit,bool) or not 1 <= limit <= 600:
         raise WorkspaceError('Check deadline must be an integer from 1 to 600 seconds.')
+    # SYSTEMDRIVE, PROGRAMDATA and ALLUSERSPROFILE are not secrets. Without them Windows components create a literal
+    # "%SystemDrive%\ProgramData" folder inside the working copy (seen in journey J4).
     env = {k: v for k, v in os.environ.items() if k.upper() in
-           {'SYSTEMROOT','WINDIR','PATH','PATHEXT','COMSPEC'}}
+           {'SYSTEMROOT','WINDIR','PATH','PATHEXT','COMSPEC','SYSTEMDRIVE','PROGRAMDATA','ALLUSERSPROFILE'}}
     env.update(PYTHONDONTWRITEBYTECODE='1', PYTEST_DISABLE_PLUGIN_AUTOLOAD='1',
                PYTHONUTF8='1', PYTHONIOENCODING='utf-8',
                TEMP=str(stage), TMP=str(stage), HOME=str(stage), USERPROFILE=str(stage))
@@ -260,7 +262,13 @@ def verify_draft(ws, draft, *, check_timeout_s=None, project_timeout_s=None, own
                 error._runesmith_verification = value
                 raise
         enter_phase('project checks')
-        checks = _run_checks(stage, 'project', results / 'project-checks.txt', **check_options)
+        if (stage / 'tests').is_dir() or any(rel.endswith('.py') for rel in frozen_files):
+            checks = _run_checks(stage, 'project', results / 'project-checks.txt', **check_options)
+        else:
+            # Documents or plain web pages: no tests folder and no Python, so there are no project tests to run. The
+            # owner's acceptance checks decide; without them nothing is verified (status "unchecked", journey J4).
+            checks = {'status': 'not_applicable', 'ok': True, 'ran': 0, 'skipped': 0, 'failures': 0, 'errors': 0,
+                      'output': 'No tests folder and no Python files: no project tests to run.'}
         changed = [rel for rel,data in frozen_files.items() if not (stage/rel).is_file() or (stage/rel).read_bytes()!=data]
         if changed:
             return record({'status':'failed', 'detail':'Project tests changed candidate files: ' + ', '.join(changed),
@@ -284,7 +292,8 @@ def verify_draft(ws, draft, *, check_timeout_s=None, project_timeout_s=None, own
                     oracle.update(ok=False,status='failed',detail='Acceptance changed candidate files: '+', '.join(changed))
         status_name = ('inconclusive' if checks.get('status')=='timeout' or (oracle or {}).get('status')=='timeout' else
                        'failed' if not checks['ok'] or (oracle and not oracle['ok']) else
-                       'acceptance_passed' if oracle else 'self_checks_passed')
+                       'acceptance_passed' if oracle else
+                       'unchecked' if checks.get('status') == 'not_applicable' else 'self_checks_passed')
         return record({'status':status_name, 'project_checks':checks, 'acceptance':oracle, 'utc':_now(),
                 'public_acceptance_digest':public_digest, 'public_contracts':public_contracts,
                 'acceptance_sha256':hashlib.sha256(acceptance_bytes).hexdigest() if acceptance_bytes else None,

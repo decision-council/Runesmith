@@ -1,6 +1,25 @@
 // Recovery is a review of retained intentions, never a generic retry button.
 import {h, icon, clear, post, get, withBusy, toast} from './core.js';
 
+// What the owner was doing, in their words (journey J4-F11: the detail below is exact but written for engineers).
+const DOING = {propose_acceptance: 'proposing acceptance checks', plan: 'drafting a plan', goalposts: 'proposing goalposts',
+  draft: 'drafting files', build: 'building the next step', revise: 'revising a draft', correct: 'correcting a draft',
+  escalate: 'asking a stronger model', supplement: 'asking for missing files', breakdown: 'proposing smaller steps',
+  map: 'mapping the folder', round: 'running a round', measure: 'taking a measurement', review_current: 'checking the current files'};
+// Jobs that never write into the owner's folder: only for these may the summary say that nothing there changed.
+const NO_FOLDER_WRITES = new Set(['propose_acceptance', 'plan', 'goalposts', 'draft', 'breakdown', 'map', 'measure', 'review_current']);
+
+export function plainSummary(recovery) {
+  const kind = recovery.interrupted;
+  const doing = kind ? (DOING[kind] || kind.replace(/_/g, ' ')) : 'working';
+  const waiting = recovery.relay_set_aside ? ', waiting for your chat window' : '';
+  const files = kind && NO_FOLDER_WRITES.has(kind) ? ' It changes no file in your folder, so nothing there was touched.'
+    : kind ? ' If it was writing a checked draft, Work & proposals shows what was written, with Undo.' : '';
+  const request = recovery.relay_set_aside ? ' The request it waited on was set aside; ask again when you are ready.' : '';
+  return `In short: Runesmith was restarted while ${doing}${waiting}. Nothing was repeated or sent twice.${files}${request} ` +
+    'To carry on, tick the box below, choose “Keep waiting jobs”, then Resume.';
+}
+
 export function recoveryPanel(onState) {
   const root = h('section.card.hidden', {'aria-label': 'Restart recovery', style:{marginBottom:'16px'}});
   let signature = '', saving = false;
@@ -12,6 +31,7 @@ export function recoveryPanel(onState) {
     signature = next;
     clear(root); root.classList.remove('hidden');
     root.append(h('div.card-head', h('h3', icon('shield'), 'Restart recovery'), h('span.badge.warn', 'Held · nothing replayed')),
+      h('p', plainSummary(recovery)),
       h('p.small', 'Review saved outcomes in Jobs and Work & proposals before continuing. An interrupted author call may already have been processed; retrieve its saved response instead of submitting it again. Spent check allocations remain spent.'),
       h('ul.small.muted', (recovery.reasons || []).map(reason => h('li', reason))),
       h('p.small', `${(worker.queue || []).length} waiting intention(s) retained. Interrupted jobs are recorded in history, never restored to this queue.`));
