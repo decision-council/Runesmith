@@ -199,7 +199,7 @@ def focus_packet(packet, view):
 
 def materialize_answer(ws, revision, view, raw_files):
     """Check visibility before the existing full-file binding/admission machinery."""
-    from runesmith.app.planner import PlannerUnavailable
+    from runesmith.app.planner import MAX_EDITS, PlannerUnavailable
     from runesmith.organs.repair import apply_edits
     if digest(make_view(ws, revision, view.get('selections'))) != digest(view):
         raise WorkspaceError('Retained revision view no longer matches its candidate.')
@@ -210,8 +210,10 @@ def materialize_answer(ws, revision, view, raw_files):
         if not isinstance(raw, dict): raise PlannerUnavailable('Focused file operation is invalid.')
         path, edits = raw.get('path'), raw.get('edits')
         units = [u['content'] for u in view['editable_units'] if u['path'] == path]
-        if (not units or path in seen or 'content' in raw or not isinstance(edits, list) or not 1 <= len(edits) <= 6):
-            raise PlannerUnavailable('Focused revisions allow 1-6 exact edits per displayed path, no content or new paths.')
+        if (not units or path in seen or 'content' in raw or not isinstance(edits, list)
+                or not 1 <= len(edits) <= MAX_EDITS):          # the same cap as every other answer (J2-F23)
+            raise PlannerUnavailable(f'Focused revisions allow 1-{MAX_EDITS} exact edits per displayed path, no content '
+                                     'or new paths.')
         seen.add(path)
         content = next(f['content'] for f in revision['files'] if f['path'] == path)
         try:

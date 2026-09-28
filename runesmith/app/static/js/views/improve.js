@@ -42,14 +42,14 @@ export default async function render(root, ctx) {
           t.looks_detail.map((l) => h('tr', h('td', String(l.look)), h('td', `${l.incumbent[0]}/${l.incumbent[1]}`), h('td', `${l.candidate[0]}/${l.candidate[1]}`), h('td', String(l.p_candidate_better)), h('td', String(l.p_candidate_worse))))) : h('p.tiny.faint.mt-8', 'No look yet: the first comes after enough tasks on both arms.'));
       // Journey J6-F5: turning self-improvement off stops new campaigns, not the trial the owner opened; and the
       // only way to stop a trial was to switch generations. Say so, and offer a plain stop that keeps what runs.
-      trial.append(settings.kaizen ? null : h('p.small.mt-8', 'Self-improvement is off, so no new campaigns start. This trial keeps comparing the two on new repairs, and the candidate becomes active only if it clearly wins.'),
+      trial.append(...[settings.kaizen ? null : h('p.small.mt-8', 'Self-improvement is off, so no new campaigns start. This trial keeps comparing the two on new repairs, and the candidate becomes active only if it clearly wins.'),
         h('div.row.mt-8', h('button.btn.sm', { onclick: (e) => withBusy(e.currentTarget, async () => {
           if (!(await confirmDialog({ title: 'Stop this trial?', confirm: 'Stop the trial',
             text: `${nameOf(t.incumbent)} stays active and ${nameOf(t.candidate)} is not used. The counts so far are kept, and the trial is recorded as closed by your choice.` }))) return;
           const r = await post(`/api/improve/activate/${t.incumbent}`, {});
           r.ok ? toast('Trial stopped; what runs is unchanged.', 'good') : toast(r.detail || 'The trial could not be stopped.', 'warn');
           load();
-        }) }, icon('x'), 'Stop this trial')));
+        }) }, icon('x'), 'Stop this trial'))].filter(Boolean));
       commentable(trial, 'trial', t.candidate, `trial of ${t.candidate}`);
     } else trial.append(h('p.muted', 'A trial opens when a candidate is frozen by a Kaizen campaign or adopted from the library.'));
     const OUTCOME = { activate: ['good', 'check', 'won: activated'], reject: ['', 'x', 'did not win: rejected'], closed_by_owner: ['warn', 'user', 'closed by your choice'] };

@@ -42,7 +42,8 @@ def null_appends(text: str) -> list[int]:
         parts, end = _call_args(text, match.end())
         if text[match.end():match.end() + 3] == "..." and ".filter(Boolean)" in text[match.end():end]:
             continue
-        if any(re.search(r":\s*(null|undefined)\s*$", p.strip()) or re.match(r"^[\w.?]+\s*&&", p.strip()) for p in parts):
+        if any(re.search(r":\s*(null|undefined)\s*$", p.strip()) or re.match(r"^[^()]*\?\s*(null|undefined)\s*:", p.strip())
+               or re.match(r"^[\w.?]+\s*&&", p.strip()) for p in parts):
             lines.append(text.count("\n", 0, match.start()) + 1)
     return lines
 
@@ -81,6 +82,8 @@ def test_the_checks_catch_the_slips_they_are_for():
     assert null_appends("el.append(h('b', 'x'), last ? h('p', last) : null);") == [1]
     assert null_appends("el.append(...[h('b', 'x'), last ? h('p', last) : null].filter(Boolean));") == []
     assert null_appends("el.append(ok && h('p', 'x'));") == [1]
+    assert null_appends("el.append(on ? null : h('p', 'x'), h('b', 'y'));") == [1]      # the J6-F5 slip
+    assert null_appends("el.append(h('div', on ? null : h('p', 'x')));") == []          # h() drops it
     assert target_after_await("b.onclick = async (e) => { await save(); e.currentTarget.blur(); };") == [1]
     assert target_after_await("b.onclick = async (e) => { const b = e.currentTarget; await save(); b.blur(); };") == []
 

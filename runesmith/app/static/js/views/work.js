@@ -243,7 +243,8 @@ function drawDrafts(body, w, reload, ctx) {
         if (reason===null) return;
         if (!reason.trim()) { toast('Say why, for the record: nothing was changed.','warn'); return; }
         await post(`/api/build/corrections/${c.late_correction}/set-aside`,{reason});
-        toast(c.remaining>1?'Set aside. You can ask for a correction again.':'Set aside. Both corrections are used; Goals & plan may offer smaller steps.','good',6000);
+        // The late one already counted as one of the two; setting it aside uses nothing more (review, 2026-09-28).
+        toast(`Set aside. You can ask for a correction again (${c.remaining} of 2 left).`,'good',6000);
       })},icon('x'),'Set it aside') :
       h('button.btn.sm', {disabled:!c.eligible, onclick:(e)=>withBusy(e.currentTarget,async()=>{
         const ok=await confirmDialog({title:'Ask the model to correct this answer?',

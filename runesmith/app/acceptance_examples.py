@@ -426,7 +426,19 @@ def exact(example) -> str:
     """What the check requires, written by Runesmith from the same data the template checks."""
     # Whole, up to a limit: the file a check starts with is often the format the milestone defines, and a builder
     # that saw only its first 60 characters had to guess the rest (journey J11-G1).
-    parts = [f'starting with `{f["name"]}` containing “{f["text"][:FILE_SHOWN]}{"…" if len(f["text"]) > FILE_SHOWN else ""}”'
+    # Several long files would not fit, so their share shrinks until what is checked fits whole (review, 2026-09-28).
+    for shown in (FILE_SHOWN, 300, 150, 60):
+        text = _exact(example, shown)
+        if len(text) <= EXACT_LIMIT:
+            return text
+    return text[:EXACT_LIMIT - 1] + '…'
+
+
+EXACT_LIMIT = 900
+
+
+def _exact(example, shown) -> str:
+    parts = [f'starting with `{f["name"]}` containing “{f["text"][:shown]}{"…" if len(f["text"]) > shown else ""}”'
              for f in example.get('files', [])]
     preparation = []                        # steps that prepare the next one, in order
     for step in example['steps']:
@@ -478,7 +490,7 @@ def exact(example) -> str:
     if example.get('pages_reachable'):
         parts.append('every Markdown page can be reached by following links from the front page')
     text = '; '.join(parts) + ('; and nothing stops with a crash report.' if example['steps'] else '.')
-    return (text[:1].upper() + text[1:])[:900]
+    return text[:1].upper() + text[1:]
 
 
 def _name(value, index, taken):

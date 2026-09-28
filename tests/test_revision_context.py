@@ -207,3 +207,18 @@ def test_actual_api_ignores_extra_authority_and_ui_is_connected(tmp_path):
     assert events == [('work', {})]
     ui = (Path(__file__).parents[1] / 'runesmith/app/static/js/views/work.js').read_text(encoding='utf-8')
     assert 'showRevisionContext(d.id, reload)' in ui and 'Save focused packet without a call' in ui
+
+
+
+def test_a_focused_revision_takes_as_many_exact_edits_as_any_answer(tmp_path):
+    # Review of J2-F23 (2026-09-28): the ordinary cap went from 6 to 12 exact edits per file, but focused revisions
+    # still refused 7 or more.
+    from runesmith.app.planner import MAX_EDITS
+    ws, prior = setup_revision(tmp_path)
+    view = rc.make_view(ws, prior, selections(ws, prior))
+    chain = [{'old_text': 'return 2' if n == 1 else f'return step{n - 1}', 'new_text': f'return step{n}'}
+             for n in range(1, MAX_EDITS + 1)]
+    result = rc.materialize_answer(ws, prior, view, [{'path': 'app.py', 'edits': chain}])
+    assert f'return step{MAX_EDITS}' in result[0]['content'] and '987654321' in result[0]['content']
+    with pytest.raises(PlannerUnavailable, match=f'1-{MAX_EDITS} exact edits'):
+        rc.materialize_answer(ws, prior, view, [{'path': 'app.py', 'edits': chain + [{'old_text': 'x', 'new_text': 'y'}]}])

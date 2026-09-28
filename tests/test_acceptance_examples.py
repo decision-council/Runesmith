@@ -536,3 +536,16 @@ def test_the_checker_sees_the_checks_approved_for_other_milestones(tmp_path):
         {"milestone": "Project file", "status": "open", "checks": [refused]}]
     assert packet(ws, "m1", "examples")["other_milestones_checks"] == []            # never its own
     assert "other_milestones_checks" in packet(ws, "m2", "examples")["task"]
+
+
+
+def test_long_starting_files_shrink_so_what_is_checked_stays_whole():
+    # Review of J11-G1 (2026-09-28): with 600 characters per file, two long files pushed the steps and the closing
+    # sentence past the 900-character cut, silently.
+    from runesmith.app.acceptance_examples import EXACT_LIMIT, exact
+    long_file = lambda name: {"name": name, "text": "x" * 2500}
+    example = {"files": [long_file("a.motion.json"), long_file("b.motion.json")],
+               "steps": [{"run": ["node", "motion.mjs", "a.motion.json"], "expect": {"exit": "error"}}]}
+    told = exact(example)
+    assert len(told) <= EXACT_LIMIT and told.endswith("and nothing stops with a crash report.")
+    assert "running `node motion.mjs a.motion.json`: it ends with an error" in told and told.count("…”") == 2
