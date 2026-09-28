@@ -5,7 +5,19 @@ import {supportReportsCard} from '../support-reports.js';
 
 const EXECUTORS = [['map_plan','Map & Plan'],['build','Build'],['troubleshoot','Troubleshoot'],['optimize','Optimize'],['operations','Operations']];
 
-function measurementEditor(item, revision, reload) {
+// What the map found in a report folder: a pattern for its newest file and that file's columns, so someone who came
+// to watch a number does not need to know them by heart (journey J12-G1).
+export async function reportSuggestion() {
+  try {
+    const found = ((await get('/api/map/environment')).map?.objects || []).find((o) => o.kind === 'data_reports' && o.facts?.newest_report);
+    if (!found) return null;
+    const newest = found.facts.newest_report;
+    const name = (found.facts.report_files > 1 && /\d/.test(newest)) ? newest.replace(/\d+/g, '*') : newest;
+    return { path: (found.root ? '' : `${found.name}/`) + name, columns: found.facts.columns || [], files: found.facts.report_files };
+  } catch { return null; }
+}
+
+function measurementEditor(item, revision, reload, suggest = null) {
   drawer({title: item?.id ? 'Edit measurement' : 'Add measurement', sub: 'Define the evidence before interpreting a result', render(body, close) {
     const fields = {};
     const input = (key, label, hint='', value='') => {
@@ -32,6 +44,13 @@ function measurementEditor(item, revision, reload) {
       input('max_age_hours','Maximum data age (hours, optional)','Blank: no recency rule'),
       h('p.small.muted','Requires a timestamp field. The age rule uses the newest included data timestamp, never the file or measurement time. It does not prove that all rows are recent or complete. Expired evidence blocks Optimize; Operations can still import a replacement.'),
       input('email_sender','Future email sender filter','No mailbox access is performed'), input('email_subject','Future email subject filter'));
+    if (!item && suggest) {
+      fields.path.value = suggest.path;
+      const list = h('datalist', { id: 'rs-report-columns' }, suggest.columns.map((c) => h('option', { value: c })));
+      for (const key of ['field', 'denominator_field', 'filter_field', 'time_field']) fields[key].setAttribute('list', 'rs-report-columns');
+      body.prepend(h('p.callout', `From your folder: ${suggest.files > 1 ? `the newest of ${suggest.files} reports, ${suggest.path}` : suggest.path}`
+        + (suggest.columns.length ? `. Its columns: ${suggest.columns.join(', ')}.` : '.')), list);
+    }
     const op = h('select.select', {'aria-label':'Threshold comparison'}, [['','No threshold'],['gte','At least'],['lte','At most']].map(([v,l])=>h('option',{value:v,selected:(item?.threshold?.op||'')===v},l)));
     const threshold = h('input.input', {type:'number',step:'any',value:item?.threshold?.value ?? '', 'aria-label':'Threshold value'});
     const instructions = h('textarea.textarea', {rows:5,value:item?.instructions||'', 'aria-label':'Interpretation instructions',placeholder:'How to interpret this measure, its limitations, expected data period and what a useful change would mean.'});
@@ -64,7 +83,7 @@ function pasteReport(item, reload) {
 
 export default async function render(root, ctx) {
   root.classList.add('mission-page');
-  let dirty=false,closed=false,loadSerial=0; const runButtons=[];
+  let dirty=false,closed=false,loadSerial=0,measurementsRevision=null; const runButtons=[];
   const reports=supportReportsCard();
   const heading=h('div.page-head',h('div',h('h2','Modes & measurements'),h('p','Choose what Runesmith works on and how results are observed. Every mode can be on together.')));
   const refreshStatus=h('span.tiny.muted',{'aria-live':'polite'},'Shows saved results; it does not measure again.');
@@ -72,6 +91,7 @@ export default async function render(root, ctx) {
   const load=async()=>{
     if(dirty||closed)return false;
     const serial=++loadSerial,data=await get('/api/mission');
+    measurementsRevision=data.measurements.revision;
     if(dirty||closed||serial!==loadSerial)return false;
     clear(body);runButtons.length=0;
     const modes=data.modes.map(({id,name,executor,enabled,instructions,measurement_ids})=>({id,name,executor,enabled,instructions,measurement_ids:[...measurement_ids]}));
@@ -126,7 +146,7 @@ export default async function render(root, ctx) {
       ...intent.blockers.map(t=>h('p.callout.warn',t)),
       ...intent.instructions.map(i=>h('details.mt-8',h('summary.small',`${i.path} · scope ${i.scope} · ${i.kind}`),h('p.tiny.mono',i.sha256),h('pre.code',i.text))),
       h('p.tiny.muted',intent.rule));
-    const metricCard=h('div.card',h('div.card-head',h('h3',icon('target'),'Objective measurements'),h('button.btn.sm',{onclick:()=>measurementEditor(null,data.measurements.revision,load)},icon('plus'),'Add measurement')),
+    const metricCard=h('div.card',h('div.card-head',h('h3',icon('target'),'Objective measurements'),h('button.btn.sm',{onclick:async()=>measurementEditor(null,data.measurements.revision,load,await reportSuggestion())},icon('plus'),'Add measurement')),
       h('p.small.muted',data.measurements.scope));
     for(const item of data.measurements.items){
       const last=item.last;const live=['ga4','email'].includes(item.source_kind);
@@ -157,6 +177,9 @@ export default async function render(root, ctx) {
     const loaded=await load();
     if(!closed)refreshStatus.textContent=loaded?'Saved evidence refreshed; no report read or model call.':'View changed during refresh; your edits were preserved.';
   })},icon('refresh'),'Refresh evidence'),refreshStatus));
-  await load();const update=debounce(load,350);const offs=['mission','job','brief','goals','map','settings'].map(kind=>bus.on(kind,update));
+  await load();
+  // Arrived from the Overview's "Choose a number to watch": open the editor, filled from the map (journey J12-G1).
+  if(ctx?.sub?.[0]==='add-measurement'&&!closed)measurementEditor(null,measurementsRevision,load,await reportSuggestion());
+  const update=debounce(load,350);const offs=['mission','job','brief','goals','map','settings'].map(kind=>bus.on(kind,update));
   return()=>{closed=true;reports.dispose();offs.forEach(off=>off());root.classList.remove('mission-page');};
 }

@@ -50,7 +50,7 @@ const fixtureWork={counts:{},draft_counts:{waiting:1},proposals:[],drafts:[recov
   build_memory:{total:0,items:[]},pending_authors:[],build_corrections:[],
   build_escalation:{eligible:false,milestone:'m1',attempts:1,used:false,
     allowance:{known:true,can_draft:true,used:1,remaining:2,limit:3,blockers:[]}}};
-let fixtureBreakdowns=[];
+let fixtureBreakdowns=[],fixtureMapObjects=null;
 let briefCandidates=[],ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30},fixFixture={offer:null};
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
@@ -235,7 +235,7 @@ await context.route('**/*',async route=>{
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
   else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false,autonomy:'propose',
     exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark'};
-  else if(p==='/api/map/environment')data={map:{objects:[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
+  else if(p==='/api/map/environment')data={map:{objects:fixtureMapObjects||[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
   else if(p==='/api/build')data={apply:false,acceptance_folder:'.runesmith/acceptance',last:null};
   else if(p==='/api/notes')data={notes:reviewNotes,counts:{},read_notes:true};
   else if(/^\/api\/plan\/milestones\/[^/]+\/expectations$/.test(p)){
@@ -371,6 +371,19 @@ try{
   await page.screenshot({path:path.join(artifacts,'04-chat-author-guide.png')});
   assert((await page.locator('#page').innerText()).includes('human-assisted transport'));
   loops.push({id:'B1.05',case:'Actual event subscription, responsive screenshots and chat guidance render',result:'passed',note:'Screenshots require separate visual inspection; no live connector or owner acceptance.'});
+  // B1.06 (journey J12-G1): arriving to choose a number opens the measurement editor, filled from the map
+  fixtureMapObjects=[{name:'reports',root:false,kind:'data_reports',facts:{report_files:6,newest_report:'week-40.csv',columns:['date','product','baked','sold','revenue']}}];
+  await page.evaluate(async()=>{window.cleanup?.();document.querySelector('#page').replaceChildren();
+    const module=await import('/static/js/views/mission.js');
+    window.cleanup=await module.default(document.querySelector('#page'),{app:{state:window.homeState},sub:['add-measurement'],refreshState(){},navigate(...a){window.navigation=a;}});});
+  const suggested=page.locator('.drawer',{hasText:'Add measurement'});
+  await suggested.waitFor();
+  assert.equal(await suggested.getByLabel('Relative report path',{exact:true}).inputValue(),'reports/week-*.csv');
+  assert((await suggested.innerText()).includes('the newest of 6 reports, reports/week-*.csv. Its columns: date, product, baked, sold, revenue.'));
+  assert.equal(await suggested.getByLabel('Numeric field / column',{exact:true}).getAttribute('list'),'rs-report-columns');
+  await suggested.getByRole('button',{name:'Close',exact:true}).click();
+  fixtureMapObjects=null;
+  loops.push({id:'B1.06',case:'Choosing a number to watch opens the measurement editor with the report pattern and its columns from the map',result:'passed'});
   }
   if(selected.has('B2')){
     await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>window.mount('inference'));
@@ -1902,7 +1915,7 @@ try{
     const watchText=await hero().innerText();
     assert(watchText.includes('You want to keep an eye on your numbers. Runesmith found report files in reports.')&&!watchText.includes('null'),watchText);
     await hero().getByRole('button',{name:'Choose a number to watch',exact:true}).click();
-    assert.deepEqual(await page.evaluate(()=>window.navigation),['mission']);
+    assert.deepEqual(await page.evaluate(()=>window.navigation),['mission','add-measurement']);
     assert(requests.slice(watchStart).every(r=>r.method==='GET'));
     loops.push({id:'B19.15',case:'Keeping an eye on numbers: the Overview names the report files found and offers “Choose a number to watch”',result:'passed'});
     loops.push({id:'B19.13',case:'A mapped folder without code is told the test-runs switch has nothing to run yet; code, an outdated map or no map says nothing',result:'passed'});
