@@ -7,6 +7,9 @@ const STATUS = { open: ['', 'open'], doing: ['rune', 'in progress'], done: ['goo
 const exactText = (c) => c.unstated?.length
   ? h('div.tiny.warn', 'Also requires the exact text: ' + c.unstated.map((x) => `“${x}”`).join(', '))
   : c.exact ? h('details.tiny', h('summary', 'What exactly is checked'), h('div.muted', c.exact)) : null;
+// A check that already passed on today's project, while others failed (journey J1-G2).
+const todayNote = (c) => c.passes_today
+  ? h('div.tiny.warn', 'Already passes on your project today, so it may not test what this milestone adds.') : null;
 // Examples-style proposals: texts Runesmith removed because the milestone never states them, and what no check covers.
 const examplesNotes = (p) => [
   p.dropped?.length ? h('div.small.mt-8', h('b', 'Runesmith loosened or removed wording your milestone does not state, so a correct build is not rejected for it:'),
@@ -281,7 +284,7 @@ export default async function render(root, ctx) {
           : `Revised once: the first checks ${firstTry}.`);
         const unstated = p.checks.some((c) => c.unstated?.length);
         accBlock.append(...[h('b.small', replacing ? 'New checks proposed to replace yours: do these describe “done” better?' : 'Proposed acceptance checks: do these describe “done”?'),
-          h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c)))),
+          h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c), todayNote(c)))),
           p.assumes?.length ? h('div.small.mt-8', h('b', 'They assume (your milestone does not say this):'), h('ul.small', p.assumes.map((a) => h('li', a)))) : null,
           ...examplesNotes(p),
           trial, revised,

@@ -116,3 +116,21 @@ def test_the_queue_records_who_asked_for_each_job(tmp_path):
     import inspect
     source = inspect.getsource(Worker._execute)
     assert "self.enqueue('build', by='schedule')" in source and "self.enqueue('breakdown', by='schedule'" in source
+
+
+def test_a_skipped_chat_request_is_reported_as_skipped_in_plain_words(tmp_path, monkeypatch):
+    # Journey J1-F3, F4: the log said "Propose_acceptance skipped: …" and "(skipped by the owner) (acceptance) answered".
+    from runesmith.app.planner import SkippedByOwner
+    worker = Worker(workspace(tmp_path), EventBus())
+    worker._on_call({"answered_by": "(skipped by the owner)", "role": "acceptance", "ok": True, "latency_s": 38.0})
+
+    def skipped(**params):
+        raise SkippedByOwner("you skipped the request, so nothing changed")
+
+    monkeypatch.setattr(worker, "_job_propose_acceptance", skipped)
+    worker._execute({"id": "j1", "kind": "propose_acceptance", "params": {"milestone": "m1"}, "by": "owner"},
+                    schedule_next=False)
+    texts = [line["text"] for line in worker.lines]
+    assert "You skipped the chat-window request (acceptance)." in texts
+    assert "Proposing acceptance checks: you skipped the request, so nothing changed." in texts
+    assert not any("answered" in t or "Propose_acceptance" in t for t in texts)

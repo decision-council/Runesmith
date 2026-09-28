@@ -1817,7 +1817,7 @@ try{
     const start=requests.length;
     fixturePlan={version:1,summary:'Reading log',milestones:[{id:'m1',title:'Books per month',status:'open',detail:'python -m readinglog months',done_when:'Counts per month'}]};
     const checks=[{test:'test_counts',says:'Each month shows its number of books.'},
-      {test:'test_bad_date',says:'A date that does not exist is refused.',unstated:['2026-02-30']}];
+      {test:'test_bad_date',says:'A date that does not exist is refused.',unstated:['2026-02-30'],passes_today:true}];
     const block=()=>page.locator('[aria-label="Acceptance checks for Books per month"]');
     const posts=()=>requests.slice(start).filter(r=>r.method==='POST');
     fixtureAcceptance={m1:{approved:null,proposal:{id:'p1',checks,assumes:['The list file is chosen with --file.'],
@@ -1826,6 +1826,7 @@ try{
     let text=await block().innerText();
     assert(text.includes('Proposed acceptance checks'),text);assert(text.includes('They assume'));assert(text.includes('The list file is chosen with --file.'));
     assert(text.includes('Also requires the exact text: “2026-02-30”'));assert(text.includes('2 of 2 fail, as expected'));
+    assert(text.includes('Already passes on your project today, so it may not test what this milestone adds.'));   // J1-G2
     assert(!/\bnull\b|undefined/.test(text),text);
     loops.push({id:'B20.01',case:'A proposal shows its sentences, assumptions, unstated exact text and trial result, with no stray null',result:'passed'});
     await block().getByRole('button',{name:'Use these checks',exact:true}).click();

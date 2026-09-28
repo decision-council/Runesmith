@@ -216,6 +216,9 @@ export function askText({ title, text, placeholder = '', value = '', confirm = '
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (!multiline || e.ctrlKey || e.metaKey)) { e.preventDefault(); m.close(input.value); } });
   });
 }
+const openDrawers = new Set();
+// Moving to another page closes open drawers, so none is left covering the new page (journey J1-F6).
+export function closeDrawers() { for (const close of [...openDrawers]) close(); }
 export function drawer({ title, sub, render, width }) {
   const scrim = h('div.scrim');
   const body = h('div.body');
@@ -224,7 +227,8 @@ export function drawer({ title, sub, render, width }) {
   const el = h('aside.drawer', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId, style: width ? { width } : null },
     h('header', h('div.grow', h('h3', { id: titleId }, title), sub ? h('div.small.muted', sub) : null), closeBtn), body);
   let release = null, cleanup = null;
-  const close = () => { scrim.remove(); el.remove(); if (release) { release(); release = null; } cleanup && cleanup(); };
+  const close = () => { openDrawers.delete(close); scrim.remove(); el.remove(); if (release) { release(); release = null; } cleanup && cleanup(); };
+  openDrawers.add(close);
   scrim.addEventListener('click', close);
   document.body.append(scrim, el);
   release = layer(el, close);
@@ -301,7 +305,7 @@ export function openNotes(type, id, label) {
     const list = h('div');
     const reads = READS[type];
     const info = h('div.callout.mb-8', icon('info'), h('div', notesState.readNotes && reads
-      ? `Open notes here are eligible for ${reads}, within the prompt budget. Delivery is not guaranteed; inspect the draft's Revision packet for included and omitted feedback. Resolve notes that no longer apply.`
+      ? `Open notes here go to ${reads}, newest first, as long as there is room. A draft’s details show which notes went with it. Resolve a note when it no longer applies.`
       : notesState.readNotes ? 'Notes here are kept for you and your team. They are recorded in the ledger.'
       : 'Models do not read notes right now (Settings → Give notes to the model).'));
     const ta = h('textarea.textarea', { placeholder: `Say anything about ${TARGET_WORDS[type] || 'this'}… (Ctrl+Enter to save)`, rows: 4 });

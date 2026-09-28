@@ -38,6 +38,12 @@ from runesmith.app.workspace import Workspace, WorkspaceError, _read_json, _writ
 from runesmith.app.worker_journal import Record, MAX_JOBS, validate_job, validate_queue
 
 
+# What a job does, in the owner's words, for the live log (journey J1-F3: "Propose_acceptance skipped").
+JOB_WORDS = {"propose_acceptance": "Proposing acceptance checks", "plan": "Drafting a plan", "goalposts": "Proposing goalposts",
+             "draft": "Drafting files", "build": "Building the next step", "revise": "Revising a draft",
+             "correct": "Correcting a draft", "escalate": "Asking a stronger model", "supplement": "Asking for missing files",
+             "breakdown": "Proposing smaller steps", "map": "Mapping the folder", "round": "The round",
+             "measure": "Taking a measurement"}
 KIND_WORDS = {"python_repository": ("Python project", "Python projects"), "node_repository": ("Node project", "Node projects"),
               "document_collection": ("document collection", "document collections"), "website": ("website", "websites"),
               "folder": ("folder", "folders"),
@@ -425,9 +431,12 @@ class Worker:
     def _on_call(self, event: dict[str, Any]) -> None:
         self.ws.record_call(event)
         model = event.get("answered_by") or event.get("model") or event.get("instrument")
-        outcome = "answered" if event.get("ok") else f"failed ({event.get('error_kind') or 'error'})"
-        self.say(f"{model} ({event.get('role')}) {outcome} in {event.get('latency_s', 0):.1f} s",
-                 "info" if event.get("ok") else "warn", kind="call")
+        if str(model).startswith("(skipped"):              # the owner declined a chat-window request (J1-F4)
+            self.say(f"You skipped the chat-window request ({event.get('role')}).", "info", kind="call")
+        else:
+            outcome = "answered" if event.get("ok") else f"failed ({event.get('error_kind') or 'error'})"
+            self.say(f"{model} ({event.get('role')}) {outcome} in {event.get('latency_s', 0):.1f} s",
+                     "info" if event.get("ok") else "warn", kind="call")
         self.bus.publish("call", {k: event.get(k) for k in ("role", "instrument", "model", "ok", "error_kind",
                                                             "latency_s", "answered_by")})
 
@@ -522,7 +531,7 @@ class Worker:
         except SkippedByOwner as error:                    # the owner said no to a relay request: not a failure
             result = "skipped"
             outcome = {"summary": str(error)}
-            self.say(f"{job['kind'].capitalize()} skipped: {error}.")
+            self.say(f"{JOB_WORDS.get(job['kind'], job['kind'].replace('_', ' ').capitalize())}: {error}.")
         except Exception as error:                         # a failed job never stops the worker
             result = "failed"
             explained = type(error).__name__ in ("PlannerUnavailable", "WorkspaceError")   # already in plain words

@@ -328,8 +328,10 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
         clean['revision'] = {'after': 'unusable', 'error': str(error)[:300], 'first_answer': _bounded(first_answer)}
         drafted_by = out.receipt.get('answered_by') or out.receipt.get('model') or drafted_by
         clean['dry_run'] = dry_run(ws, clean['code'], runs_project_code=_runs_project_code(clean))
+        _mark_passing_today(clean)
     else:
         clean['dry_run'] = dry_run(ws, clean['code'], runs_project_code=_runs_project_code(clean))
+        _mark_passing_today(clean)
         if findings(clean):
             clean, drafted_by = _revise_once(ws, router, data, clean, key, drafted_by, checkpoint,
                                              style=style, first_answer=out.data)
@@ -379,6 +381,7 @@ def _revise_once(ws, router, data, first, key, drafted_by, checkpoint, *, style=
     except WorkspaceError as error:
         return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by
     revised['dry_run'] = dry_run(ws, revised['code'], runs_project_code=_runs_project_code(revised))
+    _mark_passing_today(revised)
     revised['revision'] = {'after': finding, 'first_code_sha256': first['code_sha256'],
                            'first_checks': first['checks']}
     if style == 'examples':
@@ -419,8 +422,26 @@ def dry_run(ws, code: str, *, runs_project_code: bool = True) -> dict[str, Any]:
         result = _run_checks(stage, json.dumps([str(proposed)]), Path(directory) / 'dry-run.txt', timeout_s=120)
     ran = result.get('ran') or 0
     verdict = 'passes_now' if result['ok'] else 'fails_now' if result['status'] == 'failed' and ran else 'broken'
-    return {'verdict': verdict, 'ran': ran, 'failures': result.get('failures', 0), 'errors': result.get('errors', 0),
-            'snapshot_digest': snapshot['digest'], 'utc': _now()}
+    out = {'verdict': verdict, 'ran': ran, 'failures': result.get('failures', 0), 'errors': result.get('errors', 0),
+           'snapshot_digest': snapshot['digest'], 'utc': _now()}
+    if verdict == 'fails_now' and not result.get('failure_details_omitted'):
+        out['failing_tests'] = sorted({d['test'].rsplit('.', 1)[-1] for d in result.get('failure_details', [])})
+    return out
+
+
+def _mark_passing_today(proposal):
+    """Name each check that already passed on today's project, though others failed (journey J1-G2).
+
+    A check that passes before the milestone is built may pass for a reason the milestone does not change, for
+    example a command the program does not have yet being refused. The owner sees it under that check.
+    """
+    failing = proposal.get('dry_run', {}).get('failing_tests')
+    if failing is None:
+        return proposal
+    for check in proposal['checks']:
+        if check['test'] not in failing:
+            check['passes_today'] = True
+    return proposal
 
 
 # Appended to an approved file: a failing check is reported to the builder by its sentence, never by its assertion.

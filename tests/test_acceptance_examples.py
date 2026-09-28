@@ -337,6 +337,20 @@ def test_propose_asks_for_examples_retries_an_unusable_answer_once_and_publishes
     assert "Checked exactly:" in described and "a line with “2026-01” also shows the number 2" in described, criteria
 
 
+def test_a_check_that_already_passes_today_is_marked_on_its_own(tmp_path):
+    # Journey J1-G2: "an unknown item is refused" passed before the milestone, because the command did not exist yet.
+    today_passes = {"examples": [
+        {"name": "months", "says": "Months are counted.", "steps": [add("Tea", "2026-01-05"),
+         {"run": T + ["months"], "expect": {"lines": [{"has": "2026-01", "number": 1}]}}]},
+        {"name": "nonsense refused", "says": "A command the program does not know is refused with a message.",
+         "steps": [{"run": T + ["weekly"], "expect": {"exit": "error", "message": True}}]}]}
+    ws = workspace(tmp_path, [today_passes])
+    proposal = propose(ws, ws.router(), "m1")
+    assert proposal["dry_run"]["verdict"] == "fails_now"
+    marked = {c["test"]: c.get("passes_today", False) for c in proposal["checks"]}
+    assert marked == {"test_01_months": False, "test_02_nonsense_refused": True}
+
+
 def test_a_second_unusable_answer_is_reported_in_plain_words(tmp_path):
     unusable = {"examples": [{"name": "x", "says": "x", "steps": [{"run": ["bash", "-c", "true"]}]}]}
     ws = workspace(tmp_path, [unusable, unusable])

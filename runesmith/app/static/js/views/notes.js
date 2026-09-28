@@ -9,7 +9,7 @@ export default async function render(root, ctx) {
   const offs = [];
   let filter = 'open';
   const head = h('div.page-head', h('div', h('h2', 'Notes'),
-    h('p', 'Comment on a folder, goal, draft, model or Runesmith itself. Open notes are selected within a bounded prompt budget, newest first. Selected-draft and milestone feedback takes priority in revisions. Inspect delivery in the draft’s Revision packet; an open note is not a guarantee of delivery.')),
+    h('p', 'Tell Runesmith things in your own words: about the whole folder, a goal, a draft, a model, or Runesmith itself. Open notes travel with the work they are about, newest first, as long as there is room. A draft’s details show which notes went with it. Resolve a note when it no longer applies.')),
     h('div.actions', h('button.btn.primary', { onclick: () => openNotes('workspace', 'root', 'the whole workspace') }, icon('note'), 'Note on the whole workspace')));
   const seg = h('div.seg');
   const list = h('div.col.gap-16');

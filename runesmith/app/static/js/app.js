@@ -1,6 +1,6 @@
 // Runesmith Studio: the shell (navigation, status, command palette, comment mode) and the router.
 import { $, $$, h, icon, clear, get, post, bus, connectEvents, toast, notesState, openNotes, refreshNoteBadges,
-  confirmDialog, debounce, ago, modal, withBusy } from './core.js';
+  confirmDialog, debounce, ago, modal, withBusy, closeDrawers } from './core.js';
 import { LOGO } from './icons.js';
 
 const NAV = [
@@ -57,7 +57,8 @@ async function boot() {
   }
   renderShell(root);
   await refreshState();
-  window.addEventListener('hashchange', route);
+  // A real page change closes drawers; a page redrawing itself (navigate to the same page) keeps them.
+  window.addEventListener('hashchange', () => { closeDrawers(); route(); });
   route();
   wireEvents();
 }
