@@ -435,6 +435,29 @@ def test_a_file_a_step_hands_the_program_that_nothing_creates_is_named_under_its
     assert 'test_02_at_one runs the program on "position.motion.json", a file nothing creates' in said, said
 
 
+def test_files_given_inside_a_step_are_created_for_the_example():
+    # Journey J11-G11: for s1 Nemotron wrote position.motion.json inside the step that reads it, where it was ignored;
+    # its revision made the file a step of its own, which was refused.
+    source = json.dumps({"inventory": ["motion.mjs"]})
+    text = '{"timeline": [{"time": 0, "x": 0}, {"time": 2, "x": 100}]}'
+    at_one = {"run": ["node", "motion.mjs", "position.motion.json", "--at", "1"], "expect": {"exit": "ok"}}
+    given = [{"name": "position.motion.json", "text": text}]
+    inside = {"name": "at one", "says": "With --at the position is printed.", "steps": [dict(at_one, files=given)]}
+    alone = {"name": "at one", "says": "With --at the position is printed.", "steps": [{"files": given}, at_one]}
+    for example in (inside, alone):
+        shaped = validate_examples({"examples": [example]}, "node motion.mjs FILE --at SECONDS", source_text=source)
+        assert shaped["examples"][0]["files"] == given and len(shaped["examples"][0]["steps"]) == 1
+        assert "missing_input" not in shaped["checks"][0]
+    checked = dict(at_one, contains=[{"name": "position.motion.json", "texts": ["timeline"]}])
+    shaped = validate_examples({"examples": [dict(inside, steps=[dict(checked, files=given)])]}, "node motion.mjs FILE --at SECONDS")
+    assert shaped["examples"][0]["contains"] == [{"name": "position.motion.json", "texts": ["timeline"]}]
+    later = {"name": "damaged", "says": "A damaged file gives a message.",
+             "steps": [add("Tea", "2026-01-05"), {"files": [{"name": "tally.json", "text": "[{"}]},
+                       {"run": T + ["list"], "expect": {"message": True}}]}
+    with pytest.raises(WorkspaceError, match='step 2: "files" is not a step'):
+        validate_examples({"examples": [later]}, MILESTONE)
+
+
 def test_a_check_on_a_file_nothing_creates_is_revised_once_and_the_owner_sees_why(tmp_path):
     backup = {"name": "listed from a backup", "says": "Entries are listed from a backup file.",
               "steps": [add("Tea", "2026-01-05"), {"run": T + ["list", "backup.json"], "expect": {"shows": ["Tea"]}}]}

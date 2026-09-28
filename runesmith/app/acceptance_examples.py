@@ -73,7 +73,8 @@ TASK = (
     "- \"fault\": \"interrupted_write\" on a python run step makes every file write inside the folder stop halfway, "
     "as if the power failed. Use it when the milestone promises safety against interruption, then check the result "
     "with a later step.\n"
-    "- \"files\": [{\"name\", \"text\"}] creates files before the steps (for example a damaged data file). A file "
+    "- \"files\": [{\"name\", \"text\"}], on the example next to \"steps\", creates files before the steps (for "
+    "example a damaged data file). A file "
     "a step hands the program must exist: create it with \"files\" or an earlier step, or use one the project "
     "has (source_context lists them). "
     "\"unchanged\": [names of files this example creates with \"files\"] checks that they are exactly the same "
@@ -545,11 +546,29 @@ FILE_CHECKS = ('exists', 'contains', 'unchanged')
 def _lifted(row, steps, what, dropped):
     """File checks written inside a step's "expect" moved to the example they belong to (journey J11-G9: for the SVG
     frame, the Checker put "exists" and "contains" for out.svg under the step that writes it). A "hides" naming a file
-    is not something the format checks; it is dropped with a note. Copies: the model's answer itself is kept as sent."""
+    is not something the format checks; it is dropped with a note. Copies: the model's answer itself is kept as sent.
+
+    Files given inside a step are created for the example (journey J11-G11: for s1 Nemotron wrote position.motion.json
+    inside the step that reads it, where it was ignored, and its revision made each file a step of its own, which was
+    refused). Files are created before the first step, so a step that gives files after another step ran is refused
+    with that reason: moving them would change what the example does."""
     if not isinstance(steps, list):
         return row, steps
     row, moved = dict(row), []
-    for step in steps:
+    for n, step in enumerate(steps, 1):
+        if isinstance(step, dict) and ('files' in step or any(k in step for k in FILE_CHECKS)):
+            step = dict(step)
+            for key in FILE_CHECKS:
+                if isinstance(step.get(key), list):
+                    row[key] = list(row.get(key) or []) + step.pop(key)
+            files = step.pop('files', None)
+            if isinstance(files, list) and files:
+                if any(isinstance(s, dict) and any(s.get(k) for k in ('run', 'call', 'doc')) for s in moved):
+                    raise WorkspaceError(f'{what}, step {n}: "files" is not a step. Files are created before the first '
+                                         'step; put them in the example\'s own "files".')
+                row['files'] = list(row.get('files') or []) + files
+            if not step:
+                continue
         expect = step.get('expect') if isinstance(step, dict) else None
         if not isinstance(expect, dict):
             moved.append(step)
