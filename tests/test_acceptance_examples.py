@@ -441,3 +441,16 @@ def test_an_exit_that_is_no_known_word_is_still_refused():
     answer = {"examples": [{"name": "x", "says": "x", "steps": [{"run": T + ["list"], "expect": {"exit": "maybe"}}]}]}
     with pytest.raises(WorkspaceError, match='"exit" is ok, error or any'):
         validate_examples(answer, MILESTONE)
+
+
+
+def test_a_file_a_check_starts_with_is_shown_whole_to_the_owner_and_the_builder():
+    # Journey J11-G1: the Checker's example fed the program a project file in the format it defined; the builder saw
+    # only its first 60 characters and would have had to guess the rest.
+    project = '{"version": "1.0", "stage": {"width": 1920, "height": 1080}, "keyframes": [{"id": "rect1", "time": 0}]}'
+    answer = {"examples": [{"name": "reads a project", "says": "A project file is read and its object is shown.",
+                            "files": [{"name": "test.motion.json", "text": project}],
+                            "steps": [{"run": ["node", "motion.mjs", "test.motion.json", "--at", "0"],
+                                       "expect": {"shows": ["rect1"]}}]}]}
+    shaped = validate_examples(answer, "A project file format read by node motion.mjs.")
+    assert project in shaped["checks"][0]["exact"]

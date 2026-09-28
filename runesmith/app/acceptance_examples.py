@@ -416,9 +416,14 @@ def _quote(texts):
     return ', '.join(f'“{t}”' for t in texts)
 
 
+FILE_SHOWN = 600
+
+
 def exact(example) -> str:
     """What the check requires, written by Runesmith from the same data the template checks."""
-    parts = [f'starting with `{f["name"]}` containing “{f["text"][:60]}{"…" if len(f["text"]) > 60 else ""}”'
+    # Whole, up to a limit: the file a check starts with is often the format the milestone defines, and a builder
+    # that saw only its first 60 characters had to guess the rest (journey J11-G1).
+    parts = [f'starting with `{f["name"]}` containing “{f["text"][:FILE_SHOWN]}{"…" if len(f["text"]) > FILE_SHOWN else ""}”'
              for f in example.get('files', [])]
     preparation = [s for s in example['steps'] if 'run' in s and not s.get('expect') and not s.get('fault')]
     for step in example['steps']:

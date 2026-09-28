@@ -71,3 +71,30 @@ def test_an_admitted_call_never_falls_through(tmp_path):
     with pytest.raises(TransportCensored) as failure:
         call(router(tmp_path, admitted_then_silent(a), answering(b), events))
     assert failure.value.receipt['unresolved'] and a[0] == 'POST' and b == []
+
+
+
+def every_route_refused(calls, spent=0):
+    """Admitted, then turned away by every route before generating: Milliner's attempts say so (journey J11-F2)."""
+    def gateway(method, url, headers, body, timeout):
+        calls.append(method)
+        if method == 'POST':
+            return 202, {'job_id': 'mj_refused', 'state': 'queued', 'agent': 'test'}
+        return 200, {'job_id': 'mj_refused', 'agent': 'test', 'state': 'failed',
+                     'error': 'every route failed - gemini:flash rate_limited; gemini2:flash overloaded',
+                     'meta': {'attempts': [{'provider': 'gemini', 'outcome': 'rate_limited', 'tokens_in': 0, 'tokens_out': 0},
+                                           {'provider': 'gemini2', 'outcome': 'overloaded', 'tokens_in': 0,
+                                            'tokens_out': spent}]}}
+    return gateway
+
+
+def test_a_job_every_route_refused_moves_on_to_the_next_instrument(tmp_path):
+    # Journey J11-F2: the Checker's Gemini Flash was rate-limited on every route; Flash Lite, its second model, was
+    # never asked. Nothing ran and nothing was charged, as with a refusal at submission.
+    a, b, events = [], [], []
+    outcome = call(router(tmp_path, every_route_refused(a), answering(b), events))
+    assert outcome.ok and outcome.data == ANSWER and [e['instrument'] for e in events] == ['a', 'b']
+    c, d, events = [], [], []
+    with pytest.raises(TransportCensored):                  # one route generated: saved for review, never paid twice
+        call(router(tmp_path / 'spent', every_route_refused(c, spent=40), answering(d), events))
+    assert d == [] and [e['instrument'] for e in events] == ['a']

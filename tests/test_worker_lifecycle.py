@@ -185,3 +185,33 @@ def test_a_waiting_breakdown_is_not_proposed_again_every_round(tmp_path):
     assert worker._breakdown_waiting('m7') and not worker._breakdown_waiting('m8')
     _write_json(ws.home / 'breakdowns' / 'b1.json', {'id': 'b1', 'milestone': 'm7', 'state': 'adopted'})
     assert not worker._breakdown_waiting('m7')
+
+
+def test_rounds_that_find_nothing_new_are_one_counted_row(tmp_path, monkeypatch):
+    # Journey J2-F20: with every try for m8 used up, a scheduled round every 5 minutes added a "done" row saying the
+    # same thing; the history keeps 30 rows, so within hours the real attempts had been pushed out of Activity.
+    worker = Worker(workspace(tmp_path), EventBus())
+    monkeypatch.setattr('runesmith.app.work_modes.guard_job', lambda *a: None)
+    monkeypatch.setattr('runesmith.app.environment_intent.require_intent', lambda *a: None)
+    waiting = {'summary': 'Ordinary author allowance exhausted.', 'replan_needed': True, 'milestone': 'm8'}
+    answers = iter([waiting, waiting, waiting, RuntimeError('boom'), waiting, waiting])
+
+    def build(**params):
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(worker, '_job_build', build)
+    for n in range(6):
+        worker._execute({'id': f'j{n}', 'kind': 'build', 'params': {}, 'queued': '2026-09-28T12:00:00Z',
+                         'by': 'schedule'}, schedule_next=False)
+    rows = list(worker.history)
+    assert [(r['result'], r.get('repeats')) for r in rows] == [('done', 3), ('failed', None), ('done', 2)]
+    assert rows[0]['first_finished'] <= rows[0]['finished']
+    assert json.loads((worker.ws.home / 'STUDIO_JOBS.json').read_text(encoding='utf-8'))[0]['repeats'] == 3
+    from runesmith.app.worker import _same_waiting_round
+    owners = dict(rows[-1], by='owner')                           # what the owner asked for is always its own row
+    assert not _same_waiting_round(rows[-1], owners) and not _same_waiting_round(owners, dict(owners))
+    advanced = dict(rows[-1], outcome={'summary': 'Applied m8.', 'advanced': True})
+    assert not _same_waiting_round(advanced, dict(advanced))

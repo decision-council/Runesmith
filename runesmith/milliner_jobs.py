@@ -30,6 +30,19 @@ def read_request(directory, request_id):
     return record
 
 
+# The outcomes Milliner gives a route that turned the job away before generating anything.
+REFUSED = {'rate_limited', 'overloaded', 'busy', 'unavailable', 'daily_exhausted', 'capacity', 'circuit_open'}
+
+
+def no_route_accepted(payload):
+    """True when every route refused the job before generating (Milliner's own attempts say so, and no token was
+    used): nothing ran and nothing was charged, as with a refusal at submission (journey J11-F2)."""
+    attempts = ((payload or {}).get('meta') or {}).get('attempts') or []
+    return ((payload or {}).get('state') == 'failed' and bool(attempts)
+            and all(isinstance(a, dict) and a.get('outcome') in REFUSED and not a.get('tokens_in') and not a.get('tokens_out')
+                    for a in attempts))
+
+
 def _outcome(instrument, record, started):
     from runesmith.instruments import CallOutcome
     unresolved = record['state'] not in ('terminal', 'refused')
@@ -45,7 +58,7 @@ def _outcome(instrument, record, started):
     if digest(payload) != record['payload_digest']:
         raise ValueError('Retained gateway answer changed')
     result = instrument._response(record.get('http_status', 200), payload, time.monotonic()-started)
-    result.receipt.update(extra)
+    result.receipt.update(extra, no_route_accepted=no_route_accepted(payload))
     return result
 
 

@@ -65,6 +65,15 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _same_waiting_round(last, done) -> bool:
+    """A scheduled round that ended exactly like the one before, having advanced nothing (for example, every try
+    for a step used up): recorded as one row with a count."""
+    return (isinstance(last, dict) and last.get('by') == done.get('by') == 'schedule'
+            and last.get('kind') == done.get('kind') and last.get('result') == done.get('result') == 'done'
+            and last.get('outcome') == done.get('outcome') and not (done.get('outcome') or {}).get('advanced')
+            and not (done.get('outcome') or {}).get('draft'))
+
+
 class StopRequested(Exception):
     """Raised from the run loop's step hook when the owner asked to stop after the current step."""
 
@@ -550,6 +559,11 @@ class Worker:
                                                                             "opportunities", "served", "accepted", "draft", "milestone", "advanced",
                                                                             "replan_needed")})
             with self._cv:
+                last = self.history[-1] if self.history else None
+                if _same_waiting_round(last, done):    # one row, counted: not 30 rows pushing real work out (J2-F20)
+                    self.history.pop()
+                    done = dict(done, repeats=int(last.get('repeats') or 1) + 1,
+                                first_finished=last.get('first_finished') or last.get('finished'))
                 self.history.append(done)
                 self._records['STUDIO_JOBS.json'].write(list(self.history))
                 self._records['STUDIO_CURRENT.json'].remove()

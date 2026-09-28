@@ -494,9 +494,10 @@ class Router:
     A role (``repair``, ``kaizen`` ...) names what a call is for; the router
     decides which instrument answers. Output failures return at once (one call
     charged); transport failures back off and finally raise
-    :class:`TransportCensored`. A call the gateway refused before admitting it
-    (nothing ran, nothing was charged) moves straight on to the role's next
-    instrument, each at most once per attempt, even when retries are off.
+    :class:`TransportCensored`. A call the gateway refused before admitting it,
+    or that every one of its routes refused before generating (nothing ran,
+    nothing was charged), moves straight on to the role's next instrument, each
+    at most once per attempt, even when retries are off.
     """
 
     def __init__(self, instruments: Mapping[str, Instrument], roles: Mapping[str, str | list[str]],
@@ -553,5 +554,7 @@ class Router:
                                "error_kind": outcome.error_kind, "error": (outcome.error or "")[:300] or None,
                                "latency_s": round(outcome.latency_s, 3), **outcome.receipt})
             refused.add(name)
-            if outcome.ok or not outcome.receipt.get('not_admitted') or set(names) <= refused:
+            # Nothing ran and nothing was charged: refused at submission, or refused by every route (journey J11-F2).
+            turned_away = outcome.receipt.get('not_admitted') or outcome.receipt.get('no_route_accepted')
+            if outcome.ok or not turned_away or set(names) <= refused:
                 return outcome

@@ -628,6 +628,11 @@ try{
     assert((await page.locator('#page').innerText()).includes('owner acceptance unavailable'));
     assert((await page.locator('#page').innerText()).includes('Job completion is not project acceptance'));
     loops.push({id:'B5.06',case:'Jobs refresh on worker events; done is distinguished from owner acceptance or application',result:'passed'});
+    workerFixture.history.unshift({id:'waiting',kind:'build',by:'schedule',result:'done',repeats:14,first_finished:'2026-09-28T11:10:02Z',finished:'2026-09-28T12:27:03Z',
+      outcome:{summary:'Ordinary author allowance exhausted on this source and milestone.',replan_needed:true,milestone:'m8'}});await emitWorker();
+    assert((await page.locator('#page').innerText()).includes('The same 14 times since '));
+    assert.equal(await page.locator('#page tr').filter({hasText:'allowance exhausted'}).count(),1);
+    loops.push({id:'B5.09',case:'Scheduled rounds that found nothing new show as one row with a count (J2-F20)',result:'passed'});
     workerFixture.paused=false;await mountActivity();controlRefused=true;
     await page.getByRole('button',{name:'Pause queue',exact:true}).click();
     await page.getByText('Control state changed; inspect before continuing.',{exact:true}).waitFor();

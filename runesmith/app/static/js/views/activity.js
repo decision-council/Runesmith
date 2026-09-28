@@ -121,7 +121,7 @@ export default async function render(root, ctx) {
       const rows = [...(w.current ? [dictJob(w.current, 'running')] : []), ...(w.queue || []).map((j) => dictJob(j, 'queued')), ...(w.history || []).map((j) => dictJob(j, j.result))];
       clear(table).append(rows.length ? h('table.table', h('tr', ['Job', 'By', 'State', 'Started', 'Took', 'Outcome'].map((t) => h('th', t))),
       rows.map((j) => h('tr', h('td', h('b', j.kind)), h('td', j.by || 'owner'), h('td', h('span', { class: `badge ${j.state === 'done' ? 'good' : j.state === 'failed' ? 'bad' : j.state === 'running' ? 'rune' : ''}` }, j.state)),
-        h('td', j.started ? ago(j.started) : j.queued ? `queued ${ago(j.queued)}` : '—'), h('td', j.seconds != null ? `${j.seconds} s` : '—'), h('td.small.muted', j.outcome ? (j.outcome.error || j.outcome.summary || '') : ''))))
+        h('td', j.started ? ago(j.started) : j.queued ? `queued ${ago(j.queued)}` : '—'), h('td', j.seconds != null ? `${j.seconds} s` : '—'), h('td.small.muted', (j.repeats > 1 ? `The same ${j.repeats} times since ${clock(j.first_finished)}. ` : '') + (j.outcome ? (j.outcome.error || j.outcome.summary || '') : '')))))
       : empty('clock', 'No jobs yet', 'Maps, rounds, plans and drafts appear here.'));
     };
     body.append(recovery.root, queueStatus, table); draw(await get('/api/worker'));
