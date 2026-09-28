@@ -1974,6 +1974,7 @@ try{
     await page.getByRole('dialog').getByRole('button',{name:'Let it help',exact:true}).click();
     await page.waitForFunction(()=>!document.querySelector('[role=dialog]'));
     assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST').map(r=>r.body).at(-1),{autonomy:'propose'});
+    assert(!/\bnull\b|undefined/.test(await page.locator('#page').innerText()));   // J4-B3: a stray null under Build continuation
     loops.push({id:'B23.02',case:'The observe block on Goals & plan offers the switch itself instead of sending people to Modes',result:'passed'});
     fixtureAutonomy='propose';
   }

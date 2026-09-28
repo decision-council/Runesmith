@@ -75,7 +75,7 @@ async function showAuthorContext() {
       if (matches.length > 100) rows.append(h('p.tiny.muted', `Showing100 of${matches.length} matches; narrow the filter.`));
     };
     search.addEventListener('input', draw);
-    body.append(h('p.small', `${data.included_count} files included; ${data.omitted_count} omitted. Source text uses ${data.used_chars} / ${data.budget_chars} characters. This excludes prompt instructions and retained candidate text.`),
+    body.append(...[h('p.small', `${data.included_count} files included; ${data.omitted_count} omitted. Source text uses ${data.used_chars} / ${data.budget_chars} characters. This excludes prompt instructions and retained candidate text.`),
       h('p.tiny.muted', `Prioritize up to${data.max_focus_paths} files, at most${data.focused_file_bytes} bytes each. Other files retain the${data.normal_file_bytes}-byte cap. Total source budget stays fixed. Empty the list to restore default selection.`),
       data.settings_error ? h('p.callout.warn', data.settings_error) : null,
       Object.keys(data.focus_errors).length ? h('p.callout.warn', 'Some requested files are unavailable or over budget. Review and save a valid selection before authoring.') : null,
@@ -86,7 +86,7 @@ async function showAuthorContext() {
         toast('Future source selection saved. No model call, project write or permission change.'); close();
       })}, icon('check'), 'Save future context'),
       h('p.tiny.muted', 'Existing requests keep their original inputs. Full-source verification and owner acceptance are unchanged. This does not authorize editing the selected files.'),
-      search, rows);
+      search, rows].filter(Boolean));
     draw();
   }});
 }
@@ -315,7 +315,7 @@ export default async function render(root, ctx) {
       // expert view folds away; without them it stays open.
       const told = h(acc?.approved ? 'details.mt-8' : 'div.mt-8');
       item.append(told);
-      told.append(acc?.approved ? h('summary.small', 'What builders are told (for experts)') : h('b.small','What builders are told'),
+      told.append(...[acc?.approved ? h('summary.small', 'What builders are told (for experts)') : h('b.small','What builders are told'),
         expectations ? h('div',h('div.tiny.muted',`Version ${expectations.version} · ${expectations.by} · ${expectations.reason}`),
           h('ul.small',expectations.criteria.map(c=>h('li',{title:c.id},c.description)))) : h('div.small.muted','Only the milestone’s own words so far. When you approve acceptance checks, their sentences are added here.'),
         expectations?.interfaces?.length ? h('details.mt-8',h('summary.small',`${expectations.interfaces.length} public JSON response interface(s)`),
@@ -332,7 +332,7 @@ export default async function render(root, ctx) {
           if(!reason?.trim())return;
           await post(`/api/plan/milestones/${m.id}/expectations`,{criteria,reason,expected_digest:expectations?.digest ?? null});drawPlan();
         }},icon('pencil'),'Edit (JSON)'),
-        h('button.btn.sm.ghost',{disabled:!expectations?.criteria?.length,onclick:()=>editInterfaces(m,expectations,drawPlan)},icon('code'),'JSON response interfaces')));
+        h('button.btn.sm.ghost',{disabled:!expectations?.criteria?.length,onclick:()=>editInterfaces(m,expectations,drawPlan)},icon('code'),'JSON response interfaces'))].filter(Boolean));
       commentable(item, 'milestone', m.id, m.title);
       list.append(item);
     }
@@ -408,7 +408,7 @@ export default async function render(root, ctx) {
         build_paths:paths.value.split(',').map(x=>x.trim()).filter(Boolean)});
       toast('Build settings saved for this folder.', 'good'); drawBuild();
     })}, 'Save build settings');
-    clear(buildCard).append(h('h3', icon('hammer'), 'Build continuation'),
+    clear(buildCard).append(...[h('h3', icon('hammer'), 'Build continuation'),
       h('p.small.muted', 'Builds the next milestone from your project as it is now. By default you review each draft yourself. Automatic apply needs your acceptance checks to pass, not only the draft’s own tests, and nothing may have changed in the meantime.'),
       h('label.row', checks, 'Check drafts by running their tests (Python unittest, in a throwaway working copy)'),
       h('label.row.mt-8', apply, 'Apply checked drafts automatically (needs your own acceptance checks for the milestone)'),
@@ -416,7 +416,7 @@ export default async function render(root, ctx) {
       h('p.small.muted', 'Automatic apply needs acceptance checks for each milestone. Use “Propose acceptance checks” on a milestone above and approve them in plain words; nothing is applied automatically without them.'),
       h('p.tiny.faint', `Owner acceptance files: ${build.acceptance_folder} / <milestone-id>.py (unittest). Working copies are not an OS sandbox.`),
       h('div.row.wrap', save, h('button.btn.primary', {onclick:async()=>{await post('/api/worker/run',{job:'build'});toast('Build step queued. Follow it under Work.', 'good');}}, icon('play'), 'Build next step')),
-      build.last ? h('p.small.mt-8', build.last.summary) : null);
+      build.last ? h('p.small.mt-8', build.last.summary) : null].filter(Boolean));
   };
 
   left.append(goalsCard, briefCard);

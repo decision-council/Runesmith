@@ -426,11 +426,11 @@ async function selfLens(body, ctx) {
     const close = h('button.btn.icon.sm.ghost', { onclick: () => { selected = null; drawPanel(); draw(); } }, icon('x'));
     if (kind === 'kernel' || kind === 'organ') {
       const c = kind === 'kernel' ? kernel.find((k) => k.path === name) : data.organs.find((o) => o.path.endsWith(name)) || { path: name };
-      panel.append(h('div.row', h('div.grow', h('div.small.faint', kind === 'kernel' ? 'Kernel module · fixed' : 'Organ · improvable'), h('h3', { style: { margin: '2px 0 0' } }, c.path)), close),
+      panel.append(...[h('div.row', h('div.grow', h('div.small.faint', kind === 'kernel' ? 'Kernel module · fixed' : 'Organ · improvable'), h('h3', { style: { margin: '2px 0 0' } }, c.path)), close),
         h('p.muted', c.purpose || 'No docstring.'),
         c.public_symbols?.length ? h('div', h('div.label-text', 'Public parts'), h('div.pillbox.mt-8', c.public_symbols.slice(0, 30).map((p) => h('span.badge.mono', p)))) : null,
         c.lines ? h('p.small.faint.mt-8', `${c.lines} lines`) : null,
-        h('button.btn.sm.mt-8', { onclick: () => openNotes('component', c.path, c.path) }, icon('note'), 'Comment for the Improver'));
+        h('button.btn.sm.mt-8', { onclick: () => openNotes('component', c.path, c.path) }, icon('note'), 'Comment for the Improver')].filter(Boolean));
       return;
     }
     if (kind === 'generation') {

@@ -349,10 +349,10 @@ function relayPanel(requests, reload) {
         if (delivered.written) { relayReplies.delete(r.id); toast('Sent without passing the format precheck.', 'warn'); reload(); }
       }));
       clear(feedback);
-      feedback.append(h('p.small', 'Not submitted: the reply needs a format correction. Your pasted reply is kept above.'),
+      feedback.append(...[h('p.small', 'Not submitted: the reply needs a format correction. Your pasted reply is kept above.'),
         h('ul.small', ...problems.slice(0, 6).map((p) => h('li', p))),
         problems.length > 6 ? h('p.small.muted', `Showing 6 of ${problems.length} problems; the correction request includes all of them.`) : null,
-        h('div.row', h('button.btn.sm.primary', { onclick: () => copyText(correction) }, icon('copy'), 'Copy correction request'), force));
+        h('div.row', h('button.btn.sm.primary', { onclick: () => copyText(correction) }, icon('copy'), 'Copy correction request'), force)].filter(Boolean));
     }));
     const skip = h('button.btn.ghost', { title: 'Decline: the waiting step gets no answer and moves on' }, icon('x'), 'Skip');
     skip.addEventListener('click', async () => {

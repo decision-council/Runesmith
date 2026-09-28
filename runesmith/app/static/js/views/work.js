@@ -108,10 +108,10 @@ async function showRevisionContext(draftId, reload) {
       body.append(h('div.callout',h('div',
         `${data.feedback.enabled?'Feedback on':'Feedback off'} · ${data.feedback.included.length} whole notes included · ${data.feedback.omitted.length} omitted · ${data.feedback.used_chars}/${data.feedback.budget_chars} characters. Latest selected-draft and milestone notes take priority; an oversized required note blocks authoring.`,delivery)));
     }
-    body.append(h('p.small', data.scope), h('p.small', 'Only exact edits inside displayed candidate code will be admitted. Other candidate files and functions are retained unchanged. Imports/symbol maps are orientation, not a complete dependency graph. Expand context if the fix needs more.'),
+    body.append(...[h('p.small', data.scope), h('p.small', 'Only exact edits inside displayed candidate code will be admitted. Other candidate files and functions are retained unchanged. Imports/symbol maps are orientation, not a complete dependency graph. Expand context if the fix needs more.'),
       data.blockers.length ? h('div.callout.warn', data.blockers.join(' ')) : null,
       data.settings_error ? h('div.callout.warn', data.settings_error) : null, count, list,
-      h('label.field.mt-16', h('span', 'Why this scope?'), reason));
+      h('label.field.mt-16', h('span', 'Why this scope?'), reason)].filter(Boolean));
     if (data.preview) {
       body.append(h('p.small', `Full packet: ${data.preview.broad_prompt_bytes} bytes. Saved focused packet: ${data.preview.focused_prompt_bytes ?? 'not selected'} bytes. These are serialized UTF-8 bytes, not tokens.`));
       if (data.preview.prompt) body.append(h('details.mt-8', h('summary', 'Exact saved author packet preview'),
@@ -145,13 +145,13 @@ function drawDrafts(body, w, reload, ctx) {
         toast('Source-only measurement queued. Existing candidate verdicts and budgets stay unchanged.'); reload();
       })}, icon('clock'), 'Measure current source'));
     if (baseline.pending) card.append(h('p.small', `Measurement ${baseline.pending.state}: no second run until completion or reconciliation.`));
-    if (last) card.append(h('p.small', `Last measurement: ${last.state} · ${last.outcome || 'outcome pending'}`),
+    if (last) card.append(...[h('p.small', `Last measurement: ${last.state} · ${last.outcome || 'outcome pending'}`),
       last.source_still_current === false ? h('p.small', 'Source changed during measurement. These timings describe the frozen snapshot, not the current source.') : null,
       ...checkProgressLines('Current-source project checks', last.project_checks).map(line => h('p.tiny', line)),
       h('p.tiny', last.inventory?.available
         ? `Discovered ${last.inventory.count} tests; inventory ${last.inventory.complete ? 'complete' : 'bounded / partially displayed'}.`
         : 'Discovery inventory not yet available.'),
-      h('p.tiny.mono', `Source: ${last.snapshot_digest} · Evidence: ${last.evidence_dir}`));
+      h('p.tiny.mono', `Source: ${last.snapshot_digest} · Evidence: ${last.evidence_dir}`)].filter(Boolean));
     body.append(card);
   }
   for (const request of (w.pending_authors || [])) {
@@ -525,12 +525,12 @@ function drawAttempts(body, w) {
   const statusBadge = (s) => ({ public_pass: 'good', budget_exhausted: 'warn', censored_transport: '', organ_error: 'bad', organ_timeout: 'bad' }[s] || '');
   const table = h('table.table', h('tr', ['Attempt', 'Object', 'Status', 'Judge', 'Calls', 'Time', 'Generation'].map((t) => h('th', t))),
     w.recent_sessions.map((s) => h('tr.click', { onclick: () => drawer({ title: `Attempt ${s.key}`, sub: s.object, render: (b) => {
-      b.append(h('div.row.wrap', h('span', { class: `badge ${statusBadge(s.status)}` }, humanize(s.status)), s.strict_success ? h('span.badge.good', 'judge accepted') : s.strict_success === false ? h('span.badge.bad', 'judge rejected') : h('span.badge', 'not judged'),
+      b.append(...[h('div.row.wrap', h('span', { class: `badge ${statusBadge(s.status)}` }, humanize(s.status)), s.strict_success ? h('span.badge.good', 'judge accepted') : s.strict_success === false ? h('span.badge.bad', 'judge rejected') : h('span.badge', 'not judged'),
         s.trial_arm ? h('span.badge.violet', `trial arm: ${s.trial_arm}`) : null),
         ATTEMPT_WORDS[s.status] ? h('p.mt-8', ATTEMPT_WORDS[s.status]) : null,
         s.context_scope ? h('p.callout',s.context_scope) : null,
         h('div.label-text.mt-16', 'The issue as the model saw it'), h('pre.code.mt-8', s.issue || '—'),
-        h('button.btn.sm.mt-16', { onclick: () => openNotes('session', s.key, `attempt ${s.key}`) }, icon('note'), 'Comment'));
+        h('button.btn.sm.mt-16', { onclick: () => openNotes('session', s.key, `attempt ${s.key}`) }, icon('note'), 'Comment')].filter(Boolean));
     } }) }, h('td.mono.small', s.key), h('td', s.object || '—'), h('td', h('span', { class: `badge ${statusBadge(s.status)}`, title: ATTEMPT_WORDS[s.status] || '' }, humanize(s.status))),
       h('td', s.strict_success ? h('span.badge.good', 'accepted') : s.strict_success === false ? h('span.badge.bad', 'rejected') : '—'),
       h('td', String(s.calls)), h('td', s.cycle_seconds != null ? `${Math.round(s.cycle_seconds)} s` : '—'), h('td.mono.small', (s.generation || '').replace('gen-', '')))));
