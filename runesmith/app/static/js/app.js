@@ -170,6 +170,7 @@ function updatePill() {
   if (s.manual_waiting) { cls = 'needs'; text = `Needs you: ${s.manual_waiting} request to relay to a chat model`; }
   else if (w.current) { cls = 'busy'; text = w.detail || `${w.status}…`; }
   else if (w.paused) { cls = 'paused'; const waiting = (w.queue || []).length; text = waiting ? `Paused · ${waiting} waiting until you resume` : 'Paused'; }
+  else if (s.settings.autonomy === 'observe') { text = 'Just looking: maps and reports, asks no model'; }
   else if (!s.ready.any) { cls = 'needs'; text = 'Mapping only: add thinking power to let it work'; }
   else if (w.next_round_utc) { text = `Idle · next round ${ago(w.next_round_utc)}`; }
   else text = s.settings.auto_work ? 'Idle' : 'Idle · scheduled work is off';
@@ -249,7 +250,11 @@ async function route() {
       h('button.btn.mt-8', { onclick: route }, icon('refresh'), 'Try again')));
   }
 }
-export function navigate(view, sub) { location.hash = `#/${view}${sub ? '/' + sub : ''}`; }
+// Navigating to the page already shown draws it again, so a change made on it (a switch, a setting) shows at once.
+export function navigate(view, sub) {
+  const target = `#/${view}${sub ? '/' + sub : ''}`;
+  if (location.hash === target) route(); else location.hash = target;
+}
 
 // ------------------------------------------------------------ comment mode --
 function toggleCommentMode(force) {

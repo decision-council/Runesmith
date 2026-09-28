@@ -40,6 +40,7 @@
   - The blocker reads "You chose to just look (observe), so Runesmith does not ask a model to plan" (J4-F4).
   - On a case-insensitive disk, the map named a folder's index as `INDEX.md` when the file is `index.md`. It now shows the file's real name (J4-F3).
   - Browser loop B23 covers both screens and the switch.
+  - After "Let it help", the Overview kept saying "You chose to just look" until the page was reloaded (J4-B1). Navigating to the page already shown now draws it again, so any change made on a page shows at once. The header now says "Just looking: maps and reports, asks no model" instead of asking for thinking power (J4-F6).
   - **The map now finds pages nothing links to and notes still to do.** In a document collection, it lists Markdown pages that no other page in the folder links to (an index is the way in, so it never counts), plus TODO, FIXME and XXX notes outside code examples. Both appear on the Living map and in what the Planner is told. J4's handbook has one of each; before, only its broken links were visible.
 - **A hostile environment, plain words (journey J7).**
   - **Deleting a folder's hidden `.runesmith` data no longer locks the folder out for good (J7-B1).** Runesmith used to refuse to open the folder ever again, with a Python traceback in the launcher window. That happened when someone cleaned hidden folders, restored a backup without them, or deleted the data to "reset".
