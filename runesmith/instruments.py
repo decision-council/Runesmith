@@ -162,6 +162,16 @@ class Instrument:
         raise NotImplementedError
 
 
+class LenientSchema(dict):
+    """A JSON schema whose optional fields are really optional; Runesmith validates the answer itself.
+
+    Milliner's default strict mode makes every property required (Groq and OpenAI demand it), which forced a
+    model to write out every optional field of every example step and truncated the answer (checker experiment,
+    2026-09-28), and forced output on free routes lost every backslash escape in code (journey J2). A lenient
+    schema is therefore sent to Milliner as text in the prompt, not as a forced schema.
+    """
+
+
 class MillinerInstrument(Instrument):
     """Milliner's pinned-model gate (``POST /v1/complete``)."""
 
@@ -190,6 +200,10 @@ class MillinerInstrument(Instrument):
         token = self._token()
         if not token:
             return CallOutcome(False, error_kind="transport", error="auth_failed: Milliner token unavailable")
+        if isinstance(schema, LenientSchema):           # in the system text: the prompt stays the frozen author prompt
+            system = (system or "") + ("\n\nReply with one JSON object that satisfies this JSON schema (fields not "
+                                       "listed as required are optional):\n" + canonical(schema))
+            schema = None
         body: dict[str, Any] = {"model": self.model, "prompt": prompt, "system": system, "priority": 1,
                                 "wait": True, "timeout_s": max(1.0, self.timeout_s - 5.0),
                                 "max_tokens": max_tokens, "idempotency_key": key}
@@ -254,7 +268,7 @@ class MillinerInstrument(Instrument):
             return CallOutcome(False, error_kind=classify(message), error=message[:600], latency_s=latency,
                                receipt=dict(receipt,error_code=payload.get("error_code")))
         try:
-            data = parse_json_answer(payload.get("text"), payload.get("parsed"))
+            data = parse_json_answer(payload.get("text"), payload.get("parsed"), tolerant=True)   # text-mode answers
         except (ValueError, json.JSONDecodeError) as error:
             return CallOutcome(False, text=payload.get("text"), error_kind="output",
                                error=f"invalid_json: {error}"[:600], latency_s=latency, receipt=receipt)

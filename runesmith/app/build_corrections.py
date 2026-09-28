@@ -20,7 +20,7 @@ from runesmith.app.planner import (DRAFT_SCHEMA, PlannerUnavailable,
                                    source_context)
 from runesmith.app.snapshots import collect_snapshot, freeze_snapshot
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
-from runesmith.instruments import TransportCensored
+from runesmith.instruments import LenientSchema, TransportCensored
 from runesmith.app.acceptance_contracts import expectations, expectation_digest, owner_feedback
 
 MAX_CORRECTIONS = 2
@@ -167,10 +167,10 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
     item=copy.deepcopy(DRAFT_SCHEMA['properties']['files']['items'])
     for branch in item['anyOf']:
         branch['properties']['path']['enum']=sorted(allowed)
-    schema={'type':'object','properties':{
+    schema=LenientSchema({'type':'object','properties':{            # code inside: sent as text (see DRAFT_SCHEMA)
         'title':{'type':'string'},'why':{'type':'string'},
         'files':{'type':'array','minItems':1,'maxItems':len(allowed),'items':item},
-        },'required':['title','why','files'],'additionalProperties':False}
+        },'required':['title','why','files'],'additionalProperties':False})
     key='c'+uuid.uuid4().hex[:12]
     receipt_path=ws.home/'build-corrections'/(key+'.json')
     receipt={'id':key,'attempt':attempt_id,'state':'started','utc':_now(),

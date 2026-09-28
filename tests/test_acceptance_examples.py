@@ -382,3 +382,25 @@ def test_a_second_unusable_answer_is_reported_in_plain_words(tmp_path):
     ws = workspace(tmp_path, [unusable, unusable])
     with pytest.raises(WorkspaceError, match="start with python or node"):
         propose(ws, ws.router(), "m1")
+
+
+def test_milliner_gets_the_lenient_examples_schema_as_text_not_as_a_forced_schema():
+    # Checker experiment 2026-09-28: Gemini refused the schema (400, minItems/maxItems), and Milliner's strict mode
+    # made every optional field required, truncating one-example answers. A lenient schema goes into the prompt.
+    from runesmith.app.acceptance_examples import SCHEMA
+    from runesmith.instruments import LenientSchema, MillinerInstrument
+    sent = []
+
+    def gateway(method, url, headers, body, timeout):
+        sent.append(body)
+        return 200, {"state": "succeeded", "text": '{"examples": []}', "parsed": None, "meta": {}}
+    instrument = MillinerInstrument("m", "gemini:flash", base_url="http://localhost:8765", token=lambda: "t",
+                                    caller_tag="test", timeout_s=30, transport=gateway)
+    assert isinstance(SCHEMA, LenientSchema) and "minItems" not in json.dumps(SCHEMA)
+    assert instrument.complete(prompt="Describe examples.", system="s", schema=SCHEMA, max_tokens=100, key="k1").ok
+    assert "json_schema" not in sent[-1] and '"examples"' in sent[-1]["system"]
+    assert "fields not listed as required are optional" in sent[-1]["system"]
+    assert sent[-1]["prompt"] == "Describe examples."                  # the prompt itself is never changed
+    plain = {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]}
+    instrument.complete(prompt="p", system="s", schema=plain, max_tokens=100, key="k2")
+    assert sent[-1]["json_schema"] == plain and sent[-1]["prompt"] == "p"          # other schemas: unchanged

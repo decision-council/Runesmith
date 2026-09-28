@@ -20,6 +20,7 @@ import re
 from typing import Any
 
 from runesmith.app.workspace import WorkspaceError
+from runesmith.instruments import LenientSchema
 
 # Kept lenient on purpose: a strict provider (Groq) refuses a whole answer that misses a schema detail, while
 # Runesmith checks every value itself and can tell the model what to fix.
@@ -36,8 +37,8 @@ STEP = {'type': 'object', 'properties': {
     'call': {'type': 'string'}, 'args_json': {'type': 'string'},
     'doc': {'type': 'string'}, 'program': STRINGS, 'mention': STRINGS,
     'expect': EXPECT}}
-SCHEMA = {'type': 'object', 'properties': {
-    'examples': {'type': 'array', 'minItems': 1, 'maxItems': 8, 'items': {'type': 'object', 'properties': {
+SCHEMA = LenientSchema({'type': 'object', 'properties': {
+    'examples': {'type': 'array', 'items': {'type': 'object', 'properties': {
         'name': {'type': 'string'}, 'says': {'type': 'string'},
         'files': {'type': 'array', 'items': {'type': 'object', 'properties': {
             'name': {'type': 'string'}, 'text': {'type': 'string'}}, 'required': ['name', 'text']}},
@@ -47,7 +48,7 @@ SCHEMA = {'type': 'object', 'properties': {
             'name': {'type': 'string'}, 'texts': STRINGS}, 'required': ['name', 'texts']}},
         'links_resolve': {'type': 'boolean'}, 'pages_reachable': {'type': 'boolean'}},
         'required': ['name', 'says']}},
-    'not_checked': STRINGS}, 'required': ['examples']}
+    'not_checked': STRINGS}, 'required': ['examples']})
 
 TASK = (
     "Describe the owner's acceptance checks for ONE milestone as EXAMPLES, not code. Runesmith turns each example "

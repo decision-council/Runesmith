@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from runesmith.instruments import TransportCensored
+from runesmith.instruments import LenientSchema, TransportCensored
 
 PLAN_SCHEMA = {
     "type": "object",
@@ -43,7 +43,10 @@ PLAN_SCHEMA = {
     },
     "required": ["summary", "milestones"],
 }
-DRAFT_SCHEMA = {
+# Code travels inside these strings, so the schema is lenient: Milliner gets it as text, not as a forced schema.
+# Forced structured output on free routes lost every backslash escape (journey J2: a whole file arrived as one
+# line, "def greet(name):n    return ", with no quotes), while the same request as text came back intact.
+DRAFT_SCHEMA = LenientSchema({
     "type": "object",
     "properties": {
         "title": {"type": "string"},
@@ -63,7 +66,7 @@ DRAFT_SCHEMA = {
              "required":["path","edits"], "additionalProperties":False}]}},
     },
     "required": ["title", "files"],
-}
+})
 PLAN_SYSTEM = ("You are the planning instrument of Runesmith, a careful development runtime. You write practical, "
                "honest plans for the owner of a folder. Reply with one JSON object only.")
 DRAFT_SYSTEM = ("You are the building instrument of Runesmith. Implement one bounded milestone change while "

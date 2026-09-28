@@ -26,13 +26,14 @@ from runesmith.app.acceptance_contracts import expectations, publish_expectation
 from runesmith.app.building import _run_checks
 from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, source_context, why_no_answer
 from runesmith.app.snapshots import SnapshotUnsupported, collect_snapshot
+from runesmith.instruments import LenientSchema
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 
-SCHEMA = {'type': 'object', 'properties': {
+SCHEMA = LenientSchema({'type': 'object', 'properties': {   # code inside: sent as text
     'checks': {'type': 'array', 'minItems': 1, 'maxItems': 8, 'items': {'type': 'object', 'properties': {
         'test': {'type': 'string'}, 'says': {'type': 'string'}}, 'required': ['test', 'says'], 'additionalProperties': False}},
     'assumes': {'type': 'array', 'maxItems': 8, 'items': {'type': 'string'}},
-    'code': {'type': 'string'}}, 'required': ['checks', 'assumes', 'code'], 'additionalProperties': False}
+    'code': {'type': 'string'}}, 'required': ['checks', 'assumes', 'code'], 'additionalProperties': False})
 
 SYSTEM = ("You are Runesmith's acceptance-check instrument. You write the owner's checks for one milestone; "
           "you do not implement it. Return JSON only.")
