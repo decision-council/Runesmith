@@ -484,6 +484,36 @@ def _apply_one_edit(text: str, edit, rel: str) -> str:
         return shifted
 
 
+def _edit_key(edit) -> tuple[str, str] | None:
+    if (isinstance(edit, dict) and isinstance(edit.get('old_text'), str) and isinstance(edit.get('new_text'), str)
+            and edit['old_text'] and edit['old_text'] != edit['new_text']):
+        return edit['old_text'], edit['new_text']
+    return None
+
+
+def _repeated(edits) -> dict[tuple[str, str], int]:
+    """The same exact edit given more than once, and how often (journey J2-G3).
+
+    For m8 a free model gave `books = load_books(path)` -> `books = load_books(Path(args.storage_file))` four times,
+    once for each place it occurs, and the whole answer was refused because that text is not unique. When the same
+    edit is given exactly as often as its old text occurs, every place is replaced (see _replace_every); any other
+    count is refused.
+    """
+    counts: dict[tuple[str, str], int] = {}
+    for edit in edits:
+        if (key := _edit_key(edit)) is not None:
+            counts[key] = counts.get(key, 0) + 1
+    return {key: n for key, n in counts.items() if n > 1}
+
+
+def _replace_every(text: str, key: tuple[str, str], given: int) -> str:
+    found = text.count(key[0])
+    if found != given:
+        raise ValueError(f'the same edit was given {given} times, but its old_text occurs {found} times in the current '
+                         'file')
+    return text.replace(key[0], key[1])
+
+
 def _reindented(text: str, old, new) -> str | None:
     if not isinstance(old, str) or not isinstance(new, str) or not old.strip() or "\t" in old + new + text or "\r" in text:
         return None
@@ -551,8 +581,13 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
                 errors=[];proposed=None
                 for base_name,base_text in bases:
                     try:
-                        value=base_text
+                        value=base_text;repeated,done=_repeated(f['edits']),set()
                         for edit_index,edit in enumerate(f['edits']):
+                            key=_edit_key(edit)
+                            if key in repeated:
+                                if key not in done:
+                                    value=_replace_every(value,key,repeated[key]);done.add(key)
+                                continue
                             value=_apply_one_edit(value,edit,rel)
                         proposed=value;f['revision_base']=base_name;break
                     except (ValueError,TypeError,KeyError) as candidate_error:

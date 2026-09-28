@@ -1,8 +1,10 @@
 """Exact edits that differ only by a uniform indentation shift (journey J2: a free model wrote 8 spaces where the
-file has 4, and the whole answer was refused). Only that is forgiven; everything else is refused as before."""
+file has 4, and the whole answer was refused), and the same edit given once for each place its text occurs (J2-G3).
+Only these are forgiven; everything else is refused as before."""
 import pytest
 
-from runesmith.app.planner import _apply_one_edit, _reindented
+from runesmith.app.planner import PlannerUnavailable, _apply_one_edit, _reindented, admit_answer_files, source_context
+from runesmith.app.workspace import Workspace
 
 SOURCE = ('def main(argv=None):\n'
           '    args = parse(argv)\n'
@@ -45,3 +47,28 @@ def test_anything_but_one_uniform_shift_is_still_refused(old, new):
 def test_an_exact_edit_is_applied_exactly_as_before():
     edit = {"old_text": 'def main(argv=None):', "new_text": 'def main(argv=None):  # entry point'}
     assert _apply_one_edit(SOURCE, edit, "cli.py").startswith('def main(argv=None):  # entry point\n    args')
+
+
+def admitted(tmp_path, text, edits):
+    ws = Workspace(tmp_path)
+    (tmp_path / "cli.py").write_bytes(text.encode("utf-8"))
+    return admit_answer_files(ws, source_context(ws), [{"path": "cli.py", "purpose": "storage", "edits": edits}])
+
+
+def test_the_same_edit_given_once_for_each_place_changes_every_place(tmp_path):
+    # Journey J2-G3: for m8 a free model gave this edit four times, once per place, with other edits between them.
+    text = SOURCE + 'def export(path):\n    books = load_books(path)\n'
+    same = {"old_text": "books = load_books(path)", "new_text": "books = load_books(storage)"}
+    other = {"old_text": "def export(path):", "new_text": "def export(storage):"}
+    content = admitted(tmp_path, text, [same, other, dict(same)])[0]["content"]
+    assert content.count("load_books(storage)") == 2 and "load_books(path)" not in content
+    assert "def export(storage):" in content
+
+
+def test_the_same_edit_given_a_different_number_of_times_is_still_refused(tmp_path):
+    text = SOURCE + 'def export(path):\n    books = load_books(path)\n    books = load_books(path)\n'
+    same = {"old_text": "books = load_books(path)", "new_text": "books = load_books(storage)"}
+    with pytest.raises(PlannerUnavailable, match="given 2 times, but its old_text occurs 3 times"):
+        admitted(tmp_path, text, [same, dict(same)])
+    with pytest.raises(PlannerUnavailable, match="exactly once"):
+        admitted(tmp_path, text, [same])

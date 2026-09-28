@@ -173,6 +173,12 @@ def test_a_proposal_summary_gives_the_trial_counts(tmp_path, monkeypatch):
         'id': 'p1', 'checks': [{}, {}], 'dry_run': {'verdict': 'fails_now', 'ran': 2, 'failures': 1, 'errors': 0}})
     summary = Worker(ws, EventBus())._job_propose_acceptance('m9')['summary']
     assert '1 of 2 fail on today’s project, as expected' in summary
+    # Journey J11-F10: a check on a file nothing creates fails on a correct build too; that is not "as expected".
+    monkeypatch.setattr('runesmith.app.acceptance_proposals.propose', lambda *a, **k: {
+        'id': 'p2', 'checks': [{}, {'missing_input': ['position.motion.json']}],
+        'dry_run': {'verdict': 'fails_now', 'ran': 2, 'failures': 1, 'errors': 0}})
+    summary = Worker(ws, EventBus())._job_propose_acceptance('m9')['summary']
+    assert 'as expected' not in summary and '1 of the checks use a file nothing creates' in summary, summary
 
 
 def test_a_waiting_breakdown_is_not_proposed_again_every_round(tmp_path):

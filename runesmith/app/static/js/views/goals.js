@@ -287,6 +287,7 @@ export default async function render(root, ctx) {
         const p = acc.proposal;
         // A trial run on today's project: checks that already pass may not test what an unbuilt milestone adds.
         const dry = p.dry_run || {};
+        const missing = p.checks.some((c) => c.missing_input?.length);
         const trial = dry.verdict === 'passes_now'
           ? h('div.callout.warn.mt-8', h('div', 'These checks already pass on your project as it is today. If this milestone is not built yet, they may not test what it adds. ' + (p.revision && !p.revision.error
               ? 'Runesmith already asked for a revision once. You can discard them and ask again, choose a stronger model for planning under Thinking power, or propose smaller steps for this milestone.'
@@ -294,7 +295,9 @@ export default async function render(root, ctx) {
           : dry.verdict === 'broken'
             ? h('div.callout.warn.mt-8', h('div', 'These checks could not run on your project as it is today, so they may be broken. Consider discarding them and asking again.'))
             : dry.verdict === 'fails_now'
-              ? h('div.tiny.muted', `Tried on your project as it is today: ${dry.failures + dry.errors} of ${dry.ran} fail, as expected before the milestone is built.`)
+              ? h('div.tiny.muted', `Tried on your project as it is today: ${dry.failures + dry.errors} of ${dry.ran} fail` + (missing
+                ? '. The checks that use a file nothing creates (shown under them) would fail on a correct build too.'   // J11-F10
+                : ', as expected before the milestone is built.'))
               : dry.why ? h('div.tiny.muted', dry.why) : null;
         const firstTry = { broken: 'could not run', passes_now: 'already passed on today’s project', unstated_text: 'required exact text their sentences did not say', missing_input: 'used a file nothing creates',
           unusable: 'broke a rule of the examples format' }[p.revision?.after] || 'needed work';
@@ -304,9 +307,13 @@ export default async function render(root, ctx) {
           ? `The first checks ${firstTry}; asking for a revision did not work (${p.revision.error}).`
           : `Revised once: the first checks ${firstTry}${fixed && p.revision.error ? ` (${p.revision.error})` : ''}.`);
         const unstated = p.checks.some((c) => c.unstated?.length);
-        const missing = p.checks.some((c) => c.missing_input?.length);
+        // New checks can read the same as the approved ones and differ only in what is checked exactly (J11-F9).
+        const yours = new Map((acc.approved?.checks || []).map((c) => [c.says, c.exact]));
+        const differs = (c) => replacing && yours.has(c.says) && yours.get(c.says) !== c.exact
+          ? h('div.tiny.muted', 'Reads the same as one of yours but is checked differently: compare “What exactly is checked” under each.')
+          : null;
         accBlock.append(...[h('b.small', replacing ? 'New checks proposed to replace yours: do these describe “done” better?' : 'Proposed acceptance checks: do these describe “done”?'),
-          h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c), todayNote(c), missingNote(c)))),
+          h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c), todayNote(c), missingNote(c), differs(c)))),
           p.assumes?.length ? h('div.small.mt-8', h('b', 'They assume (your milestone does not say this):'), h('ul.small', p.assumes.map((a) => h('li', a)))) : null,
           ...examplesNotes(p),
           trial, revised,

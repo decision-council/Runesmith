@@ -1940,7 +1940,7 @@ try{
     await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>window.mount('goals'));
     let text=await block().innerText();
     assert(text.includes('Proposed acceptance checks'),text);assert(text.includes('They assume'));assert(text.includes('The list file is chosen with --file.'));
-    assert(text.includes('Also requires the exact text: “2026-02-30”'));assert(text.includes('2 of 2 fail, as expected'));
+    assert(text.includes('Also requires the exact text: “2026-02-30”'));assert(text.includes('2 of 2 fail. The checks that use a file nothing creates (shown under them) would fail on a correct build too.'),text);
     assert(text.includes('Already passes on your project today, so it may not test what this milestone adds.'));   // J1-G2
     assert(text.includes('Uses “books.csv”, a file nothing creates, so it fails even on a correct build unless the build adds that file.'),text);   // J11-G10
     assert(!/\bnull\b|undefined/.test(text),text);
@@ -1963,10 +1963,11 @@ try{
     assert.deepEqual(asked.body,{job:'propose_acceptance',params:{milestone:'m1'}});
     loops.push({id:'B20.03',case:'Approved checks offer Ask for new checks, which only queues a proposal',result:'passed'});
     fixtureAcceptance={m1:{approved:{provenance:'model-proposed, owner-approved',proposed_by:'Fixture chat',checks},
-      proposal:{id:'p2',checks:checks.slice(0,1),assumes:[],dry_run:{verdict:'passes_now',ran:1,failures:0,errors:0},
+      proposal:{id:'p2',checks:[{...checks[0],missing_input:undefined,exact:'running python -m readinglog months: a line with “2026-01” shows the number 1'}],assumes:[],dry_run:{verdict:'passes_now',ran:1,failures:0,errors:0},
         revision:{after:'passes_now'},code:'import unittest',drafted_by:'Fixture chat'}}};
     await page.evaluate(()=>window.mount('goals'));text=await block().innerText();
     assert(text.includes('New checks proposed to replace yours'));assert(text.includes('Runesmith already asked for a revision once'));
+    assert(text.includes('Reads the same as one of yours but is checked differently'),text);   // J11-F9
     assert.equal(await block().getByRole('button',{name:'Ask for new checks',exact:true}).count(),0);
     const before=posts().length;
     await block().getByRole('button',{name:'Replace my checks',exact:true}).click();
@@ -1978,7 +1979,7 @@ try{
     await page.waitForFunction(()=>!document.querySelector('[role=dialog]'));
     const replaced=posts().filter(r=>r.path==='/api/plan/milestones/m1/acceptance/approve').at(-1);
     assert.deepEqual(replaced.body,{proposal:'p2',replace:true,reason:'A correct README failed the old example check.'});
-    loops.push({id:'B20.04',case:'New checks next to approved ones replace them only with a reason; an empty reason sends nothing',result:'passed'});
+    loops.push({id:'B20.04',case:'New checks next to approved ones say when one reads the same but is checked differently, and replace them only with a reason; an empty reason sends nothing',result:'passed'});
     // Examples-style proposals (WEAK_MODEL_CHECKS first slice): what is checked exactly, what Runesmith removed, what no check covers.
     fixtureAcceptance={m1:{approved:null,proposal:{id:'p3',style:'examples',assumes:[],
       checks:[{test:'test_01_counts',says:'Each month shows its number of books.',

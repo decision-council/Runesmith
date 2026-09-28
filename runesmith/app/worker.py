@@ -719,6 +719,10 @@ class Worker:
         trial = {'fails_now': f' {failing} fail on today’s project, as expected before it is built.',   # J2-F10: the counts
                  'passes_now': ' Note: they already pass on today’s project.',
                  'broken': ' Note: they could not run on today’s project.'}.get((proposal.get('dry_run') or {}).get('verdict'), '')
+        missing = sum(1 for c in proposal['checks'] if c.get('missing_input'))
+        if missing and dry.get('verdict') == 'fails_now':        # J11-F10: those fail on a correct build too
+            trial = (f' {failing} fail on today’s project; {missing} of the checks use a file nothing creates, so they '
+                     'would fail on a correct build too.')
         revised = ' Revised once after Runesmith tried and read them.' if proposal.get('revision') and not proposal['revision'].get('error') else ''
         return {'summary': f"Proposed {len(proposal['checks'])} acceptance checks for {milestone}.{revised}{trial} Read and approve them under Goals & plan; nothing is used until you do."}
 
