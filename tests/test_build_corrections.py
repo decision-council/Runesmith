@@ -67,6 +67,7 @@ def test_correction_cannot_add_a_path(tmp_path):
 def test_correction_refuses_stale_source_before_call(tmp_path):
     ws,attempt_id=rejected_answer(tmp_path)
     (tmp_path/'tool.py').write_text('value = 9\n')
+    assert correction_candidates(ws)==[]        # J2-F21: an answer for an earlier source gets no card
     scripted(ws,[{'title':'Unused','why':'unused','files':[
         {'path':'test_tool.py','purpose':'unused','content':'expected=2\n'},
     ]}],roles=('plan',))

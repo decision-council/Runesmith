@@ -22,6 +22,7 @@ PARAMETERS = {
     'supplement': {'draft_id': str, 'reason': str, 'instrument': str, 'author_only': False},
     'revise': {'draft_id': str, 'quote_id': str, 'instrument': str, 'operation_id': str, 'reason': str},
     'correct': {'attempt': str},
+    'readmit': {'escalation': str},
     'escalate': {},
     'review_current': {'milestone': str},
     'resume_check': {'draft_id': str, 'reason': str},
@@ -127,6 +128,8 @@ def execute_build_job(ws, job: BuildJob, *, checkpoint=lambda: None, on_call=Non
     if job.kind == 'correct':
         return building.correct_refusal(ws, ws.router(on_call=call_recorder, backoff_s=(5, 20)),
                                         p['attempt'], checkpoint=guarded)
+    if job.kind == 'readmit':
+        return building.readmit_escalation_answer(ws, p['escalation'], checkpoint=guarded)
     if job.kind == 'escalate':
         return building.escalate_build(ws, ws.router(on_call=call_recorder, backoff_s=(5, 20)), checkpoint=guarded)
     if job.kind == 'review_current':

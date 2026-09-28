@@ -41,7 +41,7 @@ from runesmith.app.worker_journal import Record, MAX_JOBS, validate_job, validat
 # What a job does, in the owner's words, for the live log (journey J1-F3: "Propose_acceptance skipped").
 JOB_WORDS = {"propose_acceptance": "Proposing acceptance checks", "plan": "Drafting a plan", "goalposts": "Proposing goalposts",
              "draft": "Drafting files", "build": "Building the next step", "revise": "Revising a draft",
-             "correct": "Correcting a draft", "escalate": "Asking a stronger model", "supplement": "Asking for missing files",
+             "correct": "Correcting a draft", "escalate": "Giving the step one more try", "readmit": "Checking a kept answer again", "supplement": "Asking for missing files",
              "breakdown": "Proposing smaller steps", "map": "Mapping the folder", "round": "The round",
              "measure": "Taking a measurement"}
 KIND_WORDS = {"python_repository": ("Python project", "Python projects"), "node_repository": ("Node project", "Node projects"),
@@ -353,7 +353,7 @@ class Worker:
         """Queue one job. ``by`` records who asked: the owner, or the schedule continuing its own work."""
         if by not in ("owner", "schedule"):
             raise ValueError(f"unknown requester {by!r}")
-        if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "breakdown", "propose_acceptance", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
+        if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "readmit", "breakdown", "propose_acceptance", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
             raise ValueError(f"unknown job {kind!r}")
         from runesmith.app.build_jobs import BuildJob, PARAMETERS
         if kind in PARAMETERS:
@@ -755,6 +755,9 @@ class Worker:
 
     def _job_resume_check(self,draft_id: str,reason: str) -> dict[str,Any]:
         return self._run_build_job('resume_check', 'One retained-candidate check extension; no inference', draft_id=draft_id, reason=reason)
+
+    def _job_readmit(self, escalation: str) -> dict[str, Any]:
+        return self._run_build_job('readmit', 'Checking a kept answer again; no model call', escalation=escalation)
 
     def _job_correct(self, attempt: str) -> dict[str, Any]:
         return self._run_build_job('correct', 'Correcting one retained rejected answer under its original scope', attempt=attempt)

@@ -29,7 +29,7 @@ def test_current_draft_alternatives_accept_valid_file_shapes(file):
     ({'path': 'tool.py', 'edits': [{'old_text': True, 'new_text': '2'}]}, 'expected string'),
     ({'path': 7, 'content': 'x'}, 'expected string'),
     ({'path': 'tool.py', 'content': 'x', 'base': 'forged'}, 'unexpected field'),
-    ({'path': 'tool.py', 'edits': [{'old_text': '1', 'new_text': '2'}] * 7}, 'outside the allowed range'),
+    ({'path': 'tool.py', 'edits': [{'old_text': '1', 'new_text': '2'}] * 13}, 'outside the allowed range'),
     ('not a file operation', 'expected object'),
 ])
 def test_current_draft_alternatives_reject_bad_shapes_with_local_feedback(file, detail):

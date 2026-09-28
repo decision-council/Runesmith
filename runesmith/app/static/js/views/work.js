@@ -217,6 +217,18 @@ function drawDrafts(body, w, reload, ctx) {
         toast('Alternate-author continuation queued.','good',6000);
       })},icon('cpu'),'Use alternate author')));
   }
+  // The one more try's answer, refused by the host, is kept; a newer Runesmith may accept it (journey J2-G1).
+  if (w.build_escalation?.kept_answer) {
+    const k = w.build_escalation.kept_answer;
+    body.append(h('div.callout.mt-8', icon('refresh'), h('div.grow',
+      h('b', `The one more try at ${w.build_escalation.milestone} was refused, and its answer is kept`),
+      h('div.small', String(k.error || '').replace(/^[A-Za-z]+(Unavailable|Error): /, '')),
+      h('div.tiny.muted', 'After an update, Runesmith may accept what it refused before. Checking it again asks no model: the kept answer goes through the same checks, and nothing is written unless they pass.')),
+      h('button.btn.sm', {onclick:(event)=>withBusy(event.currentTarget,async()=>{
+        await post('/api/worker/run',{job:'readmit',params:{escalation:k.id}});
+        toast('Checking the kept answer again. No model is asked.','good',6000);
+      })},icon('refresh'),'Check it again')));
+  }
   for (const c of (w.build_corrections || []).filter(c => c.remaining > 0)) {
     body.append(h('div.callout.warn.mt-8', icon('wrench'), h('div.grow',
       h('b', `An answer for ${c.path} could not be used`),

@@ -46,6 +46,10 @@ PLAN_SCHEMA = {
 # Code travels inside these strings, so the schema is lenient: Milliner gets it as text, not as a forced schema.
 # Forced structured output on free routes lost every backslash escape (journey J2: a whole file arrived as one
 # line, "def greet(name):n    return ", with no quotes), while the same request as text came back intact.
+# Exact edits per file. Each must match exactly once, so more of them are no less safe; weak models do not count
+# well, and a free model's 8 correct edits were refused whole at 6 (journey J2-F23).
+MAX_EDITS = 12
+
 DRAFT_SCHEMA = LenientSchema({
     "type": "object",
     "properties": {
@@ -60,7 +64,7 @@ DRAFT_SCHEMA = LenientSchema({
              "required":["path","content"], "additionalProperties":False},
             {"type":"object", "properties":{
                 "path":{"type":"string"}, "purpose":{"type":"string"},
-                "edits":{"type":"array", "minItems":1, "maxItems":6, "items":{
+                "edits":{"type":"array", "minItems":1, "maxItems":12, "items":{   # MAX_EDITS
                     "type":"object", "properties":{"old_text":{"type":"string"},"new_text":{"type":"string"}},
                     "required":["old_text","new_text"], "additionalProperties":False}}},
              "required":["path","edits"], "additionalProperties":False}]}},
@@ -513,8 +517,8 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
                 raise PlannerUnavailable('Exact edits require a fully shown current or candidate file and no content field.')
             edit_index = None
             try:
-                if not isinstance(f['edits'],list) or not 1<=len(f['edits'])<=6:
-                    raise ValueError('Provide 1-6 exact edits.')
+                if not isinstance(f['edits'],list) or not 1<=len(f['edits'])<=MAX_EDITS:
+                    raise ValueError(f'Provide 1-{MAX_EDITS} exact edits.')
                 bases=[('current',context['files'][rel])] if rel in context['files'] else []
                 if revision_files and rel in revision_files:
                     if isinstance(candidate,str) and candidate!=context['files'].get(rel):

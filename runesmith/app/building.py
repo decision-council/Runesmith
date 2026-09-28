@@ -489,14 +489,23 @@ def build_escalation_status(ws):
         except (WorkspaceError,ValueError,KeyError,TypeError,OSError) as error:
             lineage_error=str(error);blockers.append(lineage_error)
     eligible=bool(eligible) and not blockers
+    # The one more try's answer, refused by the host, is kept. A newer Runesmith may accept it: the owner can check
+    # it again with no model call (journey J2-G1). Readmitting revises a checked candidate on this source.
+    kept=None
+    revisable=any(d.get('state')=='needs_revision' and d.get('snapshot_digest')==context['snapshot_digest'] for d in drafts)
+    for row in escalations if revisable and ws.settings()['autonomy']!='observe' else []:
+        receipt=_read_json(ws.home/'build-escalations'/(row['id']+'.json'),{})
+        if row['state']=='failed' and (receipt.get('feedback') or {}).get('answer_receipt'):
+            if not kept or str(receipt.get('utc') or '')>kept['utc']:
+                kept={'id':row['id'],'utc':str(receipt.get('utc') or ''),'error':str(receipt.get('error') or '')[:300]}
     if not allowance['remaining'] and not reuse:blockers.append('Ordinary author allowance exhausted. Review saved candidates or an explicitly available continuation.')
     view=dict(allowance,known=True,reuse_draft=reuse,blockers=blockers,can_draft=not blockers)
     if lineage_error:
         view.update(known=False,remaining=None,recorded_attempts=allowance['used'])
     return {'eligible':eligible,'milestone':milestone['id'],'attempts':allowance['used'],
             'scope':scope,'used':bool(escalations),'receipt':escalations[-1].get('id') if escalations else None,
-            'snapshot_digest':context['snapshot_digest'],'allowance':view,
-            'reason':('Three ordinary author attempts were recorded without an accepted candidate.'
+            'snapshot_digest':context['snapshot_digest'],'allowance':view,'kept_answer':kept,
+            'reason':('The three tries for this step did not produce a build that passed.'   # plain words (J2-F22)
                       if eligible else None)}
 
 

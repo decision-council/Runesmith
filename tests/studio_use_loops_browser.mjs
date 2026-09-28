@@ -2222,6 +2222,23 @@ try{
     assert.deepEqual(aside.map(r=>[r.path,r.body.reason]),[['/api/build/corrections/c0123456789ab/set-aside','waited an hour and nothing arrived']]);
     fixtureWork.build_corrections=oldCorrections;
     loops.push({id:'B26.04',case:'A correction whose answer never arrived offers “Set it aside” with a reason, not a call that must fail',result:'passed'});
+    // B26.05 (journey J2-G1): the one more try's refused answer is kept and can be checked again, with no model call
+    const oldEscalation=fixtureWork.build_escalation;
+    fixtureWork.build_escalation=Object.assign(structuredClone(oldEscalation),{eligible:false,used:true,milestone:'m8',
+      kept_answer:{id:'e0123456789ab',utc:'2026-09-28T12:52:30Z',error:'PlannerUnavailable: Exact edit refused for readinglog/cli.py: Provide 1-6 exact edits.'}});
+    await page.evaluate(async()=>{window.cleanup?.();document.querySelector('#page').replaceChildren();
+      const module=await import('/static/js/views/work.js');
+      window.cleanup=await module.default(document.querySelector('#page'),{sub:['drafts'],app:{state:{proposals:{waiting:0},drafts:{}}},navigate(){}});});
+    const kept=page.locator('#page .callout',{hasText:'its answer is kept'}).first();
+    await kept.waitFor();
+    const keptText=await kept.innerText();
+    assert(keptText.includes('Exact edit refused for readinglog/cli.py')&&!keptText.includes('PlannerUnavailable')&&keptText.includes('asks no model'),keptText);
+    const keptStart=requests.length;
+    await kept.getByRole('button',{name:'Check it again',exact:true}).click();
+    await page.waitForTimeout(200);
+    assert.deepEqual(requests.slice(keptStart).filter(r=>r.method==='POST').map(r=>[r.path,r.body]),[['/api/worker/run',{job:'readmit',params:{escalation:'e0123456789ab'}}]]);
+    fixtureWork.build_escalation=oldEscalation;
+    loops.push({id:'B26.05',case:'The one more try’s refused answer is kept and “Check it again” queues it with no model call',result:'passed'});
     fixtureWork.drafts=oldDrafts;
   }
   assert.deepEqual(errors,[]);

@@ -324,7 +324,7 @@ def api_worker_run(s: Studio, q, body):
                "source_baseline":{"reason"},
                "allocate_check":{"draft_id","quote_id","reason"},
                "reconcile_check":{"draft_id","quote_id","reason"},
-               "correct":{"attempt"}, "breakdown":{"milestone"}, "propose_acceptance":{"milestone"}}.get(job, set())
+               "correct":{"attempt"}, "readmit":{"escalation"}, "breakdown":{"milestone"}, "propose_acceptance":{"milestone"}}.get(job, set())
     params = {k: v for k, v in (body.get("params") or {}).items() if k in allowed}
     return s.worker.enqueue(job, **params)
 

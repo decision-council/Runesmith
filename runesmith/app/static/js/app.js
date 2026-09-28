@@ -6,7 +6,7 @@ import { LOGO } from './icons.js';
 // What a job is called in plain words (the worker's JOB_WORDS), for toasts (journey J2-F9).
 const JOB_WORDS = { propose_acceptance: 'Proposing acceptance checks', plan: 'Drafting a plan', goalposts: 'Proposing goalposts',
   draft: 'Drafting files', build: 'Building the next step', revise: 'Revising a draft', correct: 'Correcting a draft',
-  escalate: 'Asking a stronger model', supplement: 'Asking for missing files', breakdown: 'Proposing smaller steps',
+  escalate: 'Giving the step one more try', readmit: 'Checking a kept answer again', supplement: 'Asking for missing files', breakdown: 'Proposing smaller steps',
   map: 'Mapping the folder', round: 'The round', measure: 'Taking a measurement' };
 
 const NAV = [

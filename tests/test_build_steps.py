@@ -417,3 +417,35 @@ def test_a_corrected_draft_does_not_trip_the_ordinary_lineage_guard(tmp_path):
     ws._save_draft_state(dict(corrected, author_request_key=None, correction_of='a' * 32), 'needs_revision')
     result = build_step(ws, ws.router())
     assert 'Invalid author request key' not in result.get('summary', '')
+
+
+
+def test_a_kept_answer_an_older_runesmith_refused_can_be_checked_again_without_a_model(tmp_path, monkeypatch):
+    # Journey J2-G1/F23: the one more try at m8 (a free model, 200 s) sent 8 exact edits; Runesmith allowed 6 and refused
+    # the whole answer. A newer Runesmith accepts it, and the owner can check the kept answer again with no model call.
+    from runesmith.app import planner
+    ws=setup(tmp_path,acceptance=True);enable(ws)
+    lines=''.join(f'A{n} = {n}\n' for n in range(1,8))
+    wrong={'title':'wrong','files':[{'path':'app.py','content':lines+'def answer():\n    return 0\n'},
+        {'path':'tests/__init__.py','content':''},
+        {'path':'tests/test_app.py','content':'import unittest\nfrom app import answer\nclass Tests(unittest.TestCase):\n    def test_answer(self): self.assertEqual(answer(),42)\n'}]}
+    scripted(ws,[wrong]*3,roles=('plan',))
+    for _ in range(3):
+        try:build_step(ws,ws.router())
+        except Exception:pass
+    assert any(d.get('state')=='needs_revision' for d in ws.drafts())
+    eight={'title':'eight edits','why':'fix','files':[{'path':'app.py','edits':
+        [{'old_text':f'A{n} = {n}','new_text':f'B{n} = {n}'} for n in range(1,8)]+[{'old_text':'return 0','new_text':'return 42'}]}]}
+    monkeypatch.setattr(planner,'MAX_EDITS',6)                          # the Runesmith that refused it
+    scripted(ws,[eight],roles=('plan',))
+    with pytest.raises(Exception,match='1-6 exact edits'):
+        escalate_build(ws,ws.router())
+    monkeypatch.setattr(planner,'MAX_EDITS',12)                         # the updated one
+    kept=build_escalation_status(ws)['kept_answer']
+    assert kept and '1-6 exact edits' in kept['error']
+    before=sum(row['calls'] for row in ws.call_stats().values())
+    worker=Worker(ws,EventBus())
+    done=worker._execute({'id':'j1','kind':'readmit','params':{'escalation':kept['id']},'by':'owner'},schedule_next=False)
+    assert done['result']=='done' and done['outcome'].get('advanced'), done
+    assert 'return 42' in (tmp_path/'app.py').read_text() and 'B7 = 7' in (tmp_path/'app.py').read_text()
+    assert sum(row['calls'] for row in ws.call_stats().values())==before              # no model was asked

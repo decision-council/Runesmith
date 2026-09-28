@@ -109,9 +109,9 @@ def test_invalid_later_file_edits_do_not_reuse_previous_file_index(tmp_path):
     (tmp_path/'second.py').write_text('second = 1\n')
     scripted(ws,[{'title':'Malformed second file','files':[
         {'path':'first.py','edits':[{'old_text':'first = 1','new_text':'first = 2'}]},
-        {'path':'second.py','edits':[{'old_text':'second = 1','new_text':'second = 2'}]*7},
+        {'path':'second.py','edits':[{'old_text':'second = 1','new_text':'second = 2'}]*13},
     ]}],roles=('plan',))
-    with pytest.raises(PlannerUnavailable,match='1-6 exact edits') as failure:
+    with pytest.raises(PlannerUnavailable,match='1-12 exact edits') as failure:
         draft_files(ws,ws.router())
     assert failure.value.feedback['path']=='second.py'
     assert 'edit_index' not in failure.value.feedback

@@ -21,9 +21,9 @@ from test_studio import scripted
 
 SWITCHES = ("auto_work", "build_steps", "build_apply", "probe_tests", "kaizen", "read_notes")
 MODES = ("map_plan", "build", "troubleshoot", "optimize", "operations")
-BUILD_KINDS = {"build", "draft", "escalate", "supplement", "revise", "correct", "breakdown", "propose_acceptance",
+BUILD_KINDS = {"build", "draft", "escalate", "supplement", "revise", "correct", "readmit", "breakdown", "propose_acceptance",
                "review_current", "resume_check", "allocate_check", "reconcile_check"}
-KINDS = ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct",
+KINDS = ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "readmit",
          "breakdown", "propose_acceptance", "review_current", "resume_check", "resume_author", "source_baseline",
          "allocate_check", "reconcile_check", "health", "mode", "measure")
 
