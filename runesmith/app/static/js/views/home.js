@@ -77,8 +77,11 @@ export default async function render(root, { app, navigate, refreshState }) {
     // With a plan under way, the next step is the plan's next milestone (journey J1-F2).
     line = `Next in your plan: “${s.plan.next.title}” (${s.plan.done || 0} of ${s.plan.milestones} done). Try what was built below, or continue in Goals & plan.`;
     // An owner back from "build while I'm away" hears that the last attempt did not work (journey J2-F11).
-    const last = (s.worker?.history || []).find((j) => j.kind === 'build');
-    if (last?.result === 'failed') line += ` The last attempt did not work (${ago(last.finished)}): ${String(last.outcome?.error || 'see Activity').slice(0, 180)}${s.settings.auto_work ? ' The next round tries again.' : ''}`;
+    const builds = (s.worker?.history || []).filter((j) => ['build', 'escalate', 'correct'].includes(j.kind));
+    const last = builds[0], streak = builds.findIndex((j) => j.result !== 'failed');
+    const tries = streak < 0 ? builds.length : streak;          // failed tries in a row (J2-F13)
+    if (last?.result === 'failed') line += ` The last attempt did not work (${ago(last.finished)}): ${String(last.outcome?.error || 'see Activity').slice(0, 180)}`
+      + (tries >= 3 ? ` ${tries} tries in a row did not work, so it waits for you: Work & proposals → Drafts shows what you can do.` : s.settings.auto_work ? ' The next round tries again.' : '');
     cta = h('button.btn.primary.lg', { onclick: () => navigate('goals') }, icon('target'), 'Continue the plan');
   } else {
     line = 'Review enabled modes and their prerequisites before starting. A configured route is not a capacity test, and a saved work outcome is not proof that the project is complete.';

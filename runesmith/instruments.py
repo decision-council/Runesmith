@@ -200,7 +200,8 @@ class MillinerInstrument(Instrument):
         token = self._token()
         if not token:
             return CallOutcome(False, error_kind="transport", error="auth_failed: Milliner token unavailable")
-        if isinstance(schema, LenientSchema):           # in the system text: the prompt stays the frozen author prompt
+        lenient = isinstance(schema, LenientSchema)
+        if lenient:                                     # in the system text: the prompt stays the frozen author prompt
             system = (system or "") + ("\n\nReply with one JSON object that satisfies this JSON schema (fields not "
                                        "listed as required are optional):\n" + canonical(schema))
             schema = None
@@ -213,6 +214,10 @@ class MillinerInstrument(Instrument):
                         max_fallbacks=len(self.fallback_models))
         if schema is not None:
             body["json_schema"] = schema
+        if lenient:
+            # Valid JSON without a pinned schema: the provider's JSON-object mode kept code escapes intact on the same
+            # NVIDIA route whose forced schema lost them (probe, 2026-09-28), and invalid JSON stopped.
+            body["json_mode"] = True
         if self.budget_tag:
             body["budget_tag"] = self.budget_tag
         if reasoning_effort:

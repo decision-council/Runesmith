@@ -1548,7 +1548,7 @@ try{
       allowance:{known:true,can_draft:false,used:3,remaining:0,limit:3,blockers:['Ordinary author allowance exhausted.']}};
     await refresh();await page.getByRole('button',{name:'Use alternate author',exact:true}).waitFor();
     await page.getByRole('button',{name:'Use alternate author',exact:true}).click();
-    assert((await page.getByRole('dialog').innerText()).includes('ordinary three-attempt cap remains closed'));
+    assert((await page.getByRole('dialog').innerText()).includes('gets one more try at this milestone, once'));   // single extra try (J2-F14 wording)
     await page.getByRole('dialog').getByRole('button',{name:'Cancel',exact:true}).click();
     fixtureWork.build_escalation.eligible=false;fixtureWork.build_escalation.used=true;
     await refresh();assert.equal(await page.getByRole('button',{name:'Use alternate author',exact:true}).count(),0);
@@ -1751,6 +1751,13 @@ try{
         outcome:{error:'Exact edit refused for readinglog/cli.py: edit outside delivered source or no-op'}}]}});
     const back=await hero().innerText();
     assert(back.includes('The last attempt did not work (')&&back.includes('Exact edit refused for readinglog/cli.py')&&back.includes('The next round tries again.'),back);
+    // J2-F13: after three failed tries in a row it does not promise another round; it says where the options are
+    const failed=k=>({kind:k,result:'failed',finished:new Date(Date.now()-600000).toISOString(),outcome:{error:'Exact edit refused'}});
+    await mount({...base,workspace:{...base.workspace,empty:false},ready:{any:true},settings:{...base.settings,auto_work:true},
+      plan:{milestones:9,done:6,next:{id:'m7',title:'Search books by query'}},
+      worker:{current:null,paused:false,history:[failed('build'),{kind:'breakdown',result:'done'},failed('build'),failed('build'),{kind:'build',result:'done'}]}});
+    const stuck=await hero().innerText();
+    assert(stuck.includes('3 tries in a row did not work, so it waits for you: Work & proposals → Drafts shows what you can do.')&&!stuck.includes('The next round tries again.'),stuck);
     const configured={...base,workspace:{...base.workspace,empty:false},ready:{any:true},plan:{milestones:1}};
     await mount(configured);
     assert(!(await hero().innerText()).includes('Everything is set'));

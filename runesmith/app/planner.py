@@ -437,6 +437,58 @@ def _with_shared_documents(ws, context: dict[str, Any]) -> dict[str, Any]:
     return dict(context, files=files, file_hashes=hashes)
 
 
+def _apply_one_edit(text: str, edit, rel: str) -> str:
+    """One exact edit. If its old text occurs nowhere exactly, the same lines at a uniformly different indentation
+    are accepted when they occur exactly once, and the new text is shifted by the same amount.
+
+    Journey J2: a free model's edit wrote 8 spaces where the file has 4, and the whole answer was refused. Only a
+    uniform shift of spaces is forgiven; everything else is refused as before, and the checks judge the result.
+    The repair organ's own exact edits are unchanged.
+    """
+    from runesmith.organs.repair import apply_edits
+    try:
+        return apply_edits({rel: text}, [dict(edit, path=rel)], {rel})[rel]
+    except ValueError as error:
+        if "did not match exactly once" not in str(error):
+            raise
+        shifted = _reindented(text, edit.get("old_text"), edit.get("new_text"))
+        if shifted is None:
+            raise
+        return shifted
+
+
+def _reindented(text: str, old, new) -> str | None:
+    if not isinstance(old, str) or not isinstance(new, str) or not old.strip() or "\t" in old + new + text or "\r" in text:
+        return None
+    old_lines, new_lines, lines = old.rstrip("\n").split("\n"), new.rstrip("\n").split("\n"), text.split("\n")
+
+    def indent(line):
+        return len(line) - len(line.lstrip(" "))
+
+    found = []
+    for start in range(len(lines) - len(old_lines) + 1):
+        block = lines[start:start + len(old_lines)]
+        shifts = {indent(have) - indent(want) for have, want in zip(block, old_lines) if want.strip()}
+        if (len(shifts) == 1 and all(have.strip() == want.strip() for have, want in zip(block, old_lines))
+                and all(not have.strip() for have, want in zip(block, old_lines) if not want.strip())):
+            found.append((start, shifts.pop()))
+    if len(found) != 1 or found[0][1] == 0:
+        return None
+    start, shift = found[0]
+    moved = []
+    for line in new_lines:
+        if not line.strip():
+            moved.append(line)
+        elif shift > 0:
+            moved.append(" " * shift + line)
+        elif indent(line) >= -shift:
+            moved.append(line[-shift:])
+        else:
+            return None
+    lines[start:start + len(old_lines)] = moved                # whole lines: line ends are kept as they were
+    return "\n".join(lines)
+
+
 def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths: set[str] | None = None,
                        revision_files: dict[str, dict] | None = None):
     """Turn one immutable model answer into host-bound candidate bytes.
@@ -459,7 +511,6 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
             candidate=(revision_files or {}).get(rel,{}).get('content')
             if 'content' in f or (rel not in context['files'] and not isinstance(candidate,str)):
                 raise PlannerUnavailable('Exact edits require a fully shown current or candidate file and no content field.')
-            from runesmith.organs.repair import apply_edits
             edit_index = None
             try:
                 if not isinstance(f['edits'],list) or not 1<=len(f['edits'])<=6:
@@ -475,7 +526,7 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
                     try:
                         value=base_text
                         for edit_index,edit in enumerate(f['edits']):
-                            value=apply_edits({rel:value},[dict(edit,path=rel)],{rel})[rel]
+                            value=_apply_one_edit(value,edit,rel)
                         proposed=value;f['revision_base']=base_name;break
                     except (ValueError,TypeError,KeyError) as candidate_error:
                         errors.append(candidate_error)

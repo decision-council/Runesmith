@@ -15,7 +15,9 @@ export default async function render(root, ctx) {
   root.classList.add('work-page');
   // With nothing under Fixes and a draft waiting, open Drafts (journey J4-F14).
   const s = ctx.app?.state;
-  const preferred = !ctx.sub[0] && !(s?.proposals?.waiting) && s?.drafts?.waiting ? 'drafts' : null;
+  // Also when the last build attempt did not work: its options live there (journey J2-F13).
+  const lastBuild = (s?.worker?.history || []).find((j) => ['build', 'escalate', 'correct'].includes(j.kind));
+  const preferred = !ctx.sub[0] && !(s?.proposals?.waiting) && (s?.drafts?.waiting || lastBuild?.result === 'failed') ? 'drafts' : null;
   const tab = TABS.find((t) => t.id === (ctx.sub[0] || preferred)) || TABS[0];
   const offs = [];
   const head = h('div.page-head', h('div', h('h2', 'Work & proposals'),
@@ -201,12 +203,13 @@ function drawDrafts(body, w, reload, ctx) {
   if (w.build_escalation?.eligible) {
     const e = w.build_escalation;
     body.append(h('div.callout.accent.mt-8', icon('cpu'), h('div.grow',
-      h('b', `Alternate author available for ${e.milestone}`),
+      // Plain words for an owner back from "build while I'm away" (journey J2-F14).
+      h('b', `Three tries at ${e.milestone} did not work: one more is available`),
       h('div.small', e.reason),
-      h('div.tiny.muted', 'One separately receipted call · unchanged source, scope, milestone and owner acceptance · no repeat on this snapshot')),
+      h('div.tiny.muted', 'It asks the Planner’s models once more, in their order under Thinking power (put another model first to try a different one). Your checks still decide; nothing is written unless they pass.')),
       h('button.btn.sm.primary', {onclick:(event)=>withBusy(event.currentTarget,async()=>{
-        const ok=await confirmDialog({title:'Use the one alternate-author continuation?',
-          text:'The ordinary three-attempt cap remains closed. This asks the configured planning author once, then runs the same project and owner gates.',confirm:'Use alternate author'});
+        const ok=await confirmDialog({title:'Allow one more try?',
+          text:'The Planner’s model gets one more try at this milestone, once, with what the earlier tries learned. The same project tests and your checks decide; nothing is written unless they pass.',confirm:'Use alternate author'});
         if (!ok) return;
         await post('/api/worker/run',{job:'escalate'});
         toast('Alternate-author continuation queued.','good',6000);
@@ -214,12 +217,12 @@ function drawDrafts(body, w, reload, ctx) {
   }
   for (const c of (w.build_corrections || []).filter(c => c.remaining > 0)) {
     body.append(h('div.callout.warn.mt-8', icon('wrench'), h('div.grow',
-      h('b', `Rejected answer can be corrected: ${c.path}`),
-      h('div.small', c.error || 'The answer did not pass host admission.'),
-      h('div.tiny.muted', `${c.remaining} of 2 bounded correction continuation(s) remain · same paths, source snapshot, milestone and acceptance gates`)),
+      h('b', `An answer for ${c.path} could not be used`),
+      h('div.small', String(c.error || 'It did not fit the files as they are.').replace(/^[A-Za-z]+(Unavailable|Error): /, '')),
+      h('div.tiny.muted', `The model can be asked to correct it, told exactly why it was refused (${c.remaining} of 2 corrections left). It cannot touch other files, and your checks still decide.`)),
       h('button.btn.sm', {disabled:!c.eligible, onclick:(e)=>withBusy(e.currentTarget,async()=>{
-        const ok=await confirmDialog({title:'Correct this retained answer?',
-          text:'This makes one model call with the exact refusal and frozen source. It cannot add paths or bypass project tests and owner acceptance.',confirm:'Run correction'});
+        const ok=await confirmDialog({title:'Ask the model to correct this answer?',
+          text:'One model call, with the reason it was refused and the files as they are. It cannot add other files, and the project tests and your checks still decide.',confirm:'Run correction'});
         if (!ok) return;
         await post('/api/worker/run',{job:'correct',params:{attempt:c.attempt}});
         toast('Bounded correction queued. The original answer remains unchanged.','good',6000);

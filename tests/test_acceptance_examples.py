@@ -401,6 +401,8 @@ def test_milliner_gets_the_lenient_examples_schema_as_text_not_as_a_forced_schem
     assert "json_schema" not in sent[-1] and '"examples"' in sent[-1]["system"]
     assert "fields not listed as required are optional" in sent[-1]["system"]
     assert sent[-1]["prompt"] == "Describe examples."                  # the prompt itself is never changed
+    assert sent[-1]["json_mode"] is True                                 # valid JSON, without a pinned schema
     plain = {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]}
     instrument.complete(prompt="p", system="s", schema=plain, max_tokens=100, key="k2")
     assert sent[-1]["json_schema"] == plain and sent[-1]["prompt"] == "p"          # other schemas: unchanged
+    assert "json_mode" not in sent[-1]
