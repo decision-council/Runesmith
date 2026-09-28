@@ -526,6 +526,36 @@ def _joined(steps):
     return joined
 
 
+FILE_CHECKS = ('exists', 'contains', 'unchanged')
+
+
+def _lifted(row, steps, what, dropped):
+    """File checks written inside a step's "expect" moved to the example they belong to (journey J11-G9: for the SVG
+    frame, the Checker put "exists" and "contains" for out.svg under the step that writes it). A "hides" naming a file
+    is not something the format checks; it is dropped with a note. Copies: the model's answer itself is kept as sent."""
+    if not isinstance(steps, list):
+        return row, steps
+    row, moved = dict(row), []
+    for step in steps:
+        expect = step.get('expect') if isinstance(step, dict) else None
+        if not isinstance(expect, dict):
+            moved.append(step)
+            continue
+        expect = dict(expect)
+        for key in FILE_CHECKS:
+            if key in expect and isinstance(expect[key], list):
+                row[key] = list(row.get(key) or []) + expect.pop(key)
+        hides = expect.get('hides')
+        if isinstance(hides, list) and any(isinstance(h, dict) for h in hides):
+            expect['hides'] = [h for h in hides if not isinstance(h, dict)]
+            dropped.append(f'{what}: that a file does not contain some text (not something these checks can look at)')
+            if not expect['hides']:
+                expect.pop('hides')
+        step = dict(step, expect=expect) if expect else {k: v for k, v in step.items() if k != 'expect'}
+        moved.append(step)
+    return row, moved
+
+
 def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> dict[str, Any]:
     """The examples as stored, the checks file rendered from them, and what Runesmith dropped; or a WorkspaceError."""
     if not isinstance(data, dict) or not isinstance(data.get('examples'), list):
@@ -541,6 +571,7 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
         says = _plain(row.get('says'), f'{what}: "says"', 300)
         steps = row.get('steps') if row.get('steps') is not None else []
         steps = _joined(steps) if isinstance(steps, list) else steps
+        row, steps = _lifted(row, steps, what, dropped)
         if not isinstance(steps, list) or len(steps) > LIMITS['steps']:
             raise WorkspaceError(f'{what} needs at most {LIMITS["steps"]} steps.')
         example: dict[str, Any] = {'test': _name(row.get('name'), index, taken), 'says': says,
@@ -561,8 +592,17 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
         contains = row.get('contains') or []
         if not isinstance(contains, list) or len(contains) > LIMITS['files']:
             raise WorkspaceError(f'{what}: "contains" must be a short list.')
-        example['contains'] = [{'name': _relative(c.get('name') if isinstance(c, dict) else None, f'{what}: "contains"'),
-                                'texts': _texts(c.get('texts'), f'{what}: "contains"')} for c in contains]
+        example['contains'] = []
+        for c in contains:
+            texts = c.get('texts') if isinstance(c, dict) else None
+            if isinstance(texts, list) and len(texts) > LIMITS['texts']:
+                # Too many texts to find is not a reason to refuse the answer: the first ones are checked (J11-G9).
+                dropped.append(f'{what}: {len(texts) - LIMITS["texts"]} more texts to find in {c.get("name")} '
+                               f'(at most {LIMITS["texts"]} are checked)')
+                texts = texts[:LIMITS['texts']]
+            example['contains'].append({'name': _relative(c.get('name') if isinstance(c, dict) else None,
+                                                          f'{what}: "contains"'),
+                                        'texts': _texts(texts, f'{what}: "contains"')})
         example['links_resolve'] = bool(row.get('links_resolve'))
         example['pages_reachable'] = bool(row.get('pages_reachable'))
         if not example['steps'] and not (example['exists'] or example['contains'] or example['links_resolve']

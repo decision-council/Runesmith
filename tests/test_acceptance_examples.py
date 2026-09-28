@@ -584,3 +584,21 @@ def test_a_milestone_nothing_can_check_is_told_to_the_owner_in_plain_words(tmp_p
     said = str(refused.value)
     assert said.startswith("Nothing in this milestone could be checked automatically: Clicking in the page needs a browser.")
     assert "read each draft yourself" in said and "acceptance-proposals/refused/" in said and "broke a rule" not in said
+
+
+def test_file_checks_inside_a_step_and_too_many_texts_are_forgiven():
+    # Journey J11-G9: for the SVG frame the Checker put "exists" and "contains" for out.svg inside the step that writes
+    # it, used "hides" on a file, and then listed 13 texts to find; both answers were refused whole.
+    svg = ["<svg", "<rect", 'x="50"', 'y="50"', 'width="50"', 'height="50"', 'fill="red"', "</svg>",
+           "<g", "<title", "viewBox", "xmlns", "version"]
+    answer = {"examples": [
+        {"name": "frame", "says": "The frame is written as an SVG file.",
+         "steps": [{"run": ["node", "motion.mjs", "p.motion.json", "--at", "1", "--svg", "out.svg"],
+                    "expect": {"exists": ["out.svg"], "contains": [{"name": "out.svg", "texts": svg}],
+                               "hides": [{"name": "out.svg", "texts": ["<circle"]}]}}]}]}
+    shaped = validate_examples(answer, "Frames: node motion.mjs FILE --at SECONDS --svg OUT.svg writes an SVG file.")
+    example = shaped["examples"][0]
+    assert example["exists"] == ["out.svg"] and example["steps"][0].get("expect") is None
+    assert any("1 more texts to find in out.svg" in d for d in shaped["dropped"])
+    assert any("does not contain some text" in d for d in shaped["dropped"])
+    assert answer["examples"][0]["steps"][0]["expect"]["exists"] == ["out.svg"]          # the answer itself is kept
