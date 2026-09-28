@@ -1509,7 +1509,9 @@ class Workspace:
             "attention": {"mode": attention.mode, "share": SHARE_BP[attention.mode] / 10000} if attention else None,
             "goals": [g for g in self.goals() if g["status"] == "active"],
             "plan": {"milestones": len(plan.get("milestones", [])),
-                     "done": sum(1 for m in plan.get("milestones", []) if m.get("status") == "done")},
+                     "done": sum(1 for m in plan.get("milestones", []) if m.get("status") == "done"),
+                     "next": next(({"id": m.get("id"), "title": m.get("title")} for m in plan.get("milestones", [])
+                                   if m.get("status") not in ("done", "dropped")), None)},
             "brief": bool(self.brief().get("text")),
             "notes_open": sum(self.notes.counts().values()), "note_counts": self.notes.counts(),
             "manual_waiting": waiting,

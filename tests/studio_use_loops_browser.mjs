@@ -1697,7 +1697,7 @@ try{
     };
     await page.setViewportSize({width:1440,height:1100});await mount(base);
     assert(await hero().getByRole('button',{name:'Add thinking power',exact:true}).isVisible());
-    assert((await hero().innerText()).includes('Runesmith can map your folder.'));
+    assert((await hero().innerText()).includes('An empty folder: a clean start for First project.'));   // J1-F1 wording
     assert(!(await hero().innerText()).includes('has mapped'));
     assert((await policy().innerText()).includes('1 local setup issue'));
     await policy().getByText('Inspect local checks',{exact:true}).click();
@@ -1731,6 +1731,10 @@ try{
     assert.deepEqual(await page.evaluate(()=>window.navigation),['activity']);
     loops.push({id:'B19.04',case:'Active and paused workers point to Activity, never purchase another round',result:'passed'});
 
+    await mount({...base,workspace:{...base.workspace,empty:false},ready:{any:true},plan:{milestones:5,done:1,next:{id:'m2',title:'Record a sale'}}});
+    assert((await hero().innerText()).includes('Next in your plan: “Record a sale” (1 of 5 done)'));   // journey J1-F2
+    await hero().getByRole('button',{name:'Continue the plan',exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>window.navigation),['goals']);
     const configured={...base,workspace:{...base.workspace,empty:false},ready:{any:true},plan:{milestones:1}};
     await mount(configured);
     assert(!(await hero().innerText()).includes('Everything is set'));

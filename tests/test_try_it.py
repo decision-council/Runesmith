@@ -63,6 +63,18 @@ def test_documented_commands_are_suggested_and_placeholders_marked(tmp_path):
     assert rows["python -m shelf add TITLE"]["placeholders"] and not rows["python -m shelf add Dune"]["placeholders"]
 
 
+def test_commands_quoted_inside_a_milestone_sentence_are_found(tmp_path):
+    # Journey J1-G1: a plan wrote its commands in single quotes mid-sentence, and Try it offered nothing at all.
+    ws = project(tmp_path)
+    ws.save_plan({"summary": "Stock", "milestones": [{"title": "Record a delivery",
+        "detail": "A command 'python -m shelf add NAME' adds the book, and 'python -m shelf list' shows every book.",
+        "done_when": "After 'python -m shelf add \"The Hobbit\"', 'python -m shelf list' shows The Hobbit."}]})
+    rows = {s["command"]: s for s in try_it.suggestions(ws)}
+    assert {"python -m shelf add NAME", "python -m shelf list", 'python -m shelf add "The Hobbit"'} <= set(rows)
+    assert rows["python -m shelf add NAME"]["placeholders"] and not rows['python -m shelf add "The Hobbit"']["placeholders"]
+    assert not any("adds the book" in c or "shows" in c for c in rows)
+
+
 def test_practice_runs_keep_the_real_folder_untouched_until_the_owner_chooses_it(tmp_path):
     ws = project(tmp_path)
     assert try_it.run(ws, "python -m shelf add Dune")["stdout"].strip() == "added Dune"

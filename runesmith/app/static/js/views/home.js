@@ -39,7 +39,8 @@ export default async function render(root, { app, navigate, refreshState }) {
       navigate('home');
     }) }, icon('wand'), 'Let it help');
   } else if (!s.ready.any) {
-    line = `${s.mapped_utc ? 'Runesmith has a saved map of your folder.' : 'Runesmith can map your folder.'} Add thinking power (a model on this computer, an API key, or a chat window), then review the modes and prerequisites for the work you want.`;
+    // Plain words for a first-time owner (journey J1-F1): what this folder is, and the one thing Runesmith needs.
+    line = `${s.workspace.empty ? `An empty folder: a clean start for ${s.workspace.name}.` : s.mapped_utc ? 'Runesmith has mapped your folder.' : 'Runesmith can map your folder.'} To plan and build, it needs thinking power: a model on this computer, an API key, or simply a chat window you already use.`;
     cta = h('button.btn.primary.lg', { onclick: () => { navigate('inference'); setTimeout(() => bus.emit('ui:add-model', {}), 250); } }, icon('cpu'), 'Add thinking power');
     extra = h('button.btn.lg', { title: 'No key and no install: you relay each request to a chat you already use', onclick: (e) => withBusy(e.currentTarget, async () => {
       const { useChatWindow } = await import('./goals.js');
@@ -56,6 +57,10 @@ export default async function render(root, { app, navigate, refreshState }) {
     line = s.workspace.empty ? 'This folder is empty: a clean slate. Describe what to build and let the planner lay out milestones and first files.'
       : 'There is no code with tests to repair here yet. Draft a plan from your brief to start building.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('goals') }, icon('wand'), 'Plan what to build');
+  } else if (s.plan?.next) {
+    // With a plan under way, the next step is the plan's next milestone (journey J1-F2).
+    line = `Next in your plan: “${s.plan.next.title}” (${s.plan.done || 0} of ${s.plan.milestones} done). Try what was built below, or continue in Goals & plan.`;
+    cta = h('button.btn.primary.lg', { onclick: () => navigate('goals') }, icon('target'), 'Continue the plan');
   } else {
     line = 'Review enabled modes and their prerequisites before starting. A configured route is not a capacity test, and a saved work outcome is not proof that the project is complete.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('mission') }, icon('sliders'), 'Choose the next work mode');

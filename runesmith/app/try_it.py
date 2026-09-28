@@ -28,6 +28,7 @@ TIMEOUT_S = 30
 MAX_OUTPUT = 20000
 MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 DOCUMENTED = re.compile(r"(?:python3?|py)\s+(?:-m\s+[A-Za-z_][\w.]*|[\w./\\-]+\.py)[^`\n]*")
+QUOTED = re.compile(r"(['`])((?:python3?|py)\s+(?:-m\s+[A-Za-z_][\w.]*|[\w./\\-]+\.py)(?:(?!\1)[^\n])*)\1")
 PLACEHOLDER = re.compile(r"\b[A-Z]{2,}\b|YYYY|<[^>]*>|\.\.\.|…")
 README_NAMES = ("README.md", "README.txt", "README.rst", "README")
 
@@ -75,8 +76,12 @@ def suggestions(ws) -> list[dict[str, Any]]:
                       " ".join(str(milestone.get(k) or "") for k in ("detail", "done_when"))))
     found, seen = [], set()
     for source, text in texts:
-        for match in DOCUMENTED.finditer(text):
-            command = match.group(0).strip().strip("'\"`").rstrip(".,;:'\"`")
+        # A command written inside quotes in a sentence ('python -m stockbook list' shows every item) ends at its
+        # closing quote; without this the match ran on to the end of the line and was dropped (journey J1-G1).
+        quoted = [(m.start(), m.group(2).strip()) for m in QUOTED.finditer(text)]
+        rest = QUOTED.sub(lambda m: " " * len(m.group(0)), text)          # same length: positions keep their order
+        loose = [(m.start(), m.group(0).strip().strip("'\"`").rstrip(".,;:'\"`")) for m in DOCUMENTED.finditer(rest)]
+        for _, command in sorted(quoted + loose):
             if command in seen:
                 continue
             try:
