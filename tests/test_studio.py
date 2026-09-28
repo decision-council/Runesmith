@@ -692,3 +692,27 @@ def test_a_draft_names_its_milestone_by_title(tmp_path):
     ws.save_draft(title="Export module", why="x", files=[{"path": "tool.py", "content": "x = 1\n"}], drafted_by="t", milestone=mid)
     [draft] = [d for d in ws.work()["drafts"] if d.get("milestone") == mid]
     assert draft["milestone_title"] == "Implement CSV export utility"
+
+
+
+def test_nvidia_free_endpoints_have_a_ready_made_tile():
+    # The journeys fell back to NVIDIA's free Nemotron when Gemini's free tier ran out; there was no tile for it.
+    from runesmith.app.providers import PRESET_BY_ID
+    nvidia = PRESET_BY_ID["nvidia"]
+    assert nvidia["base_url"] == "https://integrate.api.nvidia.com/v1" and nvidia["group"] == "With a key"
+    assert "free" in nvidia["blurb"] and "free experiment tier" not in PRESET_BY_ID["mistral"]["blurb"]
+
+
+
+def test_the_internal_router_is_not_offered_to_the_public(tmp_path, monkeypatch):
+    # Milliner is Runesmith's own internal router (Lars, 2026-09-28): no tile for it in a public Studio, but a home that
+    # already uses it can still edit it.
+    monkeypatch.delenv("RUNESMITH_INTERNAL", raising=False)
+    ws = Workspace(tmp_path)
+    assert "milliner" not in [p["id"] for p in ws.inference()["presets"]]
+    ws.save_instrument("gate", {"kind": "milliner", "model": "gemini:x", "base_url": "http://127.0.0.1:8765"},
+                       key_value="token-not-shown", roles=["plan"])
+    assert "milliner" in [p["id"] for p in ws.inference()["presets"]]
+    monkeypatch.setenv("RUNESMITH_INTERNAL", "1")
+    (tmp_path / "other").mkdir()
+    assert "milliner" in [p["id"] for p in Workspace(tmp_path / "other").inference()["presets"]]

@@ -44,7 +44,14 @@ PRESETS: list[dict[str, Any]] = [
      "blurb": "A free tier through Google AI Studio."},
     {"id": "mistral", "label": "Mistral", "group": "With a key", "kind": "openai",
      "base_url": "https://api.mistral.ai/v1", "key": "required", "key_url": "https://console.mistral.ai/api-keys",
-     "suggested": ["codestral-latest", "mistral-small-latest"], "blurb": "Code-strong models, a free experiment tier."},
+     "suggested": ["codestral-latest", "mistral-small-latest"],
+     "blurb": "Code-strong models; the free plan includes monthly API credits."},
+    # Many hosted models with a free endpoint (build.nvidia.com/models, checked 2026-09-28). The journeys' Planner and
+    # Checker fell back to NVIDIA's Nemotron when Gemini's free tier ran out, but it had no ready-made tile.
+    {"id": "nvidia", "label": "NVIDIA", "group": "With a key", "kind": "openai",
+     "base_url": "https://integrate.api.nvidia.com/v1", "key": "required", "key_url": "https://build.nvidia.com/models",
+     "suggested": ["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"],
+     "blurb": "Many models with a free endpoint, among them NVIDIA Nemotron and Kimi."},
     {"id": "deepseek", "label": "DeepSeek", "group": "With a key", "kind": "openai",
      "base_url": "https://api.deepseek.com/v1", "key": "required", "key_url": "https://platform.deepseek.com/api_keys",
      "suggested": ["deepseek-chat", "deepseek-reasoner"], "blurb": "Strong and inexpensive."},
@@ -61,7 +68,8 @@ PRESETS: list[dict[str, Any]] = [
     {"id": "custom", "label": "Any OpenAI-compatible endpoint", "group": "Advanced", "kind": "openai",
      "base_url": "", "key": "optional", "suggested": [],
      "blurb": "vLLM, a company gateway, or any server that speaks the OpenAI chat API."},
-    {"id": "milliner", "label": "Milliner router", "group": "Advanced", "kind": "milliner",
+    # Internal: a router run by Runesmith's own team, not offered to the public (see public_presets).
+    {"id": "milliner", "label": "Milliner router", "group": "Advanced", "kind": "milliner", "internal": True,
      "base_url": "http://127.0.0.1:8765", "key": "required", "suggested": [],
      "blurb": "Route through a Milliner gateway with an agent token."},
     {"id": "manual", "label": "A chat window (copy and paste)", "group": "No key needed", "kind": "manual",
@@ -70,6 +78,14 @@ PRESETS: list[dict[str, Any]] = [
               "right here. Best for the author role: a few calls per improvement."},
 ]
 PRESET_BY_ID = {p["id"]: p for p in PRESETS}
+
+
+def public_presets(kinds_in_use=()) -> list[dict[str, Any]]:
+    """The tiles an owner is offered. Internal ones appear only where one is already set up, or with
+    RUNESMITH_INTERNAL=1, so an existing internal instrument can still be edited."""
+    import os
+    internal = os.environ.get("RUNESMITH_INTERNAL") == "1"
+    return [p for p in PRESETS if not p.get("internal") or internal or p["kind"] in set(kinds_in_use)]
 
 
 def _get_json(url: str, *, headers: dict[str, str] | None = None, timeout: float = 3.0) -> tuple[int, Any]:

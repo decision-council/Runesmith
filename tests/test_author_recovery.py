@@ -125,7 +125,7 @@ def test_workspace_resume_is_idempotent_and_never_applies_or_refunds(tmp_path,mo
     ws,gateway,inst,row,attempt=interrupted_build(tmp_path,monkeypatch)
     with pytest.raises(PlannerUnavailable,match='unresolved'):
         draft_files(ws,Router({},{}))
-    assert 'recovery' in building.build_step(ws,Router({},{}))['summary']
+    assert 'has not arrived yet' in building.build_step(ws,Router({},{}))['summary']      # plain words (J11-F8)
     gateway.fail_poll=False
     result=resume_author(ws,row['id'])
     assert result['draft'] and not (ws.root/'app.py').exists()
@@ -221,7 +221,7 @@ def test_an_unattended_round_fetches_a_late_answer_and_checks_it_without_a_new_c
         {'path':'tests/__init__.py','content':''},
         {'path':'tests/test_app.py','content':'import unittest\nfrom app import answer\nclass Test(unittest.TestCase):\n def test_answer(self): self.assertEqual(answer(),42)\n'}]
     still=building.build_step(ws,Router({},{}))                  # still running remotely: nothing to fetch yet
-    assert 'recovery' in still['summary'] and 'unresolved' in still['summary'] and not ws.drafts()
+    assert 'has not arrived yet' in still['summary'] and 'does not ask twice' in still['summary'] and not ws.drafts()
     gateway.fail_poll=False
     checked=building.build_step(ws,Router({},{}))                # a router with no model at all: no new call possible
     assert checked['verification']['status']=='self_checks_passed' and len(ws.drafts())==1

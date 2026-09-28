@@ -219,3 +219,18 @@ def test_rounds_that_find_nothing_new_are_one_counted_row(tmp_path, monkeypatch)
     waits = dict(rows[-1], outcome={'summary': 'Draft “Export” waits for you.', 'draft': 'd1', 'milestone': 'm8'})
     assert _same_waiting_round(waits, dict(waits))
     assert not _same_waiting_round(waits, dict(waits, outcome=dict(waits['outcome'], draft='d2')))
+
+
+
+def test_no_scheduled_breakdown_for_a_milestone_that_already_has_smaller_steps(tmp_path):
+    # Journey J2-F31: with m8's tries used up again, every round queued a breakdown that failed at once, "This milestone
+    # already has prerequisite steps".
+    ws = workspace(tmp_path)
+    ws.save_plan({"summary": "Log", "milestones": [{"title": "Export", "done_when": "exported"}]})
+    worker = Worker(ws, EventBus())
+    goal = ws.plan()["milestones"][0]["id"]
+    assert not worker._breakdown_waiting(goal)
+    plan = ws.plan()
+    plan["milestones"].insert(0, {"id": "s1", "title": "A smaller step", "status": "done", "parent_id": goal})
+    _write_json(ws.home / "PLAN.json", plan)
+    assert worker._breakdown_waiting(goal)

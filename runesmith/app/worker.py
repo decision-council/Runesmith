@@ -587,6 +587,10 @@ class Worker:
     # --------------------------------------------------------------------- jobs --
 
     def _breakdown_waiting(self, milestone: str) -> bool:
+        """No scheduled breakdown: one proposal already waits (J2-F16), or the milestone already has smaller steps, which
+        a breakdown refuses (J2-F31: it failed every 5 minutes with "already has prerequisite steps")."""
+        if any(m.get('parent_id') == milestone for m in (self.ws.plan() or {}).get('milestones', [])):
+            return True
         return any(_read_json(p, {}).get('milestone') == milestone and _read_json(p, {}).get('state') == 'proposed'
                    for p in (self.ws.home / 'breakdowns').glob('*.json'))
 

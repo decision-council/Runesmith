@@ -172,11 +172,13 @@ def resume_author(ws, request_id, *, checkpoint=lambda:None):
              'gateway':outcome.receipt}
     if outcome.receipt.get('unresolved'):
         _write_json(path,dict(receipt,state='pending'))
-        return {'summary':'Gateway outcome still unresolved. Saved ticket retained; no new model call.'}
+        return {'summary':'The late answer has not arrived yet; Runesmith waits for it and does not ask twice.'}
     if not outcome.ok:
         _write_json(path,dict(receipt,state='remote_failed',error=outcome.error))
         _settle_attempt(ws,packet,request_id,'failed',error=outcome.error)
-        return {'summary':'Saved gateway job failed. Failure retained; no automatic resubmission.'}
+        # Plain words for the owner (journey J11-F8: "Saved gateway job failed. Failure retained; no automatic
+        # resubmission."); the next round asks again under the usual limits.
+        return {'summary':'The late answer never came: the model’s job failed, so this try ended without an answer.'}
     checkpoint()
     author=outcome.receipt.get('model') or record['body'].get('model')
     provider=outcome.receipt.get('provider')

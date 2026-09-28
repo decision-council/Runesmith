@@ -381,10 +381,10 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False):
         # Fetching it is no new model call, so the round fetches it and checks it through the normal gates.
         ready = next((row for row in saved if row['can_resume']), None)
         if author_only or ready is None:
-            return {'summary':'Saved remote author request requires recovery before another build. No inference.'}
+            return {'summary':'A late answer is still expected, so building waits for it and asks no model meanwhile.'}
         recovered = resume_author(ws, ready['id'], checkpoint=checkpoint)
         if not recovered.get('draft') or recovered.get('already_used'):
-            return dict(recovered, summary='Saved remote author request requires recovery: ' + recovered['summary'])
+            return recovered
         draft = ws._draft(recovered['draft'])
         milestone = next((m for m in (ws.plan() or {}).get('milestones', []) if m['id'] == draft.get('milestone')), None)
         if not milestone or not milestone_ready(ws.plan(), milestone):

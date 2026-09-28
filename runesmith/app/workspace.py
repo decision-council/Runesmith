@@ -31,7 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from runesmith import __version__, generations
-from runesmith.app.providers import PRESET_BY_ID, PRESETS
+from runesmith.app.providers import PRESET_BY_ID, PRESETS, public_presets
 from runesmith.config import build_router, load_config
 from runesmith.home import init_home
 from runesmith.keystore import KeyStore
@@ -387,7 +387,8 @@ class Workspace:
                 "note": spec.get("note")})
         roles = {role: list(config["roles"].get(role) or []) for role in ROLES}
         return {"instruments": instruments, "roles": roles, "role_labels": ROLE_LABELS, "keys": self.keys.describe(),
-                "presets": PRESETS, "ready": self.ready(), "stats": self.call_stats()}
+                "presets": public_presets(spec.get("kind") for spec in (self.config().get("instruments") or {}).values()),
+                "ready": self.ready(), "stats": self.call_stats()}
 
     def _usable(self, name: str, spec: dict[str, Any] | None) -> bool:
         if not spec:
