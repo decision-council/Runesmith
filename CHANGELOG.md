@@ -29,6 +29,7 @@
     - A data folder that lived *inside* the project cannot be "unavailable" while the project is there, the way data on an unplugged drive can. So Runesmith starts fresh in the same place and says so.
     - Data kept elsewhere that has gone missing is still refused, as before.
   - The launcher never shows a traceback when it cannot open a folder; it says why in one sentence.
+  - **A round measures the tests before asking for a model.** It used to stop at "no Worker model" before looking, so someone who had not set up a model was never told their tests fail. Measuring needs no model; only the fix does. Projects the repair organ cannot serve are now measured first, and only the organ's own projects need a Worker model.
   - An explicitly chosen port that is already in use is explained, with what to do, instead of a raw Windows error (J7-F1).
   - Also confirmed in J7, and passing:
     - a path with spaces, an ampersand, parentheses and non-ASCII letters (mapping, the introduction, Try it with non-ASCII output);

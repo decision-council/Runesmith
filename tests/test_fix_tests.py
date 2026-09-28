@@ -131,3 +131,14 @@ def test_a_milliner_gateway_on_this_computer_is_not_called_a_local_model(tmp_pat
     ws.save_instrument("gate", {"kind": "milliner", "model": "gemini:x", "base_url": "http://127.0.0.1:8765"},
                        key_value="token-not-shown", roles=["plan"])
     assert next(i for i in ws.inference()["instruments"] if i["name"] == "gate")["local"] is False
+
+
+def test_a_round_measures_the_tests_even_before_any_model_is_set_up(tmp_path):
+    # J7 (S5): the round used to stop at "no Worker model" before looking; measuring needs no model, only fixing does.
+    from runesmith.app.worker import EventBus, Worker
+    ws = project(tmp_path)
+    ws.update_settings({"onboarded": True, "probe_tests": True})
+    worker = Worker(ws, EventBus())
+    worker._job_round()
+    assert offer(ws)["tests_green"] == 0.5
+    assert list(ws.ledger.events("studio.round"))[-1]["data"]["outcome"] == "tests fail: fix offered"

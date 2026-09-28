@@ -747,9 +747,40 @@ class Worker:
             self.say("No Python project with tests was found here, so no tests were run. To build something new, "
                      "draft a plan under Goals & plan.")
             return self._finish_round([], statuses, {}, "no project with tests found")
+        # The repair organ (the measured path) needs a src/ folder and pytest. Anything else is measured first, with
+        # Python's own unittest and no model at all, and offered "Fix the failing tests", which works for any project
+        # (J3); only the organ's own projects need a Worker model (J7).
+        organ_ok = importlib.util.find_spec("pytest") is not None
+        measured_only = [o for o in objects if not organ_ok or not (Path(o["path"]) / "src").is_dir()]
+        organ_objects = [o for o in objects if o not in measured_only]
+        fix_offered = False
+        for obj in measured_only:
+            flat = not (Path(obj["path"]) / "src").is_dir()
+            why =(f"{obj['name']} keeps its code at the top, not in the src/ folder Runesmith's repair organ needs"
+                   if flat else "Runesmith's repair organ needs pytest, which is not installed here")
+            if not settings["probe_tests"]:
+                statuses[obj["name"]] = "not measured: running this project's tests is off"
+                self.say(f"Runesmith has not run {obj['name']}'s tests, so it cannot tell whether anything is "
+                         "broken. Turn on “Run this project’s tests while mapping” to let it check them.")
+                continue
+            from runesmith.app.fix_tests import measure
+            self._set("discovering", f"Running {obj['name']}'s tests on a throwaway copy")
+            measured = measure(ws, Path(obj["path"]), obj["name"])
+            failing = measured["failures"] + measured["errors"]
+            statuses[obj["name"]] = f"measured: {failing} of {measured['ran']} tests fail"
+            if failing:
+                fix_offered = True
+                self.say(f"{failing} of {measured['ran']} tests fail in {obj['name']}. {why}: use “Fix the failing "
+                         "tests” on the Overview, which works for any project.", "warn")
+            elif measured["ran"]:
+                self.say(f"All {measured['ran']} tests pass in {obj['name']}.", "success")
+            else:
+                self.say(f"No tests ran in {obj['name']}: Runesmith looks for them in a tests/ folder.")
+        if not organ_objects:
+            return self._finish_round([], statuses, {}, "tests fail: fix offered" if fix_offered else "nothing new")
         ready = ws.ready()
         if not ready["repair"]:
-            self.say("No Worker model is set up, so Runesmith can map but not repair. Add one under Inference.", "warn")
+            self.say("No Worker model is set up, so Runesmith can map but not repair. Add one under Thinking power.", "warn")
             self.bus.publish("needs", {"what": "inference", "role": "repair"})
             return self._finish_round([], statuses, {}, "no worker model")
         config = ws.config()
@@ -766,36 +797,10 @@ class Worker:
             return self._finish_round([], statuses, {}, "worker model unreachable")
         for name, detail in down.items():
             self.say(f"Skipping the Worker model '{name}' this round: {detail}. Its fallbacks take over.", "warn")
-        fix_offered = False
         served_path = ws.home / "served_opportunities.json"
         served: dict[str, str] = _read_json(served_path, {})
         fresh: list[dict[str, Any]] = []
-        for obj in objects:
-            flat = not (Path(obj["path"]) / "src").is_dir()
-            if flat or importlib.util.find_spec("pytest") is None:
-                # The repair organ (the measured path) needs a src/ folder and pytest. Anything else is measured with
-                # Python's own unittest and offered "Fix the failing tests", which works for any project (J3).
-                why = (f"{obj['name']} keeps its code at the top, not in the src/ folder Runesmith's repair organ needs"
-                       if flat else "Runesmith's repair organ needs pytest, which is not installed here")
-                if not settings["probe_tests"]:
-                    statuses[obj["name"]] = "not measured: running this project's tests is off"
-                    self.say(f"Runesmith has not run {obj['name']}'s tests, so it cannot tell whether anything is "
-                             "broken. Turn on “Run this project’s tests while mapping” to let it check them.")
-                    continue
-                from runesmith.app.fix_tests import measure
-                self._set("discovering", f"Running {obj['name']}'s tests on a throwaway copy")
-                measured = measure(ws, Path(obj["path"]), obj["name"])
-                failing = measured["failures"] + measured["errors"]
-                statuses[obj["name"]] = f"measured: {failing} of {measured['ran']} tests fail"
-                if failing:
-                    fix_offered = True
-                    self.say(f"{failing} of {measured['ran']} tests fail in {obj['name']}. {why}: use “Fix the failing "
-                             "tests” on the Overview, which works for any project.", "warn")
-                elif measured["ran"]:
-                    self.say(f"All {measured['ran']} tests pass in {obj['name']}.", "success")
-                else:
-                    self.say(f"No tests ran in {obj['name']}: Runesmith looks for them in a tests/ folder.")
-                continue
+        for obj in organ_objects:
             self._set("discovering", f"Running {obj['name']}'s tests on a throwaway copy")
             self.say(f"Running {obj['name']}'s tests on a throwaway copy")
             found = discover(Path(obj["path"]), scratch=ws.home / "scratch")
