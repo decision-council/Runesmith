@@ -211,3 +211,20 @@ def test_recovery_finishes_attempt_reconciliation_after_interruption(tmp_path,mo
     assert resume_author(ws,row['id'])['already_used']
     assert json.loads(attempt.read_text())['state']=='answered'
     assert len(ws.drafts())==1 and [m for m,_ in gateway.requests].count('POST')==1
+
+
+def test_an_unattended_round_fetches_a_late_answer_and_checks_it_without_a_new_call(tmp_path,monkeypatch):
+    # Journey J2-F12: an answer that arrived after the 300 s wait stopped every scheduled round ("requires recovery
+    # before another build") until the owner came back. Fetching it is no new call, so the round does it.
+    ws,gateway,inst,row,attempt=interrupted_build(tmp_path,monkeypatch)
+    gateway.answer['files'] += [
+        {'path':'tests/__init__.py','content':''},
+        {'path':'tests/test_app.py','content':'import unittest\nfrom app import answer\nclass Test(unittest.TestCase):\n def test_answer(self): self.assertEqual(answer(),42)\n'}]
+    still=building.build_step(ws,Router({},{}))                  # still running remotely: nothing to fetch yet
+    assert 'recovery' in still['summary'] and 'unresolved' in still['summary'] and not ws.drafts()
+    gateway.fail_poll=False
+    checked=building.build_step(ws,Router({},{}))                # a router with no model at all: no new call possible
+    assert checked['verification']['status']=='self_checks_passed' and len(ws.drafts())==1
+    assert not checked.get('advanced') and not (ws.root/'app.py').exists()   # self-checks alone never apply
+    assert json.loads(attempt.read_text())['state']=='answered' and not pending_authors(ws)
+    assert [m for m,_ in gateway.requests].count('POST')==1

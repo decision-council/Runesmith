@@ -368,9 +368,22 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False):
         raise WorkspaceError('Author-only selection must be boolean.')
     if ws.settings()['autonomy'] == 'observe':
         return {'summary':'Observe mode: no build or model call.'}
-    from runesmith.app.author_recovery import pending_authors
-    if pending_authors(ws):
-        return {'summary':'Saved remote author request requires recovery before another build. No inference.'}
+    from runesmith.app.author_recovery import pending_authors, resume_author
+    saved = pending_authors(ws)
+    if saved:
+        # Journey J2-F12: an answer that arrived after the wait stopped every later round until the owner came back.
+        # Fetching it is no new model call, so the round fetches it and checks it through the normal gates.
+        ready = next((row for row in saved if row['can_resume']), None)
+        if author_only or ready is None:
+            return {'summary':'Saved remote author request requires recovery before another build. No inference.'}
+        recovered = resume_author(ws, ready['id'], checkpoint=checkpoint)
+        if not recovered.get('draft') or recovered.get('already_used'):
+            return dict(recovered, summary='Saved remote author request requires recovery: ' + recovered['summary'])
+        draft = ws._draft(recovered['draft'])
+        milestone = next((m for m in (ws.plan() or {}).get('milestones', []) if m['id'] == draft.get('milestone')), None)
+        if not milestone or not milestone_ready(ws.plan(), milestone):
+            return recovered
+        return _check_and_record(ws, draft, milestone, milestone_contract(ws, milestone), checkpoint=checkpoint)
     checkpoint()
     if not ws.plan():
         if author_only:

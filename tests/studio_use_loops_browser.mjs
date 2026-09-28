@@ -1744,6 +1744,13 @@ try{
     assert((await hero().innerText()).includes('Next in your plan: “Record a sale” (1 of 5 done)'));   // journey J1-F2
     await hero().getByRole('button',{name:'Continue the plan',exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>window.navigation),['goals']);
+    // journey J2-F11: back from "build while I'm away", the owner hears that the last attempt did not work
+    await mount({...base,workspace:{...base.workspace,empty:false},ready:{any:true},settings:{...base.settings,auto_work:true},
+      plan:{milestones:9,done:6,next:{id:'m7',title:'Search books by query'}},
+      worker:{current:null,paused:false,history:[{kind:'build',result:'failed',finished:new Date(Date.now()-600000).toISOString(),
+        outcome:{error:'Exact edit refused for readinglog/cli.py: edit outside delivered source or no-op'}}]}});
+    const back=await hero().innerText();
+    assert(back.includes('The last attempt did not work (')&&back.includes('Exact edit refused for readinglog/cli.py')&&back.includes('The next round tries again.'),back);
     const configured={...base,workspace:{...base.workspace,empty:false},ready:{any:true},plan:{milestones:1}};
     await mount(configured);
     assert(!(await hero().innerText()).includes('Everything is set'));

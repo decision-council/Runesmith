@@ -164,3 +164,12 @@ def test_a_new_request_that_replaces_an_answered_one_is_announced(tmp_path):
     assert len(said) == 2
     worker._check_manual()                                        # nothing new: no repeat
     assert events.qsize() == 0 or all(e['kind'] != 'manual' for e in [events.get_nowait() for _ in range(events.qsize())])
+
+
+def test_a_proposal_summary_gives_the_trial_counts(tmp_path, monkeypatch):
+    # Journey J2-F10: the summary said "They fail on today's project" when 1 of 2 failed.
+    ws = workspace(tmp_path)
+    monkeypatch.setattr('runesmith.app.acceptance_proposals.propose', lambda *a, **k: {
+        'id': 'p1', 'checks': [{}, {}], 'dry_run': {'verdict': 'fails_now', 'ran': 2, 'failures': 1, 'errors': 0}})
+    summary = Worker(ws, EventBus())._job_propose_acceptance('m9')['summary']
+    assert '1 of 2 fail on today’s project, as expected' in summary

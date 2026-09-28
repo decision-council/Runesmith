@@ -680,7 +680,9 @@ class Worker:
         self.say('Asking the planner model to propose acceptance checks from the milestone’s own words')
         proposal = propose(self.ws, self.ws.router(on_call=self._on_call, backoff_s=()), milestone, checkpoint=checkpoint)
         self.bus.publish('plan', {'acceptance': proposal['id']})
-        trial = {'fails_now': ' They fail on today’s project, as expected before it is built.',
+        dry = proposal.get('dry_run') or {}
+        failing = f"{(dry.get('failures') or 0) + (dry.get('errors') or 0)} of {dry['ran']}" if dry.get('ran') else 'They'
+        trial = {'fails_now': f' {failing} fail on today’s project, as expected before it is built.',   # J2-F10: the counts
                  'passes_now': ' Note: they already pass on today’s project.',
                  'broken': ' Note: they could not run on today’s project.'}.get((proposal.get('dry_run') or {}).get('verdict'), '')
         revised = ' Revised once after Runesmith tried and read them.' if proposal.get('revision') and not proposal['revision'].get('error') else ''
