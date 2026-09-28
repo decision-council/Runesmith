@@ -22,7 +22,11 @@ async function behaviour(body, ctx) {
   const toggle = (key, label, text, onMsg) => h('div.setting', h('div.text', h('b', label), h('span', text)),
     h('label.switch', h('input', { type: 'checkbox', checked: s[key], 'aria-label': label, onchange: (e) => save(
       { [key]: e.target.checked, ...(POLICY.has(key) ? { policy_chosen: true } : {}) }, onMsg && onMsg(e.target.checked)) }), h('span')));
-  const seg = (key, options) => h('div.seg', options.map(([v, l, ic]) => h('button', { class: s[key] === v ? 'on' : '', onclick: async (e) => { await save({ [key]: v }); for (const b of e.currentTarget.parentNode.children) b.classList.toggle('on', b === e.currentTarget); } }, ic ? icon(ic) : null, l)));
+  // The button is taken before saving: after an await the click event no longer knows which button it came from.
+  const seg = (key, options) => h('div.seg', options.map(([v, l, ic]) => h('button', { class: s[key] === v ? 'on' : '', 'aria-pressed': String(s[key] === v),
+    onclick: async (e) => { const chosen = e.currentTarget; await save({ [key]: v });
+      for (const b of chosen.parentNode.children) { b.classList.toggle('on', b === chosen); b.setAttribute('aria-pressed', String(b === chosen)); } } },
+    ic ? icon(ic) : null, l)));
   const name = h('input.input', { value: s.workspace_name, style: { maxWidth: '320px' } });
   name.addEventListener('change', () => save({ workspace_name: name.value }));
   const interval = h('select.select', { style: { width: '180px' }, onchange: () => save({ interval_minutes: Number(interval.value) }) },
@@ -31,8 +35,8 @@ async function behaviour(body, ctx) {
   if (![5, 15, 30, 60, 180, 720, 1440].includes(Number(s.interval_minutes))) interval.append(h('option', { value: s.interval_minutes, selected: true }, `every ${s.interval_minutes} minutes`));
   const objects = (env.map?.objects || []).filter((o) => !o.root && o.reason !== 'link').map((o) => o.name);   // a link is never read anyway
   const exclude = new Set(s.exclude);
-  const exChips = h('div.pillbox', objects.length ? objects.map((n) => h('button', { class: `chip${exclude.has(n) ? ' on' : ''}`, onclick: async (e) => {
-    exclude.has(n) ? exclude.delete(n) : exclude.add(n); e.currentTarget.classList.toggle('on'); await save({ exclude: [...exclude] }, exclude.has(n) ? `${n} will never be touched` : `${n} is included`);
+  const exChips = h('div.pillbox', objects.length ? objects.map((n) => h('button', { class: `chip${exclude.has(n) ? ' on' : ''}`, 'aria-pressed': String(exclude.has(n)), onclick: async (e) => {
+    exclude.has(n) ? exclude.delete(n) : exclude.add(n); e.currentTarget.classList.toggle('on'); e.currentTarget.setAttribute('aria-pressed', String(exclude.has(n))); await save({ exclude: [...exclude] }, exclude.has(n) ? `${n} will never be touched` : `${n} is included`);
     post('/api/worker/run', { job: 'map' }); } }, exclude.has(n) ? icon('lock') : null, n)) : h('span.small.faint', 'No sub-folders mapped yet.'));
   const num = (key, label, text, min, max) => {
     const input = h('input.input', { type: 'number', min, max, value: s[key], style: { width: '100px' } });
@@ -43,7 +47,7 @@ async function behaviour(body, ctx) {
     h('div.col.gap-16',
       h('div.card', h('h3', icon('home'), 'This workspace'),
         h('div.setting', h('div.text', h('b', 'Name'), h('span', 'What you build here. Shown everywhere in the Studio.')), name),
-        h('div.setting', h('div.text', h('b', 'How Runesmith may act'), h('span', 'Observe maps and watches only. Propose also works on what it finds and brings you fixes to approve. It never writes to your files by itself.')),
+        h('div.setting', h('div.text', h('b', 'How Runesmith may act'), h('span', 'Observe: just look. Runesmith maps and reports, and asks no model. Propose: it also plans, drafts and brings you changes to review. Your files change only when you approve a change, or when you allow automatic apply for checked builds.')),
           seg('autonomy', [['observe', 'Observe', 'eye'], ['propose', 'Propose', 'hammer']]))),
       h('div.card', h('h3', icon('clock'), 'Rhythm'),
         toggle('auto_work', 'Work on a schedule', 'Run rounds automatically while the Studio is open. Each round can spend model calls. Off until you choose.'),

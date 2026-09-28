@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const dependencies=process.env.RUNESMITH_TEST_NODE_MODULES;
 const {chromium}=require(dependencies?path.join(dependencies,'playwright'):'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23').split(','));
+const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23,B24').split(','));
 const artifacts=path.join(root,'training','.tmp','studio-use-loops-'+new Date().toISOString().replace(/[:.]/g,'-'));
 mkdirSync(artifacts,{recursive:true});
 const executable=[chromium.executablePath(),'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -231,7 +231,9 @@ await context.route('**/*',async route=>{
     planning_blockers:planningBlocks(),autonomy:fixtureAutonomy,held_plans:heldPlans,breakdowns:[],acceptance_expectations:fixtureExpectations,acceptance_checks:fixtureAcceptance,current_checks:[],
     readiness:Object.fromEntries((fixturePlan?.milestones||[]).map(m=>[m.id,{ready:true,unmet:[]}]))};
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
-  else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false};
+  else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false,autonomy:'propose',
+    exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark'};
+  else if(p==='/api/map/environment')data={map:{objects:[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
   else if(p==='/api/build')data={apply:false,acceptance_folder:'.runesmith/acceptance',last:null};
   else if(p==='/api/notes')data={notes:reviewNotes,counts:{},read_notes:true};
   else if(/^\/api\/plan\/milestones\/[^/]+\/expectations$/.test(p)){
@@ -1974,6 +1976,30 @@ try{
     assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST').map(r=>r.body).at(-1),{autonomy:'propose'});
     loops.push({id:'B23.02',case:'The observe block on Goals & plan offers the switch itself instead of sending people to Modes',result:'passed'});
     fixtureAutonomy='propose';
+  }
+  if(selected.has('B24')){
+    // Settings show a new choice at once, to sighted and screen-reader users alike (journey J4-B2: the highlight never moved).
+    const start=requests.length;
+    await page.setViewportSize({width:1440,height:1100});
+    await page.evaluate(()=>window.mount('settings'));
+    const option=(name)=>page.locator('.seg button',{hasText:name});
+    await option('Observe').waitFor();
+    assert.equal(await option('Propose').getAttribute('aria-pressed'),'true');
+    assert.equal(await option('Observe').getAttribute('aria-pressed'),'false');
+    await option('Observe').click();
+    await page.waitForFunction(()=>[...document.querySelectorAll('.seg button')].some(b=>b.textContent.trim()==='Observe'&&b.classList.contains('on')));
+    assert.equal(await option('Observe').getAttribute('aria-pressed'),'true');
+    assert.equal(await option('Propose').getAttribute('aria-pressed'),'false');
+    assert(!(await option('Propose').getAttribute('class')).includes('on'));
+    assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST').map(r=>[r.path,r.body]),[['/api/settings',{autonomy:'observe'}]]);
+    assert.deepEqual(errors,[]);
+    loops.push({id:'B24.01',case:'A segmented choice in Settings moves its highlight and aria-pressed after saving, with no page error',result:'passed'});
+    const chip=page.locator('.pillbox button',{hasText:'recipes'});
+    assert.equal(await chip.getAttribute('aria-pressed'),'false');
+    await chip.click();
+    await page.waitForFunction(()=>[...document.querySelectorAll('.pillbox button')].some(b=>b.textContent.includes('recipes')&&b.getAttribute('aria-pressed')==='true'));
+    assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST'&&r.path==='/api/settings').map(r=>r.body).at(-1),{exclude:['recipes']});
+    loops.push({id:'B24.02',case:'A folder chip under Never touch says whether it is pressed',result:'passed'});
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));
