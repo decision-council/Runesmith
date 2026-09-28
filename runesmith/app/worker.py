@@ -67,11 +67,11 @@ def _now() -> str:
 
 def _same_waiting_round(last, done) -> bool:
     """A scheduled round that ended exactly like the one before, having advanced nothing (for example, every try
-    for a step used up): recorded as one row with a count."""
+    for a step used up, or the same draft still waiting for checks): recorded as one row with a count. A new draft
+    has a new id, so its outcome never equals the one before."""
     return (isinstance(last, dict) and last.get('by') == done.get('by') == 'schedule'
             and last.get('kind') == done.get('kind') and last.get('result') == done.get('result') == 'done'
-            and last.get('outcome') == done.get('outcome') and not (done.get('outcome') or {}).get('advanced')
-            and not (done.get('outcome') or {}).get('draft'))
+            and last.get('outcome') == done.get('outcome') and not (done.get('outcome') or {}).get('advanced'))
 
 
 class StopRequested(Exception):

@@ -279,9 +279,11 @@ export default async function render(root, ctx) {
               : dry.why ? h('div.tiny.muted', dry.why) : null;
         const firstTry = { broken: 'could not run', passes_now: 'already passed on today’s project', unstated_text: 'required exact text their sentences did not say',
           unusable: 'broke a rule of the examples format' }[p.revision?.after] || 'needed work';
-        const revised = p.revision && h('div.tiny.muted', p.revision.error
+        // For a broken examples answer the saved error is the first answer's, and the revision worked (journey J11-F4).
+        const fixed = p.revision?.after === 'unusable';
+        const revised = p.revision && h('div.tiny.muted', p.revision.error && !fixed
           ? `The first checks ${firstTry}; asking for a revision did not work (${p.revision.error}).`
-          : `Revised once: the first checks ${firstTry}.`);
+          : `Revised once: the first checks ${firstTry}${fixed && p.revision.error ? ` (${p.revision.error})` : ''}.`);
         const unstated = p.checks.some((c) => c.unstated?.length);
         accBlock.append(...[h('b.small', replacing ? 'New checks proposed to replace yours: do these describe “done” better?' : 'Proposed acceptance checks: do these describe “done”?'),
           h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c), todayNote(c)))),
@@ -422,10 +424,10 @@ export default async function render(root, ctx) {
     const save = h('button.btn', {onclick: () => withBusy(save, async () => {
       const chosen = paths.value.split(',').map(x=>x.trim()).filter(Boolean);
       // The dialog names what may be written, and a grant with nothing in it is not offered (journey J11-F3).
-      const where = chosen.some((p) => p === '.' || p === './') ? 'anywhere in this folder (never in Runesmith’s own records or .git)' : chosen.join(', ');
+      const where = chosen.some((p) => p === '.' || p === './') ? 'anywhere in this folder (never in Runesmith’s own records or .git)' : `only in: ${chosen.join(', ')}`;
       if (apply.checked && !chosen.length) { toast('Name the files or folders Runesmith may write first, for example: src, tests. A . means the whole folder.', 'warn', 8000); return; }
       if (apply.checked && !build.apply && !(await confirmDialog({title:'Apply checked drafts automatically in this folder?',
-        text:`Runesmith may then write only in: ${where}. It writes only when a draft passes both its own tests and your acceptance checks for the milestone. You can turn this off here at any time; backups and Undo stay available.`,confirm:'Allow automatic apply'}))) return;
+        text:`Runesmith may then write ${where}. It writes only when a draft passes both its own tests and your acceptance checks for the milestone. You can turn this off here at any time; backups and Undo stay available.`,confirm:'Allow automatic apply'}))) return;
       await post('/api/settings', {build_steps:checks.checked, build_apply:apply.checked, build_paths:chosen});
       toast('Build settings saved for this folder.', 'good'); buildDirty = false; drawBuild({ force: true });
     })}, 'Save build settings');

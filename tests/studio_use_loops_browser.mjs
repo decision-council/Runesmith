@@ -1956,6 +1956,8 @@ try{
     assert(text.includes('Runesmith loosened or removed wording your milestone does not state'),text);assert(text.includes('shows “No books”'));
     assert(text.includes('Not checked automatically'));assert(text.includes('Whether the wording is friendly.'));
     assert(text.includes('broke a rule of the examples format'));assert(text.includes('code written by Runesmith'));
+    // J11-F4: the revision fixed the first answer, so it is not reported as having failed
+    assert(text.includes('Revised once: the first checks broke a rule of the examples format (Example 1, step 1 must start with python or node.).')&&!text.includes('did not work'),text);
     assert(!/\bnull\b|undefined/.test(text),text);
     await block().getByText('What exactly is checked',{exact:true}).click();
     assert((await block().innerText()).includes('a line with “2025-01” also shows the number 1'));
@@ -1986,7 +1988,7 @@ try{
     await page.getByRole('button',{name:'Save build settings',exact:true}).click();
     const grantDialog=page.locator('.modal',{hasText:'Apply checked drafts automatically in this folder?'});
     await grantDialog.waitFor();
-    assert((await grantDialog.innerText()).includes('anywhere in this folder (never in Runesmith’s own records or .git)'));
+    assert((await grantDialog.innerText()).includes('Runesmith may then write anywhere in this folder (never in Runesmith’s own records or .git).'));
     await grantDialog.getByRole('button',{name:'Allow automatic apply',exact:true}).click();
     await page.waitForTimeout(300);
     const granted=requests.slice(grantStart).filter(r=>r.path==='/api/settings'&&r.method==='POST');

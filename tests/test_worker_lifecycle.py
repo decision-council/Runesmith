@@ -215,3 +215,7 @@ def test_rounds_that_find_nothing_new_are_one_counted_row(tmp_path, monkeypatch)
     assert not _same_waiting_round(rows[-1], owners) and not _same_waiting_round(owners, dict(owners))
     advanced = dict(rows[-1], outcome={'summary': 'Applied m8.', 'advanced': True})
     assert not _same_waiting_round(advanced, dict(advanced))
+    # J2-F20 follow-up: the same draft still waiting for checks is the same waiting state; a new draft is not
+    waits = dict(rows[-1], outcome={'summary': 'Draft “Export” waits for you.', 'draft': 'd1', 'milestone': 'm8'})
+    assert _same_waiting_round(waits, dict(waits))
+    assert not _same_waiting_round(waits, dict(waits, outcome=dict(waits['outcome'], draft='d2')))

@@ -172,7 +172,8 @@ def test_an_unchanged_waiting_draft_is_not_checked_again_until_its_inputs_change
         raise AssertionError('An unchanged draft must not be checked again')
     monkeypatch.setattr(building,'verify_draft',forbidden)
     again=build_step(ws,router)
-    assert again['unchanged'] and again['draft']==first['draft'] and 'waiting for you' in again['summary']
+    assert again['unchanged'] and again['draft']==first['draft'] and 'waits for you' in again['summary']
+    assert first['draft'] not in again['summary'] and '“Answer”' in again['summary']      # J2-F26: titles, not ids
     monkeypatch.undo()
     path=ws.home/'acceptance'/'m1.py'; path.parent.mkdir(parents=True)
     path.write_text('import unittest\nfrom app import answer\nclass Acceptance(unittest.TestCase):\n    def test_contract(self): self.assertEqual(answer(),42)\n')

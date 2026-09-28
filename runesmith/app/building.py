@@ -330,13 +330,15 @@ def _unchanged_verdict(ws, draft, milestone, contract, context, checkpoint):
         return None
     checkpoint()
     result = {'draft': draft['id'], 'milestone': milestone['id'], 'verification': verification, 'unchanged': True,
-              'summary': f"{draft['id']}: {verification['status']}, unchanged since its last check. Nothing applied."}
+              'summary': f"Draft “{draft.get('title') or draft['id']}” is unchanged since its last check. Nothing applied."}
     if verification['status'] == 'acceptance_passed':
         with ws._lock:
             _apply_if_current(ws, draft, milestone, contract, status(ws), verification, result)
     else:
-        result['summary'] = (f"{draft['id']} passed its own checks and is waiting for you. Applying it automatically "
-                             f"needs acceptance checks for {milestone['id']}: propose them in Goals & plan.")
+        # Titles, not ids (journey J2-F26: "d2026092813431050d4 … needs acceptance checks for b3a755fd75179-s1").
+        result['summary'] = (f"Draft “{draft.get('title') or draft['id']}” passed its own checks and waits for you. "
+                             f"Applying it automatically needs acceptance checks for “{milestone.get('title') or milestone['id']}”: "
+                             f"propose them in Goals & plan.")
     return result
 
 
