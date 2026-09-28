@@ -48,6 +48,11 @@ DEFAULT_PORT = 7300
 STUDIO_DIR = Path.home() / ".runesmith-studio"
 MAX_BODY = 4_000_000
 COOKIE = "rs_session"
+
+
+def cookie_name(port) -> str:
+    """The session cookie of the Studio on this port (journey J11-B4)."""
+    return f"{COOKIE}_{int(port)}"
 WORKSPACE_HEADER = 'X-Runesmith-Workspace'
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
        "connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
@@ -1004,8 +1009,11 @@ def make_handler(studio: Studio):
 
         def _authed(self) -> bool:
             cookie = SimpleCookie(self.headers.get("Cookie") or "")
-            value = cookie[COOKIE].value if COOKIE in cookie else ""
-            return bool(value) and secrets.compare_digest(value, studio.token)
+            # Cookies belong to a host, not a port: a second Studio on this computer replaced the first one's
+            # cookie, and a reload locked it (journey J11-B4). Each Studio now has its own name; the old one is
+            # still accepted, and either must hold this Studio's own token.
+            values = [cookie[name].value for name in (cookie_name(studio.port), COOKIE) if name in cookie]
+            return any(value and secrets.compare_digest(value, studio.token) for value in values)
 
         def _send(self, status: int, body: bytes, content_type: str, extra: dict[str, str] | None = None) -> None:
             self.send_response(status)
@@ -1048,7 +1056,7 @@ def make_handler(studio: Studio):
                     still = "?shot=1" if "shot" in query else ""   # screenshots: no live stream, so the page settles
                     return self._send(303, b"", "text/plain", {
                         "Location": "/" + still + (f"#/{page}" if page else ""),
-                        "Set-Cookie": f"{COOKIE}={studio.token}; HttpOnly; SameSite=Strict; Path=/",
+                        "Set-Cookie": f"{cookie_name(studio.port)}={studio.token}; HttpOnly; SameSite=Strict; Path=/",
                         "Cache-Control": "no-store"})
             if parts.path.startswith("/api/"):
                 if not self._authed():

@@ -76,7 +76,8 @@ TASK = (
     "- \"files\": [{\"name\", \"text\"}] creates files before the steps (for example a damaged data file). "
     "\"unchanged\": [names of files this example creates with \"files\"] checks that they are exactly the same "
     "afterwards (to check that a program leaves its data alone, create that data file with \"files\"); \"exists\": [names]; "
-    "\"contains\": [{\"name\", \"texts\"}] checks a file's text afterwards; \"links_resolve\": true checks that every "
+    "\"contains\": [{\"name\", \"texts\"}] checks a file's text afterwards (never use \"files\" to say what "
+    "the finished project should contain: those files are created before the steps); \"links_resolve\": true checks that every "
     "link between the Markdown pages leads to an existing file; \"pages_reachable\": true checks that every Markdown "
     "page can be reached by following links from the front page (README.md or index.md). For documents there is often "
     "no program to run: then an example has no steps and only these file checks, and \"documents\" shows the pages "
@@ -399,6 +400,11 @@ def _ground(example, milestone_text, source_text):
             else:
                 changed.append(f'{row["name"]} contains “{text}”')
         row['texts'] = list(dict.fromkeys(texts))
+        if not row['texts'] and row['name'] not in example.setdefault('exists', []):
+            # None of its wording is stated, but that the file is there still is: without this, m5's checks ended
+            # up checking nothing and passed on an empty folder (journey J11-B3).
+            example['exists'].append(row['name'])
+            changed.append(f'{row["name"]}: checked instead that it exists')
     example['contains'] = [r for r in example.get('contains', []) if r['texts']]
     return changed
 
@@ -502,6 +508,10 @@ def _name(value, index, taken):
     return name
 
 
+class NothingToCheck(WorkspaceError):
+    """An example that neither runs anything nor checks a file (journey J11-G6)."""
+
+
 def _joined(steps):
     """Steps with a lone expectation joined to the step before it. Weak models often write what to expect as a step
     of its own, as in [{"run": [...]}, {"expect": {...}}] (journey J11-G4: Nemotron, for m1, m2 and m5)."""
@@ -557,8 +567,11 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
         example['pages_reachable'] = bool(row.get('pages_reachable'))
         if not example['steps'] and not (example['exists'] or example['contains'] or example['links_resolve']
                                          or example['pages_reachable']):
-            raise WorkspaceError(f'{what} needs steps, or a check on files ("exists", "contains", "links_resolve" '
-                                 'or "pages_reachable").')
+            # "files" was used to say what the finished page should contain (journey J11-G6, m4 and m5).
+            hint = (' "files" only prepares files before the steps, so they would always be there; to check what '
+                    'the finished project contains, use "exists" or "contains".' if example['files'] else '')
+            raise NothingToCheck(f'{what} needs steps, or a check on files ("exists", "contains", "links_resolve" '
+                                 'or "pages_reachable").' + hint)
         for n, step in enumerate(example['steps'], 1):
             word = _command_word(step)
             refused_on_purpose = (step.get('expect') or {}).get('exit') == 'error'   # "an unknown command is refused"

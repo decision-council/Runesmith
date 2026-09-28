@@ -350,6 +350,13 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
             _write_json(kept, {'milestone': milestone_id, 'utc': _now(), 'drafted_by': drafted_by,
                                'errors': [str(error)[:300], str(again)[:300]],
                                'answers': [_bounded(first_answer), _bounded(out.data)]})
+            if isinstance(error, acceptance_examples.NothingToCheck) and isinstance(again, acceptance_examples.NothingToCheck):
+                said = acceptance_examples._notes((out.data or {}).get('not_checked') if isinstance(out.data, dict) else None)
+                raise WorkspaceError('Nothing in this milestone could be checked automatically'
+                                     + (': ' + ' '.join(said) if said else '.') + ' Build it and read each draft '
+                                     'yourself before writing it, or reword the milestone so what it makes can be '
+                                     'checked by running a command. The Checker’s answers are kept in '
+                                     f'{kept.relative_to(ws.home).as_posix()}.') from None
             raise WorkspaceError(f'Both answers broke a rule of the examples format. First: {str(error)[:200]} '
                                  f'Then: {str(again)[:200]} Both are kept in '
                                  f'{kept.relative_to(ws.home).as_posix()}.') from None

@@ -549,3 +549,38 @@ def test_long_starting_files_shrink_so_what_is_checked_stays_whole():
     told = exact(example)
     assert len(told) <= EXACT_LIMIT and told.endswith("and nothing stops with a crash report.")
     assert "running `node motion.mjs a.motion.json`: it ends with an error" in told and told.count("…”") == 2
+
+
+
+def test_a_file_whose_wording_is_not_stated_is_still_checked_to_exist():
+    # Journey J11-B3: m5's checks required index.html to contain "Export PNG", wording the milestone does not state.
+    # It was removed, nothing was left, and the checks passed on an empty folder.
+    answer = {"examples": [{"name": "png button", "says": "The page shows a button to export a PNG.",
+                            "contains": [{"name": "index.html", "texts": ["Export PNG"]}]}]}
+    shaped = validate_examples(answer, "Export: the page offers PNG and WebM export.")
+    assert shaped["examples"][0]["exists"] == ["index.html"] and shaped["examples"][0]["contains"] == []
+    assert shaped["checks"][0]["exact"] == "`index.html` exists."
+    assert any("checked instead that it exists" in d for d in shaped["dropped"])
+
+
+def test_files_used_as_what_the_page_should_contain_is_explained_to_the_checker():
+    # Journey J11-G6: for the editor page the Checker put the wanted HTML under "files" (which creates files first).
+    from runesmith.app.acceptance_examples import NothingToCheck
+    answer = {"examples": [{"name": "stage", "says": "The page has a stage.", "steps": [],
+                            "files": [{"name": "index.html", "text": "<div id=\"stage\">"}]}]}
+    with pytest.raises(NothingToCheck, match='use "exists" or "contains"'):
+        validate_examples(answer, "Editor: a page with a stage and a timeline.")
+
+
+def test_a_milestone_nothing_can_check_is_told_to_the_owner_in_plain_words(tmp_path):
+    # Journey J11-G6: both answers for the editor page only described files, and the owner read "Both answers broke a
+    # rule of the examples format".
+    only_files = {"examples": [{"name": "stage", "says": "The page has a stage.", "steps": [],
+                                "files": [{"name": "index.html", "text": "<div id=\"stage\">"}]}],
+                  "not_checked": "Clicking in the page needs a browser."}
+    ws = workspace(tmp_path, [only_files, only_files])
+    with pytest.raises(WorkspaceError) as refused:
+        propose(ws, ws.router(), "m1", style="examples")
+    said = str(refused.value)
+    assert said.startswith("Nothing in this milestone could be checked automatically: Clicking in the page needs a browser.")
+    assert "read each draft yourself" in said and "acceptance-proposals/refused/" in said and "broke a rule" not in said

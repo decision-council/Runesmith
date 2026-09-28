@@ -536,6 +536,19 @@ def test_the_server_answers_only_its_owner(studio):
         assert conn.getresponse().status == 400
 
 
+def test_two_studios_in_one_browser_keep_their_own_sessions(studio):
+    # Journey J11-B4: J2's Studio (port 7400) and J11's (7412) set the same cookie name on 127.0.0.1, so opening J2's
+    # link replaced J11's cookie and a reload of J11 showed "Runesmith Studio is locked".
+    conn = http.client.HTTPConnection("127.0.0.1", studio.port, timeout=10)
+    conn.request("GET", f"/?t={studio.token}")
+    assert conn.getresponse().getheader("Set-Cookie").startswith(f"rs_session_{studio.port}=")
+    other = "another-studios-token"
+    both = f"rs_session={other}; rs_session_{studio.port}={studio.token}"
+    assert call(studio, "GET", "/api/state", cookie=False, headers={"Cookie": both})[0] == 200
+    assert call(studio, "GET", "/api/state", cookie=False, headers={"Cookie": f"rs_session_{studio.port}={other}"})[0] == 401
+    assert call(studio, "GET", "/api/state")[0] == 200                  # the old name still opens it
+
+
 def test_one_studio_per_folder_and_one_listener_per_port(tmp_path):
     from runesmith.app.server import InstanceLock, QuietServer
     first = InstanceLock(tmp_path / "home")
