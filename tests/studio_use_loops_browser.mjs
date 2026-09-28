@@ -1758,6 +1758,12 @@ try{
       worker:{current:null,paused:false,history:[failed('build'),{kind:'breakdown',result:'done'},failed('build'),failed('build'),{kind:'build',result:'done'}]}});
     const stuck=await hero().innerText();
     assert(stuck.includes('3 tries in a row did not work, so it waits for you: Work & proposals → Drafts shows what you can do.')&&!stuck.includes('The next round tries again.'),stuck);
+    // J2-F16: later rounds find the tries used up and end "done"; the Overview still says building waits
+    await mount({...base,workspace:{...base.workspace,empty:false},ready:{any:true},settings:{...base.settings,auto_work:true},
+      plan:{milestones:9,done:6,next:{id:'m7',title:'Search books by query'}},
+      worker:{current:null,paused:false,history:[{kind:'breakdown',result:'done'},{kind:'build',result:'done',finished:new Date().toISOString(),
+        outcome:{summary:'Ordinary author allowance exhausted on this source and milestone.',replan_needed:true}},failed('build')]}});
+    assert((await hero().innerText()).includes('The tries for this step are used up, so building waits for you'));
     const configured={...base,workspace:{...base.workspace,empty:false},ready:{any:true},plan:{milestones:1}};
     await mount(configured);
     assert(!(await hero().innerText()).includes('Everything is set'));

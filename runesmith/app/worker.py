@@ -547,7 +547,8 @@ class Worker:
                 _write_json(self.ws.home / 'WORK.json', {'utc':_now(), 'kind':job['kind'], 'result':result})
             done = dict(job, finished=_now(), seconds=round(time.monotonic() - started, 1), result=result,
                         outcome={k: v for k, v in outcome.items() if k in ("summary", "error", "detail", "objects",
-                                                                            "opportunities", "served", "accepted", "draft", "milestone", "advanced")})
+                                                                            "opportunities", "served", "accepted", "draft", "milestone", "advanced",
+                                                                            "replan_needed")})
             with self._cv:
                 self.history.append(done)
                 self._records['STUDIO_JOBS.json'].write(list(self.history))
@@ -565,10 +566,15 @@ class Worker:
                 self.enqueue('build', by='schedule')
             if (schedule_next and legacy and job['kind']=='build' and outcome.get('replan_needed') and self.ws.settings()['auto_work']
                     and not self.paused and not self._closing and not self._stop_after_step):
-                self.enqueue('breakdown', by='schedule', milestone=outcome['milestone'])
+                if not self._breakdown_waiting(outcome['milestone']):    # one proposal waits: no repeat (J2-F16)
+                    self.enqueue('breakdown', by='schedule', milestone=outcome['milestone'])
         return dict(done, outcome=outcome)
 
     # --------------------------------------------------------------------- jobs --
+
+    def _breakdown_waiting(self, milestone: str) -> bool:
+        return any(_read_json(p, {}).get('milestone') == milestone and _read_json(p, {}).get('state') == 'proposed'
+                   for p in (self.ws.home / 'breakdowns').glob('*.json'))
 
     def _work_checkpoint(self):
         if self._stop_after_step or self._closing or self.paused:

@@ -17,7 +17,7 @@ export default async function render(root, ctx) {
   const s = ctx.app?.state;
   // Also when the last build attempt did not work: its options live there (journey J2-F13).
   const lastBuild = (s?.worker?.history || []).find((j) => ['build', 'escalate', 'correct'].includes(j.kind));
-  const preferred = !ctx.sub[0] && !(s?.proposals?.waiting) && (s?.drafts?.waiting || lastBuild?.result === 'failed') ? 'drafts' : null;
+  const preferred = !ctx.sub[0] && !(s?.proposals?.waiting) && (s?.drafts?.waiting || lastBuild?.result === 'failed' || lastBuild?.outcome?.replan_needed) ? 'drafts' : null;
   const tab = TABS.find((t) => t.id === (ctx.sub[0] || preferred)) || TABS[0];
   const offs = [];
   const head = h('div.page-head', h('div', h('h2', 'Work & proposals'),

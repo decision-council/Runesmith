@@ -82,6 +82,8 @@ export default async function render(root, { app, navigate, refreshState }) {
     const tries = streak < 0 ? builds.length : streak;          // failed tries in a row (J2-F13)
     if (last?.result === 'failed') line += ` The last attempt did not work (${ago(last.finished)}): ${String(last.outcome?.error || 'see Activity').slice(0, 180)}`
       + (tries >= 3 ? ` ${tries} tries in a row did not work, so it waits for you: Work & proposals → Drafts shows what you can do.` : s.settings.auto_work ? ' The next round tries again.' : '');
+    // Rounds that find every try used up end "done", but building waits all the same (journey J2-F16).
+    else if (last?.outcome?.replan_needed) line += ' The tries for this step are used up, so building waits for you: Work & proposals → Drafts shows what you can do, and Goals & plan may offer smaller steps to adopt.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('goals') }, icon('target'), 'Continue the plan');
   } else {
     line = 'Review enabled modes and their prerequisites before starting. A configured route is not a capacity test, and a saved work outcome is not proof that the project is complete.';

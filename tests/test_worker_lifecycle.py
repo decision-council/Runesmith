@@ -173,3 +173,15 @@ def test_a_proposal_summary_gives_the_trial_counts(tmp_path, monkeypatch):
         'id': 'p1', 'checks': [{}, {}], 'dry_run': {'verdict': 'fails_now', 'ran': 2, 'failures': 1, 'errors': 0}})
     summary = Worker(ws, EventBus())._job_propose_acceptance('m9')['summary']
     assert '1 of 2 fail on today’s project, as expected' in summary
+
+
+def test_a_waiting_breakdown_is_not_proposed_again_every_round(tmp_path):
+    # Journey J2-F16: with the tries used up, every scheduled round queued another breakdown that only returned the
+    # proposal already waiting for the owner.
+    ws = workspace(tmp_path)
+    worker = Worker(ws, EventBus())
+    assert not worker._breakdown_waiting('m7')
+    _write_json(ws.home / 'breakdowns' / 'b1.json', {'id': 'b1', 'milestone': 'm7', 'state': 'proposed'})
+    assert worker._breakdown_waiting('m7') and not worker._breakdown_waiting('m8')
+    _write_json(ws.home / 'breakdowns' / 'b1.json', {'id': 'b1', 'milestone': 'm7', 'state': 'adopted'})
+    assert not worker._breakdown_waiting('m7')
