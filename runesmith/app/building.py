@@ -355,8 +355,10 @@ def verification_inconclusive(verification):
 
 def _ordinary_revision_lineage(ws, drafts, snapshot):
     """A normal build must not bypass the focused revision lineage guard."""
+    # Only drafts from ordinary author attempts have that lineage. A correction's draft has no author request key,
+    # and the guard failed on it with "Invalid author request key" (journey J2-B7); the allowance still applies.
     revision=next((d for d in drafts if d.get('state')=='needs_revision'
-                   and d.get('snapshot_digest')==snapshot),None)
+                   and d.get('snapshot_digest')==snapshot and d.get('author_request_key')),None)
     if revision:
         from runesmith.app.author_revisions import _lineage
         _lineage(ws,revision)

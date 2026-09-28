@@ -86,3 +86,28 @@ def test_two_correction_receipts_exhaust_budget(tmp_path):
     with pytest.raises(PlannerUnavailable,match='Two correction'):
         correct_rejected_answer(ws,ws.router(),attempt_id)
     assert sum(row['calls'] for row in ws.call_stats().values())==before
+
+
+@pytest.mark.parametrize('unresolved', [False, True])
+def test_a_correction_no_route_accepted_spends_nothing_and_blocks_nothing(tmp_path, unresolved):
+    # Journey J2-F17: every Gemini route was overloaded or at its free limit; the correction was recorded "uncertain",
+    # which blocked the next correction until someone reconciled a call that never produced an answer.
+    from runesmith.instruments import TransportCensored
+    ws, attempt_id = rejected_answer(tmp_path)
+
+    class Refusing:
+        def call(self, *args, **kwargs):
+            raise TransportCensored('every route failed - gemini:flash overloaded; gemini:flash rate_limited',
+                                    receipt={'unresolved': unresolved})
+    with pytest.raises(PlannerUnavailable) as failure:
+        correct_rejected_answer(ws, Refusing(), attempt_id)
+    [row] = [json.loads(p.read_text()) for p in (ws.home / 'build-corrections').glob('*.json')]
+    candidate = next(c for c in correction_candidates(ws) if c['attempt'] == attempt_id)
+    if unresolved:                                     # an answer may exist remotely: reconcile before another call
+        assert row['state'] == 'uncertain' and 'uncertain' in str(failure.value) and candidate['remaining'] == MAX_CORRECTIONS - 1
+    else:
+        assert row['state'] == 'transport_failed' and 'Nothing was used up' in str(failure.value)
+        assert candidate['remaining'] == MAX_CORRECTIONS and candidate['eligible']
+        scripted(ws, [{'title': 'Corrected', 'why': 'exact current source', 'files': [
+            {'path': 'test_tool.py', 'purpose': 'valid replacement', 'content': 'expected = 2\n'}]}], roles=('plan',))
+        assert correct_rejected_answer(ws, ws.router(), attempt_id)['id']           # the next correction is allowed

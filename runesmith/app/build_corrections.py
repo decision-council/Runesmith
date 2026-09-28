@@ -49,7 +49,8 @@ def _answers(ws, attempt):
 
 def _corrections(ws, attempt_id):
     rows = [_read_json(path,{}) for path in (ws.home/'build-corrections').glob('*.json')]
-    return sorted((row for row in rows if row.get('attempt')==attempt_id),
+    # A call no route accepted produced no answer: it neither spends a correction nor blocks one (journey J2-F17).
+    return sorted((row for row in rows if row.get('attempt')==attempt_id and row.get('state')!='transport_failed'),
                   key=lambda row:row.get('utc',''))
 
 
@@ -185,6 +186,10 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
                     'never a snippet. Return JSON only.'),
             schema=schema,max_tokens=10000,key='build-correction-'+key)
     except TransportCensored as error:
+        if not (getattr(error,'receipt',None) or {}).get('unresolved'):
+            from runesmith.app.planner import why_no_answer
+            _write_json(receipt_path,dict(receipt,state='transport_failed',error=str(error)[:300],finished=_now()))
+            raise PlannerUnavailable(why_no_answer(error)+' Nothing was used up: the correction can be asked again.') from error
         _write_json(receipt_path,dict(receipt,state='uncertain',error=str(error)[:300],finished=_now()))
         raise PlannerUnavailable('Correction transport was uncertain; inspect its receipt before retrying.') from error
     except Exception as error:

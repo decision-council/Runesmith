@@ -407,3 +407,13 @@ def test_a_draft_left_for_a_milestone_another_draft_finished_no_longer_waits(tmp
     assert listed[early['id']]['superseded_by'] == later['id'] and listed[later['id']]['superseded_by'] is None
     assert ws.work()['draft_counts'] == {'superseded': 1, 'applied': 1}
     assert ws._draft(early['id'])['state'] == 'waiting'          # the stored record is unchanged
+
+
+def test_a_corrected_draft_does_not_trip_the_ordinary_lineage_guard(tmp_path):
+    # Journey J2-B7: after a correction's draft failed its checks, the next scheduled round ended "Invalid author
+    # request key": the lineage guard assumed every draft needing revision came from an ordinary attempt.
+    ws = setup(tmp_path, acceptance=True); enable(ws)
+    corrected = draft_files(ws, ws.router(), 'm1')
+    ws._save_draft_state(dict(corrected, author_request_key=None, correction_of='a' * 32), 'needs_revision')
+    result = build_step(ws, ws.router())
+    assert 'Invalid author request key' not in result.get('summary', '')
