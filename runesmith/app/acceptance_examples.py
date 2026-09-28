@@ -45,8 +45,8 @@ SCHEMA = {'type': 'object', 'properties': {
         'unchanged': STRINGS, 'exists': STRINGS,
         'contains': {'type': 'array', 'items': {'type': 'object', 'properties': {
             'name': {'type': 'string'}, 'texts': STRINGS}, 'required': ['name', 'texts']}},
-        'links_resolve': {'type': 'boolean'}},
-        'required': ['name', 'says', 'steps']}},
+        'links_resolve': {'type': 'boolean'}, 'pages_reachable': {'type': 'boolean'}},
+        'required': ['name', 'says']}},
     'not_checked': STRINGS}, 'required': ['examples']}
 
 TASK = (
@@ -71,14 +71,17 @@ TASK = (
     "- \"files\": [{\"name\", \"text\"}] creates files before the steps (for example a damaged data file). "
     "\"unchanged\": [names] checks that those files are exactly the same afterwards; \"exists\": [names]; "
     "\"contains\": [{\"name\", \"texts\"}] checks a file's text afterwards; \"links_resolve\": true checks that every "
-    "link between the Markdown pages leads to an existing file.\n"
+    "link between the Markdown pages leads to an existing file; \"pages_reachable\": true checks that every Markdown "
+    "page can be reached by following links from the front page (README.md or index.md). For documents there is often "
+    "no program to run: then an example has no steps and only these file checks, and \"documents\" shows the pages "
+    "the owner chose to share.\n"
     "- To check the examples in a document: {\"doc\": \"README.md\", \"program\": [\"python\", \"-m\", \"pkg\"], "
     "\"mention\": [words]}. The document must show the program with each mentioned word, and every example "
     "without placeholders must run without an error.\n"
     "- For a Python function the milestone names: {\"call\": \"package.module.function\", \"args_json\": \"[...]\", "
     "\"expect\": {\"returns_json\": \"...\"} or {\"raises\": \"ErrorName\"}}.\n"
     "Give 2 to 6 examples. Each has \"name\" (a few words in snake_case), \"says\" (one plain sentence a "
-    "non-programmer understands) and \"steps\". Together they should fail on a project that lacks what this "
+    "non-programmer understands) and \"steps\" (empty when it only checks files). Together they should fail on a project that lacks what this "
     "milestone adds and pass once it is built. If part of the milestone cannot be checked this way, say so in "
     "\"not_checked\", in plain words. The feature may not exist yet: do not implement it. Return JSON only.")
 REVISE = ("Runesmith tried your examples once on a copy of the project as it is today. {finding} Revise them so that "
@@ -239,11 +242,22 @@ def _loosen(text, inputs):
     accepts every output the original did, so it can only stop rejecting a correct build for its layout or wording.
     """
     typed = set(TOKEN.findall(inputs))
-    tokens = TOKEN.findall(text)
+    found = list(TOKEN.finditer(text))
     # A whole word the example typed in, or the leading part of one (the month "2026-01" of the date "2026-01-05").
-    subjects = [t for t in tokens if not NUMBER_TOKEN.fullmatch(t) and len(t) >= 3 and (
-        t.lower() in typed or any(u.startswith(t.lower() + sep) for u in typed for sep in '-./:'))]
-    numbers = [float(t) for t in tokens if NUMBER_TOKEN.fullmatch(t)]
+    kept = [m for m in found if not NUMBER_TOKEN.fullmatch(m.group()) and len(m.group()) >= 3 and (
+        m.group().lower() in typed or any(u.startswith(m.group().lower() + sep) for u in typed for sep in '-./:'))]
+    # Neighbouring words that were typed in together stay one phrase: "The Hobbit", not "The" and "Hobbit".
+    subjects, start, end = [], None, None
+    for m in kept:
+        if start is not None and text[start:m.end()].lower() in inputs:
+            end = m.end()
+            continue
+        if start is not None:
+            subjects.append(text[start:end])
+        start, end = m.start(), m.end()
+    if start is not None:
+        subjects.append(text[start:end])
+    numbers = [float(m.group()) for m in found if NUMBER_TOKEN.fullmatch(m.group())]
     return subjects, numbers
 
 
@@ -325,7 +339,7 @@ def _ground(example, milestone_text, source_text):
     for row in example.get('contains', []):
         texts = []
         for text in row['texts']:
-            if grounded(text):
+            if grounded(text, source_text.lower()):            # a file may hold text the project already has
                 texts.append(text)
             elif subjects := _loosen(text, inputs)[0]:
                 texts += subjects
@@ -400,6 +414,8 @@ def exact(example) -> str:
     parts += [f'`{r["name"]}` contains ' + _quote(r['texts']) for r in example.get('contains', [])]
     if example.get('links_resolve'):
         parts.append('every link between the Markdown pages leads to an existing file')
+    if example.get('pages_reachable'):
+        parts.append('every Markdown page can be reached by following links from the front page')
     text = '; '.join(parts) + '; and nothing stops with a Python crash report.'
     return (text[:1].upper() + text[1:])[:900]
 
@@ -426,9 +442,9 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
         if not isinstance(row, dict):
             raise WorkspaceError(f'{what} must be an object.')
         says = _plain(row.get('says'), f'{what}: "says"', 300)
-        steps = row.get('steps')
-        if not isinstance(steps, list) or not 1 <= len(steps) <= LIMITS['steps']:
-            raise WorkspaceError(f'{what} needs 1-{LIMITS["steps"]} steps.')
+        steps = row.get('steps') if row.get('steps') is not None else []
+        if not isinstance(steps, list) or len(steps) > LIMITS['steps']:
+            raise WorkspaceError(f'{what} needs at most {LIMITS["steps"]} steps.')
         example: dict[str, Any] = {'test': _name(row.get('name'), index, taken), 'says': says,
                                    'steps': [_step(s, f'{what}, step {n}') for n, s in enumerate(steps, 1)]}
         files = row.get('files') or []
@@ -450,6 +466,11 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
         example['contains'] = [{'name': _relative(c.get('name') if isinstance(c, dict) else None, f'{what}: "contains"'),
                                 'texts': _texts(c.get('texts'), f'{what}: "contains"')} for c in contains]
         example['links_resolve'] = bool(row.get('links_resolve'))
+        example['pages_reachable'] = bool(row.get('pages_reachable'))
+        if not example['steps'] and not (example['exists'] or example['contains'] or example['links_resolve']
+                                         or example['pages_reachable']):
+            raise WorkspaceError(f'{what} needs steps, or a check on files ("exists", "contains", "links_resolve" '
+                                 'or "pages_reachable").')
         for n, step in enumerate(example['steps'], 1):
             if not step.pop('unchecked_expect', False):
                 continue
@@ -732,6 +753,40 @@ def check_links(case, copy):
     case.assertEqual(broken, [], "links that lead nowhere: " + ", ".join(broken[:10]))
 
 
+def markdown_pages(copy):
+    for folder, folders, names in os.walk(copy):
+        folders[:] = sorted(f for f in folders if f not in SKIP and not f.startswith(WORK) and not f.startswith("."))
+        for name in sorted(names):
+            if name.lower().endswith((".md", ".markdown")):
+                yield os.path.normpath(os.path.join(folder, name))
+
+
+def check_reachable(case, copy):
+    """Every Markdown page can be reached by following links from the front page (README.md or index.md)."""
+    pages = {os.path.normcase(p): p for p in markdown_pages(copy)}        # compared without case, opened by real name
+    front = [key for key, p in pages.items() if os.path.dirname(p) == os.path.normpath(copy)
+             and os.path.basename(p).lower() in ("readme.md", "index.md")]
+    seen, todo = set(front), list(front)
+    while todo:
+        page = pages[todo.pop()]
+        with open(page, encoding="utf-8", errors="replace") as handle:
+            targets = LINK.findall(handle.read())
+        for target in targets:
+            if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target) or target.startswith(("#", "//")):
+                continue
+            relative = unquote(target.split("#")[0].split("?")[0])
+            if not relative:
+                continue
+            full = os.path.join(copy, relative.lstrip("/")) if relative.startswith("/") else os.path.join(os.path.dirname(page), relative)
+            key = os.path.normcase(os.path.normpath(full))
+            if key in pages and key not in seen and exists_exactly(os.path.normpath(full), copy):
+                seen.add(key)
+                todo.append(key)
+    case.assertTrue(front, "there is no README.md or index.md to start from")
+    missing = sorted(os.path.relpath(pages[k], copy).replace("\\", "/") for k in set(pages) - seen)
+    case.assertEqual(missing, [], "pages that cannot be reached from the front page: " + ", ".join(missing[:10]))
+
+
 def run_example(case, example):
     work = tempfile.mkdtemp(prefix=WORK)
     try:
@@ -759,6 +814,8 @@ def run_example(case, example):
                 case.assertTrue(found(wanted, text), row["name"] + " does not contain " + repr(wanted))
         if example.get("links_resolve"):
             check_links(case, copy)
+        if example.get("pages_reachable"):
+            check_reachable(case, copy)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 '''

@@ -204,6 +204,9 @@ def packet(ws, milestone_id, style='code') -> dict[str, Any]:
             'brief': ws.brief().get('text', ''),
             'public_acceptance': expectations(ws, milestone_id),
             'source_context': source_context(ws, limit=16000),
+            # The documents the owner chose to share with models (Goals & plan). Code goes in source_context; documents
+            # never do, so without this a Checker could not see a single page of a handbook it is asked to check.
+            'documents': ws.blueprint_text(),
             'note': 'Each example runs in its own fresh copy of the project folder, with the current directory set to it.'
             if style == 'examples' else
             'Owner acceptance runs on a clean copy of the project folder, with the current directory set to it.'}
@@ -216,7 +219,7 @@ def _clean(answer, style, data) -> dict[str, Any]:
     milestone = data['milestone']
     shaped = acceptance_examples.validate_examples(
         answer, ' '.join(str(milestone.get(k) or '') for k in ('title', 'detail', 'done_when')),
-        json.dumps(data.get('source_context'), ensure_ascii=False))
+        json.dumps(data.get('source_context'), ensure_ascii=False) + '\n' + str(data.get('documents') or ''))
     checked = validate({'checks': [{'test': c['test'], 'says': c['says']} for c in shaped['checks']],
                         'assumes': [], 'code': shaped['code']})
     checks = [{'test': c['test'], 'says': c['says'], 'exact': e['exact']} for c, e in zip(checked['checks'], shaped['checks'])]

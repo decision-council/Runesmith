@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const dependencies=process.env.RUNESMITH_TEST_NODE_MODULES;
 const {chromium}=require(dependencies?path.join(dependencies,'playwright'):'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23,B24').split(','));
+const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23,B24,B25').split(','));
 const artifacts=path.join(root,'training','.tmp','studio-use-loops-'+new Date().toISOString().replace(/[:.]/g,'-'));
 mkdirSync(artifacts,{recursive:true});
 const executable=[chromium.executablePath(),'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -50,7 +50,7 @@ const fixtureWork={counts:{},draft_counts:{waiting:1},proposals:[],drafts:[recov
   build_memory:{total:0,items:[]},pending_authors:[],build_corrections:[],
   build_escalation:{eligible:false,milestone:'m1',attempts:1,used:false,
     allowance:{known:true,can_draft:true,used:1,remaining:2,limit:3,blockers:[]}}};
-let ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30},fixFixture={offer:null};
+let briefCandidates=[],ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30},fixFixture={offer:null};
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
 let fixtureAutonomy='propose';
@@ -226,7 +226,7 @@ await context.route('**/*',async route=>{
   }
   else if(p==='/api/brief'){
     if(req.method()==='POST')ownerBrief=body.text;
-    data={text:ownerBrief,blueprints:[],candidates:[],updated:null};
+    data={text:ownerBrief,blueprints:[],candidates:briefCandidates,updated:null};
   } else if(p==='/api/plan')data={plan:fixturePlan,milestones:fixturePlan?.milestones||[],ready:true,
     planning_blockers:planningBlocks(),autonomy:fixtureAutonomy,held_plans:heldPlans,breakdowns:[],acceptance_expectations:fixtureExpectations,acceptance_checks:fixtureAcceptance,current_checks:[],
     readiness:Object.fromEntries((fixturePlan?.milestones||[]).map(m=>[m.id,{ready:true,unmet:[]}]))};
@@ -2001,6 +2001,33 @@ try{
     await page.waitForFunction(()=>[...document.querySelectorAll('.pillbox button')].some(b=>b.textContent.includes('recipes')&&b.getAttribute('aria-pressed')==='true'));
     assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST'&&r.path==='/api/settings').map(r=>r.body).at(-1),{exclude:['recipes']});
     loops.push({id:'B24.02',case:'A folder chip under Never touch says whether it is pressed',result:'passed'});
+  }
+  if(selected.has('B25')){
+    // A folder of documents: a model reads only the documents the owner ticks, and the page says so (journey J4-G2).
+    const start=requests.length,before=await page.evaluate(()=>window.homeState);
+    briefCandidates=[{path:'README.md',bytes:120},{path:'recipes/index.md',bytes:200},{path:'recipes/rye.md',bytes:300}];
+    await page.evaluate(()=>{window.homeState={objects:[{name:'Bakery handbook',kind:'document_collection'},{name:'recipes',kind:'document_collection'}]};});
+    await page.setViewportSize({width:1440,height:1100});
+    await page.evaluate(()=>window.mount('goals'));
+    const brief=page.locator('.card',{hasText:'Documents a model may read'});
+    await brief.waitFor();
+    let text=await brief.innerText();
+    assert(text.includes('a model reads only the ones you tick'),text);
+    assert(text.includes('Only the documents you tick are sent to a model'));
+    await brief.getByRole('button',{name:'Tick all, then save',exact:true}).click();
+    assert.equal(await brief.locator('input[type=checkbox]:checked').count(),3);
+    await brief.getByRole('button',{name:'Save brief',exact:true}).click();
+    await page.waitForFunction(()=>true);
+    await page.waitForTimeout(200);
+    const saved=requests.slice(start).filter(r=>r.method==='POST'&&r.path==='/api/brief').at(-1);
+    assert.deepEqual(saved.body.blueprints,['README.md','recipes/index.md','recipes/rye.md']);
+    loops.push({id:'B25.01',case:'A folder of documents says a model reads only the ticked ones, and Tick all saves exactly those',result:'passed'});
+    await page.evaluate(()=>{window.homeState={objects:[{name:'app',kind:'python_repository'}]};});
+    await page.evaluate(()=>window.mount('goals'));
+    await page.locator('.card',{hasText:'Documents a model may read'}).waitFor();
+    assert(!(await page.locator('.card',{hasText:'Documents a model may read'}).innerText()).includes('a model reads only the ones you tick'));
+    loops.push({id:'B25.02',case:'A code project is not told to tick documents',result:'passed'});
+    briefCandidates=[];await page.evaluate((s)=>{window.homeState=s;},before);
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));

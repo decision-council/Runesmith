@@ -156,8 +156,17 @@ export default async function render(root, ctx) {
       picks.append(h('label.row.small', { style: { cursor: 'pointer' } }, cb, h('span.mono.grow.ellipsis', c.path), h('span.faint', `${Math.round(c.bytes / 1024)} KB`)));
     }
     save.addEventListener('click', () => withBusy(save, async () => { await post('/api/brief', { text: ta.value, blueprints: [...chosen] }); status.textContent = 'saved just now'; toast('Brief saved. The Planner reads it next time.', 'good'); drawPlan(); drawGoalposts(); }));
-    clear(briefCard).append(h('div.card-head', h('h3', icon('book'), 'Brief'), h('div.actions', status)), ta,
-      h('div.label-text.mt-16', 'Blueprint documents the Planner should read'), picks, h('div.row.mt-16', h('span.tiny.faint', 'The Planner reads up to 12,000 characters of blueprints.'), h('span.spacer'), save));
+    // Documents never go to a model unless ticked here (code does, as source). A folder of documents therefore cannot
+    // be planned, drafted or checked by a model until the owner chooses what it may read (journey J4-G2).
+    const objects = ctx.app?.state?.objects || [];
+    const onlyDocuments = objects.length > 0 && objects.every((o) => o.kind === 'document_collection');
+    const none = onlyDocuments && b.candidates.length && !chosen.size ? h('div.callout.warn.mt-8', icon('alert'), h('div',
+      'This folder holds documents, and a model reads only the ones you tick. Until you tick some, Runesmith can map and check links, but a model cannot plan, draft or check changes to them.',
+      h('div.mt-8', h('button.btn.sm', { onclick: () => { for (const input of picks.querySelectorAll('input[type=checkbox]')) input.checked = true;
+        b.candidates.forEach((c) => chosen.add(c.path)); } }, icon('check'), 'Tick all, then save')))) : null;
+    clear(briefCard).append(...[h('div.card-head', h('h3', icon('book'), 'Brief'), h('div.actions', status)), ta,
+      h('div.label-text.mt-16', 'Documents a model may read'), none, picks,
+      h('div.row.mt-16', h('span.tiny.faint', 'Only the documents you tick are sent to a model: for planning, drafting and checking, up to 12,000 characters.'), h('span.spacer'), save)].filter(Boolean));
     commentable(briefCard, 'brief', 'current', 'the brief');
   };
 

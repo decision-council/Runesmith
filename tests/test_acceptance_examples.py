@@ -166,6 +166,15 @@ def test_wording_the_milestone_never_states_is_loosened_or_dropped_and_the_owner
     assert "2026-01 1”" not in exact and "Added" not in exact
 
 
+def test_words_typed_in_together_stay_one_phrase_when_loosened():
+    # gpt-oss-120b (2026-09-28) expected its own layout of a list line; the title typed in as one argument stays whole.
+    answer = {"examples": [{"name": "listed", "says": "A saved entry is listed.",
+                            "steps": [add("The Hobbit", "2026-01-14"),
+                                      {"run": T + ["list"], "expect": {"shows": ["2026-01-14  The Hobbit by J. R. R. Tolkien"]}}]}]}
+    shaped = validate_examples(answer, MILESTONE)
+    assert shaped["examples"][0]["steps"][1]["expect"] == {"shows": ["2026-01-14", "The Hobbit"]}
+
+
 def test_loosened_checks_catch_a_wrong_count_yet_pass_a_correct_build_worded_differently(tmp_path):
     answer = {"examples": [{"name": "counts", "says": "Two entries in January count as 2.",
                             "steps": [add("Tea", "2026-01-05"), add("Pie", "2026-01-09"),
@@ -198,6 +207,63 @@ def test_texts_are_matched_whole_so_a_digit_never_matches_inside_a_year(tmp_path
 def test_examples_that_break_a_rule_are_refused_with_the_reason(step, why):
     with pytest.raises(WorkspaceError, match=why):
         validate_examples({"examples": [{"name": "x", "says": "x", "steps": [step]}]}, MILESTONE)
+
+
+def handbook(folder: Path, *, index: str, extra_pages=()):
+    """Journey J4's bakery handbook: a front page, a recipe index and recipe pages, and no program to run."""
+    (folder / "recipes").mkdir(parents=True)
+    (folder / "README.md").write_text("# Moonlight Bakery handbook\n\n[Recipes](recipes/index.md)\n", encoding="utf-8")
+    (folder / "recipes" / "index.md").write_text(index, encoding="utf-8")
+    for name in ("rye.md", "Seeded-Loaf.md", *extra_pages):
+        (folder / "recipes" / name).write_text(f"# {name}\n\n[Back](index.md)\n", encoding="utf-8")
+    return folder
+
+
+DOC_MILESTONE = ("Every recipe is reachable from the recipe index. Add the seeded loaf to recipes/index.md with a link to "
+                 "Seeded-Loaf.md. Done when recipes/index.md links to Seeded-Loaf.md and every link leads to a page that exists.")
+DOC_EXAMPLES = {"examples": [
+    {"name": "seeded loaf in the index", "says": "The recipe index links to the seeded loaf, and every page can be reached.",
+     "steps": [], "contains": [{"name": "recipes/index.md", "texts": ["Seeded-Loaf.md", "rye.md"]}], "pages_reachable": True},
+    {"name": "no dead links", "says": "Every link in the handbook leads to a page that exists.", "links_resolve": True}]}
+
+
+def run_docs(tmp_path, name, code, index):
+    folder = tmp_path / name
+    handbook(folder / "project", index=index)
+    checks = folder / "acceptance.py"
+    checks.write_text(code, encoding="utf-8")
+    return _run_checks(folder / "project", json.dumps([str(checks)]), folder / "log.txt", timeout_s=120)
+
+
+def test_documents_are_checked_by_their_files_and_links_with_no_program_to_run(tmp_path):
+    # J4-G1: a handbook has no program, so an example may check files only; the pages the owner shared count as known text.
+    shaped = validate_examples(DOC_EXAMPLES, DOC_MILESTONE, source_text="--- recipes/index.md ---\n[Rye](rye.md)")
+    assert shaped["dropped"] == [] and shaped["examples"][0]["steps"] == []
+    assert "every Markdown page can be reached by following links from the front page" in shaped["checks"][0]["exact"]
+    code = shaped["code"]
+    before = "# Recipes\n\n- [Rye](rye.md)\n- [Cinnamon buns](cinnamon-buns.md)\n"
+    built = "# Recipes\n\n- [Rye](rye.md)\n- [Seeded loaf](Seeded-Loaf.md)\n- Cinnamon buns (coming soon)\n"
+    assert not run_docs(tmp_path, "before", code, before)["ok"]
+    assert run_docs(tmp_path, "built", code, built)["ok"]
+    assert not run_docs(tmp_path, "wrong_case", code, built.replace("(Seeded-Loaf.md)", "(seeded-loaf.md)"))["ok"]
+    assert not run_docs(tmp_path, "dead_link_left", code, built + "- [Buns](cinnamon-buns.md)\n")["ok"]
+
+
+def test_an_example_that_runs_nothing_and_checks_no_file_is_refused():
+    with pytest.raises(WorkspaceError, match="needs steps, or a check on files"):
+        validate_examples({"examples": [{"name": "x", "says": "x", "steps": []}]}, DOC_MILESTONE)
+
+
+def test_the_checker_reads_the_documents_the_owner_chose_to_share(tmp_path):
+    # J4-G2: code goes to models in source_context; documents never do, unless the owner ticks them in Goals & plan.
+    from runesmith.app.acceptance_proposals import packet
+    ws = Workspace(handbook(tmp_path / "handbook", index="# Recipes\n\n[Rye](rye.md)\n"))
+    ws.save_plan({"summary": "Tidy handbook", "milestones": [{"title": "Seeded loaf in the index", "detail": DOC_MILESTONE,
+                                                               "done_when": "It is linked.", "status": "open"}]})
+    assert packet(ws, "m1", "examples")["documents"] == ""
+    ws.set_brief(blueprints=["recipes/index.md"])
+    shared = packet(ws, "m1", "examples")["documents"]
+    assert "--- recipes/index.md ---" in shared and "[Rye](rye.md)" in shared and "rye.md ---" not in shared
 
 
 def test_what_an_interrupted_run_prints_is_not_checked_but_what_it_leaves_behind_is():
