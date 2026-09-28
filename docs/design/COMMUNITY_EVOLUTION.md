@@ -11,6 +11,33 @@ Runesmith can already improve itself locally (Kaizen, `runesmith/kaizen/`, `rune
 
 C7, the paper's measured result, came from this loop. Self-improvement is off by default and opt-in in the Studio.
 
+## The rule (Lars, 2026-09-28)
+
+**Only Runesmith's own improvements and aggregate numbers ever travel. People's projects never leave their machine.** It is Runesmith updating itself; no project is ever sent to another user.
+
+## A careful first version, possibly at release (opt-in at first run, off by default)
+
+- **Evidence cards.** When a local improvement wins a trial, the Studio shows a small card:
+  - the generation's fingerprint;
+  - its aggregate numbers (repair yield, calls, time, false promotions);
+  - the model routes it ran on.
+  It holds no code and no project text, and it shows exactly what would be shared.
+- **The owner submits it.** "Share with the community" opens a prefilled GitHub issue or pull request that the owner reviews and submits. There is no server and nothing is sent automatically, so every shared byte is visible.
+- **Receiving is a separate opt-in.** "Try community improvements" starts with declarative improvements only (prompts, policies, packet shapes). They are always trial-gated on the owner's own work and never become active without winning there.
+
+## Automatic updates, run by bots and open to everyone (Lars, 2026-09-28)
+
+- **A public, append-only evidence log**, like a transparency log, written by the bots and readable and monitorable by anyone. For every promoted improvement it records:
+  - its fingerprint;
+  - the benchmark and community-trial results that earned it;
+  - who reviewed it, and when.
+- **Opt-in automatic updates** from that channel. Each update is signed and reproducible from its log entry. The Studio says in plain words what changed and why, linking to the evidence.
+- **Safety:**
+  - staged rollout (a few volunteers first);
+  - a local trial before activation: an update must still win on the owner's own work, or it stays inactive;
+  - one-click rollback (generations already support it);
+  - a public kill switch if the log shows a problem.
+
 ## The idea
 
 Let the community do what one Runesmith does alone, so that improvements are **replicated across many independent projects** before anyone depends on them. As far as we know, this would be the first open-source tool that improves itself through community-replicated evidence.
