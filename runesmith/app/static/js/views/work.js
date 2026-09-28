@@ -214,7 +214,7 @@ function drawDrafts(body, w, reload, ctx) {
           text:'The Planner’s model gets one more try at this milestone, once, with what the earlier tries learned. The same project tests and your checks decide; nothing is written unless they pass.',confirm:'Use alternate author'});
         if (!ok) return;
         await post('/api/worker/run',{job:'escalate'});
-        toast('Alternate-author continuation queued.','good',6000);
+        toast('One more try is on its way. Your checks decide; nothing is written unless they pass.','good',6000);   // J2-F32
       })},icon('cpu'),'Use alternate author')));
   }
   // The one more try's answer, refused by the host, is kept; a newer Runesmith may accept it (journey J2-G1).
@@ -251,7 +251,7 @@ function drawDrafts(body, w, reload, ctx) {
           text:'One model call, with the reason it was refused and the files as they are. It cannot add other files, and the project tests and your checks still decide.',confirm:'Run correction'});
         if (!ok) return;
         await post('/api/worker/run',{job:'correct',params:{attempt:c.attempt}});
-        toast('Bounded correction queued. The original answer remains unchanged.','good',6000);
+        toast('The model is asked to correct its answer. The answer it gave is kept as it was.','good',6000);
       })},icon('wrench'),'Correct retained answer')));
   }
   if (!w.drafts.length) {

@@ -1917,7 +1917,14 @@ try{
     await hero().getByRole('button',{name:'Choose a number to watch',exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>window.navigation),['mission','add-measurement']);
     assert(requests.slice(watchStart).every(r=>r.method==='GET'));
-    loops.push({id:'B19.15',case:'Keeping an eye on numbers: the Overview names the report files found and offers “Choose a number to watch”',result:'passed'});
+    // once a number is watched, the hero says how it stays current (journey J12-F2)
+    await mount({...base,workspace:{...base.workspace,empty:false},mapped_utc:'2026-09-28T10:00:00Z',
+      numbers:[{id:'revenue',name:'Revenue this week',unit:'EUR',aggregation:'sum',threshold:null,status:'measured',value:2072.4,measured_at:new Date().toISOString(),source_file:'reports/week-40.csv',threshold_met:null}],
+      settings:{...base.settings,onboarded:true,use_type:'numbers',autonomy:'observe'},objects:[{name:'reports',kind:'data_reports',root:false,next_rung:null,bands:[],ladder:['achieved']}]});
+    const keptText=await hero().innerText();
+    assert(keptText.includes('Runesmith keeps an eye on your numbers')&&keptText.includes('turn on the Operations mode')&&!keptText.includes('You chose to just look'),keptText);
+    assert.equal(await hero().getByRole('button',{name:'Let it help',exact:true}).count(),0);
+    loops.push({id:'B19.15',case:'Keeping an eye on numbers: the Overview names the report files found and offers “Choose a number to watch”; once one is watched, it says how it stays current',result:'passed'});
     loops.push({id:'B19.13',case:'A mapped folder without code is told the test-runs switch has nothing to run yet; code, an outdated map or no map says nothing',result:'passed'});
   }
   if(selected.has('B20')){
