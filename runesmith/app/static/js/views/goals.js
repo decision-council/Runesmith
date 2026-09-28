@@ -408,7 +408,11 @@ export default async function render(root, ctx) {
   };
 
   const buildCard = h('div.card');
-  const drawBuild = async () => {
+  // Unsaved changes survive the redraws a running job causes (journey J2-F19: a switch turned off mid-build was
+  // silently switched back when the job finished, before the owner pressed Save).
+  let buildDirty = false;
+  const drawBuild = async (options) => {
+    if (buildDirty && options?.force !== true) return;
     const [settings, build] = await Promise.all([get('/api/settings'), get('/api/build')]);
     const checks = h('input', {type:'checkbox', checked:settings.build_steps});
     const apply = h('input', {type:'checkbox', checked:build.apply});
@@ -418,8 +422,11 @@ export default async function render(root, ctx) {
         text:'Runesmith may then write only the files and folders listed below, and only when a draft passes both its own tests and your acceptance checks for the milestone. You can turn this off here at any time; backups and Undo stay available.',confirm:'Allow automatic apply'}))) return;
       await post('/api/settings', {build_steps:checks.checked, build_apply:apply.checked,
         build_paths:paths.value.split(',').map(x=>x.trim()).filter(Boolean)});
-      toast('Build settings saved for this folder.', 'good'); drawBuild();
+      toast('Build settings saved for this folder.', 'good'); buildDirty = false; drawBuild({ force: true });
     })}, 'Save build settings');
+    const unsaved = h('span.small.warn', 'Not saved yet: press Save build settings.');
+    const markDirty = () => { buildDirty = true; save.classList.add('primary'); if (!unsaved.isConnected) save.after(unsaved); };
+    checks.addEventListener('change', markDirty); apply.addEventListener('change', markDirty); paths.addEventListener('input', markDirty);
     clear(buildCard).append(...[h('h3', icon('hammer'), 'Build continuation'),
       h('p.small.muted', 'Builds the next milestone from your project as it is now. By default you review each draft yourself. Automatic apply needs your acceptance checks to pass, not only the draft’s own tests, and nothing may have changed in the meantime.'),
       h('label.row', checks, 'Check drafts on a throwaway copy before they are written (the project’s own tests, if it has any, and your acceptance checks)'),

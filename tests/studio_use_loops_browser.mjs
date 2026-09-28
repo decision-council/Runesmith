@@ -1936,6 +1936,18 @@ try{
     await block().getByText('What exactly is checked',{exact:true}).click();
     assert((await block().innerText()).includes('a line with “2025-01” also shows the number 1'));
     loops.push({id:'B20.05',case:'An examples proposal shows what is checked exactly, what Runesmith removed and what is not checked',result:'passed'});
+
+    // B20.06 (journey J2-F19): a build switch changed while a job runs is not undone when the job's event redraws the page
+    const buildStart=requests.length;
+    const checking=page.getByLabel('Check drafts on a throwaway copy before they are written (the project’s own tests, if it has any, and your acceptance checks)',{exact:true});
+    await checking.waitFor();assert(await checking.isChecked());
+    await checking.uncheck();
+    await page.evaluate(async()=>{const {bus}=await import('/static/js/core.js');bus.emit('job',{kind:'build',result:'done'});});
+    await page.waitForTimeout(800);
+    assert.equal(await checking.isChecked(),false);
+    assert(await page.getByText('Not saved yet: press Save build settings.',{exact:true}).isVisible());
+    assert(!requests.slice(buildStart).some(r=>r.path==='/api/settings'&&r.method==='POST'));
+    loops.push({id:'B20.06',case:'An unsaved build switch survives the redraw a finishing job causes and says it is not saved yet',result:'passed'});
     fixtureAcceptance={};fixturePlan=null;
   }
   if(selected.has('B21')){
