@@ -600,7 +600,14 @@ class Worker:
         require_intent(self.ws)
         receipt = measure(self.ws, measurement)
         self.bus.publish('mission', {})
-        return {'summary': f"Report measurement: {receipt['status']}; no model call or project change.", 'receipt': receipt['id']}
+        from runesmith.app.measurements import definitions
+        name = next((i['name'] for i in definitions(self.ws)['items'] if i['id'] == measurement), measurement)
+        if receipt['status'] == 'measured':        # the number itself, in plain words (journey J5)
+            where = f" from {receipt['source_file']}" if receipt.get('source_file') else ''
+            said = f"{name}: {receipt['value']:g} {receipt.get('unit') or ''}".rstrip() + f"{where}. No model call or project change."
+        else:
+            said = f"{name}: {receipt['status']}" + (f" ({receipt['detail']})" if receipt.get('detail') else '') + '.'
+        return {'summary': said, 'receipt': receipt['id']}
 
     def _job_map(self, probe: bool | None = None) -> dict[str, Any]:
         settings = self.ws.settings()

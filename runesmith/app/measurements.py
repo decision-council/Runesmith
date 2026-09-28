@@ -19,7 +19,7 @@ from runesmith.app.worker_journal import Record
 PARSER = 'local-reports-v2'  # Reject ambiguous JSON; older receipts remain historical evidence.
 MAX_BYTES, MAX_ROWS = 256_000, 5_000
 SOURCES = {'csv', 'json', 'paste_csv', 'paste_json', 'ga4', 'email'}
-AGGREGATIONS = {'count', 'sum', 'mean', 'latest'}
+AGGREGATIONS = {'count', 'sum', 'mean', 'latest', 'ratio'}
 
 
 def _id(value):
@@ -65,6 +65,25 @@ def report_path(ws, rel):
     return path
 
 
+def _natural(name):
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r'(\d+)', name)]
+
+
+def report_file(ws, rel):
+    """The report a definition reads. A * in the file name means the newest matching file, in natural order
+    (week-9 before week-10), so a report that arrives as a new file every week needs no new definition
+    (journey J5-G2: the till exports reports/week-40.csv next week)."""
+    name = PurePosixPath(rel.replace('\\', '/')).name
+    if '*' not in name:
+        return report_path(ws, rel)
+    probe = report_path(ws, rel.replace('*', 'x'))               # the folder and the pattern follow the same rules
+    matches = sorted((p for p in probe.parent.glob(name) if p.is_file()), key=lambda p: _natural(p.name))
+    if not matches:
+        raise WorkspaceError(f'No report matches {rel} yet.')
+    newest = matches[-1]
+    return report_path(ws, (PurePosixPath(rel.replace('\\', '/')).parent / newest.name).as_posix())
+
+
 def definitions(ws):
     path = ws.home / 'MEASUREMENTS.json'
     body = Record(path).value
@@ -93,6 +112,7 @@ def save_definition(ws, raw, revision):
         item = {'id': mid}
         for field, limit, required in [('name', 120, True), ('goal', 200, False), ('source_kind', 20, True),
                 ('path', 500, False), ('field', 100, False), ('unit', 80, False), ('aggregation', 20, True),
+                ('denominator_field', 100, False),
                 ('time_field', 100, False), ('start', 60, False), ('end', 60, False),
                 ('filter_field', 100, False), ('filter_equals', 200, False), ('instructions', 2000, False),
                 ('source_label', 200, False), ('email_subject', 200, False), ('email_sender', 200, False)]:
@@ -103,9 +123,11 @@ def save_definition(ws, raw, revision):
             raise WorkspaceError('Enabled must be true or false.')
         item['enabled'] = raw.get('enabled', True)
         if item['source_kind'] in {'csv', 'json'}:
-            report_path(ws, item['path'])
+            report_path(ws, item['path'].replace('*', 'x'))   # a pattern may match nothing yet
         if item['aggregation'] != 'count' and not item['field']:
             raise WorkspaceError('This aggregation needs a numeric field.')
+        if item['aggregation'] == 'ratio' and not item['denominator_field']:
+            raise WorkspaceError('A ratio needs the column to divide by.')
         if (item['start'] or item['end']) and not item['time_field']:
             raise WorkspaceError('A time window needs a timestamp field.')
         if item['start']: _time(item['start'])
@@ -170,7 +192,7 @@ def _raw_report(ws, item):
         raw = text.encode('utf-8')
         if hashlib.sha256(raw).hexdigest() != sha: raise WorkspaceError('Saved report identity does not match.')
         return raw
-    path = report_path(ws, item['path'])
+    path = report_file(ws, item['path'])
     with path.open('rb') as stream:
         return stream.read(MAX_BYTES + 1)
 
@@ -205,6 +227,8 @@ def evaluate(raw, item):
     selected = []
     for row in rows:
         required = [item[k] for k in ('field', 'time_field', 'filter_field') if item[k]]
+        if item['aggregation'] == 'ratio':
+            required.append(item.get('denominator_field') or '')
         if any(k not in row for k in required): raise WorkspaceError('A configured field is missing from a report row.')
         if item['filter_field'] and str(row[item['filter_field']]) != item['filter_equals']:
             counts['filter_excluded'] += 1; continue
@@ -219,21 +243,40 @@ def evaluate(raw, item):
             try: number = float(value)
             except (TypeError, ValueError): raise WorkspaceError('The numeric field contains a nonnumeric value.') from None
             if not math.isfinite(number): raise WorkspaceError('The numeric field contains a non-finite value.')
-        selected.append((at, number)); counts['included'] += 1
+        below = _number(row[item['denominator_field']]) if item['aggregation'] == 'ratio' else None
+        selected.append((at, number, below)); counts['included'] += 1
     if not selected:
         return {'status': 'unknown', 'value': None, 'detail': 'No rows in the selected population/window; not zero.', 'rows': counts}
-    values = [v for _, v in selected]
+    values = [v for _, v, _ in selected]
     kind = item['aggregation']
+    if kind == 'ratio':
+        below = math.fsum(b for _, _, b in selected)
+        if below == 0:
+            return {'status': 'unknown', 'value': None, 'detail': 'The column to divide by sums to zero; not a ratio.', 'rows': counts}
+        return {'status': 'measured', 'value': math.fsum(values) / below, 'rows': counts,
+                'latest_data_at': max(at for at, _, _ in selected).isoformat() if item['time_field'] else None}
     if kind == 'latest':
-        newest = max(at for at, _ in selected)
-        candidates = {v for at, v in selected if at == newest}
+        newest = max(at for at, _, _ in selected)
+        candidates = {v for at, v, _ in selected if at == newest}
         if len(candidates) != 1: raise WorkspaceError('Latest timestamp has conflicting values.')
         value = candidates.pop()
     else:
         value = len(values) if kind == 'count' else math.fsum(values) / (len(values) if kind == 'mean' else 1)
     if not math.isfinite(value): raise WorkspaceError('Aggregate is not finite.')
     return {'status': 'measured', 'value': value, 'rows': counts,
-            'latest_data_at': max(at for at, _ in selected).isoformat() if item['time_field'] else None}
+            'latest_data_at': max(at for at, _, _ in selected).isoformat() if item['time_field'] else None}
+
+
+def _number(value):
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise WorkspaceError('The numeric field contains a nonnumeric value.')
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise WorkspaceError('The numeric field contains a nonnumeric value.') from None
+    if not math.isfinite(number):
+        raise WorkspaceError('The numeric field contains a non-finite value.')
+    return number
 
 
 def measure(ws, mid):
@@ -245,8 +288,16 @@ def measure(ws, mid):
         result = {'status': 'unavailable', 'value': None, 'detail': 'Live connector not implemented or connected. Use a selected local export instead.'}
     else:
         try:
-            raw = _raw_report(ws, item); sha = hashlib.sha256(raw).hexdigest()
+            if item['source_kind'] in {'csv', 'json'}:              # the file read: the newest match of a pattern
+                source = report_file(ws, item['path'])
+                with source.open('rb') as stream:
+                    raw = stream.read(MAX_BYTES + 1)
+            else:
+                source, raw = None, _raw_report(ws, item)
+            sha = hashlib.sha256(raw).hexdigest()
             result = evaluate(raw, item)
+            if source is not None:
+                result['source_file'] = source.relative_to(ws.root).as_posix()
         except (OSError, UnicodeError, ValueError, csv.Error, WorkspaceError, OverflowError) as error:
             result = {'status': 'error', 'value': None, 'detail': str(error)[:400] if isinstance(error, WorkspaceError) else f'Report could not be read: {type(error).__name__}'}
     rid = digest({'parser': PARSER, 'definition': item, 'source': sha, 'result': result}).split(':', 1)[-1]
@@ -360,7 +411,7 @@ def latest(ws, item):
     # No arbitrary stored packets or report rows in the model-facing projection.
     fields = ('status', 'value', 'rows', 'latest_data_at', 'detail', 'id', 'measurement_id', 'measured_at',
               'parser', 'source_sha256', 'source_kind', 'definition_digest', 'unit', 'window', 'threshold',
-              'threshold_met', 'scope')
+              'threshold_met', 'scope', 'source_file')
     return dict({k: row[k] for k in fields if k in row},
                 current_definition=assessment['current_definition'], assessment=assessment)
 

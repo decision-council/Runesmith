@@ -8,6 +8,29 @@ function greeting() {
   return hr < 5 ? 'Working late' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
 }
 
+// Your numbers: the latest value of each measurement, in plain words, where the owner looks first (journey J5:
+// the value was only on a project dashboard, under receipt hashes).
+function numbersCard(s, navigate) {
+  const rows = s.numbers || [];
+  if (!rows.length) return null;
+  const pct = (v) => `${(v * 100).toFixed(1).replace(/\.0$/, '')}%`;
+  const shown = (n) => n.value == null ? '—' : n.aggregation === 'ratio' ? pct(n.value)
+    : `${Number(n.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}${n.unit ? ` ${n.unit}` : ''}`;
+  const target = (n) => !n.threshold ? '' : `target ${n.threshold.op === 'gte' ? 'at least' : 'at most'} ${n.aggregation === 'ratio' ? pct(n.threshold.value) : n.threshold.value}`;
+  const row = (n) => h('div.item', h('div.body', h('div.title', `${n.name}: `, h('b', shown(n))),
+    h('div.meta', [n.status === 'measured' ? `${n.source_file ? `from ${n.source_file} · ` : ''}measured ${ago(n.measured_at)}`
+      : n.status ? `not measured: ${n.detail || n.status}` : 'not measured yet', target(n)].filter(Boolean).join(' · '))),
+    n.threshold_met === true ? h('span.badge.good', 'on target') : n.threshold_met === false ? h('span.badge.warn', 'off target') : null);
+  return h('section.card.mt-24', { 'aria-label': 'Your numbers' },
+    h('div.card-head', h('h3', icon('gauge'), 'Your numbers'), h('div.actions',
+      h('button.btn.sm', { onclick: (e) => withBusy(e.currentTarget, async () => {
+        for (const n of rows) await post('/api/worker/run', { job: 'measure', params: { measurement: n.id } });
+        toast('Reading your reports now. No model is asked.', 'good');
+      }) }, icon('refresh'), 'Measure now'),
+      h('button.btn.sm.ghost', { onclick: () => navigate('mission') }, 'Change what is measured'))),
+    h('div.list', rows.map(row)));
+}
+
 // A model server already running on this computer is named and offered first (journey J8-F1).
 const SERVER_NAMES = { ollama: 'Ollama', lmstudio: 'LM Studio', llamacpp: 'llama.cpp' };
 async function offerLocalServer(hero, cta, navigate) {
@@ -272,7 +295,7 @@ export default async function render(root, { app, navigate, refreshState }) {
   }
   caps.append(h('p.tiny.faint.mt-8', 'Bands: bad · minimal · optimal. "Unknown" means there is no evidence yet, not that things are fine.'));
 
-  root.append(hero, policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
+  root.append(hero, numbersCard(s, navigate), policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
     h('div.grid.two.mt-24', objects, next), fixCard, tryCard, h('div.grid.two.mt-24', live, caps));
   function kpisWrap(k) { k.classList.remove('four'); k.classList.add('two'); return k; }
   return () => {closed=true;healthSerial++;offs.forEach((off) => off());};

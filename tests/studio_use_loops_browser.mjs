@@ -1868,6 +1868,20 @@ try{
     assert((await page.locator('#page').innerText()).includes('made by an earlier version: map again'));
     await mount(base);                                                  // not mapped yet: no claim either way
     assert(!(await policy().innerText()).includes('Nothing to run yet'));
+    // B19.14 (journey J5): the owner's numbers are on the Overview, in plain words, with their targets
+    const numbersStart=requests.length;
+    await mount({...base,workspace:{...base.workspace,empty:false},mapped_utc:'2026-09-28T10:00:00Z',numbers:[
+      {id:'revenue',name:'Revenue this week',unit:'EUR',aggregation:'sum',threshold:null,status:'measured',value:2010.5,
+       measured_at:new Date().toISOString(),source_file:'reports/week-39.csv',threshold_met:null},
+      {id:'share',name:'Share sold',unit:'',aggregation:'ratio',threshold:{op:'gte',value:0.85},status:'measured',value:0.8,
+       measured_at:new Date().toISOString(),source_file:'reports/week-39.csv',threshold_met:false},
+      {id:'later',name:'Monthly visitors',unit:'',aggregation:'sum',threshold:null,status:null,value:null}]});
+    const numbersText=await page.getByRole('region',{name:'Your numbers',exact:true}).innerText();
+    for(const want of ['Revenue this week: 2,010.5 EUR','from reports/week-39.csv','Share sold: 80%','target at least 85%','off target','Monthly visitors: —','not measured yet'])
+      assert(numbersText.includes(want),want+' in '+numbersText);
+    assert(requests.slice(numbersStart).every(r=>r.method==='GET'));
+    await mount(base);assert.equal(await page.getByRole('region',{name:'Your numbers',exact:true}).count(),0);
+    loops.push({id:'B19.14',case:'The owner’s numbers show on the Overview in plain words, with targets; none defined, no card',result:'passed'});
     loops.push({id:'B19.13',case:'A mapped folder without code is told the test-runs switch has nothing to run yet; code, an outdated map or no map says nothing',result:'passed'});
   }
   if(selected.has('B20')){

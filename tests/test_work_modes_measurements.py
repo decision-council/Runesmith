@@ -357,3 +357,43 @@ def test_api_save_and_paste_only_configure_no_dispatch(ws):
     data = api_mission(studio, {}, None)
     api_mission_modes(studio, {}, {'revision': data['revision'], 'modes': data['modes'], 'reason': 'UI path'})
     assert not worker._jobs and not metrics.latest(ws, metrics.definitions(ws)['items'][0])
+
+
+def test_a_weekly_report_pattern_reads_the_newest_file_and_a_ratio_measures_the_share_sold(ws):
+    # Journey J5 (a bakery): the till writes reports/week-NN.csv every week (G2), and "waste under 15%" is a
+    # ratio: sold divided by baked, at least 0.85 (G3). Neither could be defined before.
+    folder = ws.root / 'reports'
+    folder.mkdir()
+    rows = {9: [(30, 27, 90.0)], 10: [(40, 30, 120.0), (20, 18, 64.0)], 38: [(10, 5, 20.0)]}
+    for week, lines in rows.items():
+        text = 'date,item,baked,sold,revenue\n' + ''.join(f'2026-W{week}-1,Rye,{b},{s},{r}\n' for b, s, r in lines)
+        (folder / f'week-{week}.csv').write_text(text, encoding='utf-8')
+    revenue = definition(ws, id='revenue', name='Revenue this week', source_kind='csv', path='reports/week-*.csv',
+                         aggregation='sum', field='revenue', unit='EUR')
+    receipt = metrics.measure(ws, 'revenue')
+    assert receipt['status'] == 'measured' and receipt['value'] == 20.0 and receipt['source_file'] == 'reports/week-38.csv'
+    (folder / 'week-38.csv').unlink()                                 # week-10 is newer than week-9, not older
+    assert metrics.measure(ws, 'revenue')['source_file'] == 'reports/week-10.csv'
+    share = definition(ws, id='share-sold', name='Share sold', source_kind='csv', path='reports/week-*.csv',
+                       aggregation='ratio', field='sold', denominator_field='baked', unit='of what was baked',
+                       threshold={'op': 'gte', 'value': 0.85})
+    measured = metrics.measure(ws, 'share-sold')
+    assert measured['value'] == pytest.approx(48 / 60) and measured['threshold_met'] is False
+    assert metrics.latest(ws, share)['source_file'] == 'reports/week-10.csv'
+    with pytest.raises(WorkspaceError, match='column to divide by'):
+        definition(ws, id='bad', name='Bad', source_kind='csv', path='reports/week-*.csv', aggregation='ratio', field='sold')
+    empty = definition(ws, id='later', name='Later', source_kind='csv', path='reports/month-*.csv', aggregation='sum',
+                       field='revenue')                                 # a pattern may match nothing yet
+    assert metrics.measure(ws, 'later')['status'] == 'error' and 'No report matches' in metrics.measure(ws, 'later')['detail']
+    assert revenue['path'] == 'reports/week-*.csv' and empty['path'] == 'reports/month-*.csv'
+
+
+def test_measuring_says_the_number_in_plain_words(ws):
+    # Journey J5: "Report measurement: measured; no model call or project change." did not say the number.
+    ws.set_brief('Keep an eye on weekly revenue.')
+    (ws.root / 'reports').mkdir()
+    (ws.root / 'reports' / 'week-39.csv').write_text('item,revenue\nRye,1200.5\nBun,810\n', encoding='utf-8')
+    definition(ws, id='revenue', name='Revenue this week', source_kind='csv', path='reports/week-*.csv',
+               aggregation='sum', field='revenue', unit='EUR')
+    summary = Worker(ws, EventBus())._job_measure('revenue')['summary']
+    assert summary == 'Revenue this week: 2010.5 EUR from reports/week-39.csv. No model call or project change.'

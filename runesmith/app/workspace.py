@@ -1510,6 +1510,7 @@ class Workspace:
             # A map written by an earlier mapper may miss what today's mapper sees (journey J2: an old map
             # listed a package and its tests as plain folders); the Overview then makes no claim from it.
             "map_outdated": bool(env_map) and (env_map.get("mapper_revision") or 1) < _mapper_revision(),
+            "numbers": _numbers(self),
             "capabilities": (self_map or {}).get("capabilities", {}),
             "active_generation": generations.active(self.home),
             "active_name": self.generation_name(generations.active(self.home)),
@@ -1571,3 +1572,22 @@ def _with_kept_tracks(tracks: list[dict[str, str]], kept, earlier: list[dict[str
             names.add(m["track"])
             tracks.append({"name": m["track"], "purpose": str(purposes.get(m["track"]) or "")[:300]})
     return tracks
+
+
+def _numbers(ws) -> list[dict[str, Any]]:
+    """The owner's measurements with their latest values, for the Overview (journey J5: the number was only on a
+    dashboard, under receipt hashes)."""
+    from runesmith.app import measurements
+    try:
+        items = [item for item in measurements.definitions(ws)["items"] if item.get("enabled")]
+    except WorkspaceError:
+        return []
+    rows = []
+    for item in items[:8]:
+        last = measurements.latest(ws, item) or {}
+        rows.append({"id": item["id"], "name": item["name"], "unit": item.get("unit") or "",
+                     "aggregation": item.get("aggregation"), "threshold": item.get("threshold"),
+                     "status": last.get("status"), "value": last.get("value"), "detail": last.get("detail"),
+                     "measured_at": last.get("measured_at"), "source_file": last.get("source_file"),
+                     "threshold_met": last.get("threshold_met")})
+    return rows
