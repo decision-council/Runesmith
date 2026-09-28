@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const dependencies=process.env.RUNESMITH_TEST_NODE_MODULES;
 const {chromium}=require(dependencies?path.join(dependencies,'playwright'):'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23,B24,B25').split(','));
+const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23,B24,B25,B26').split(','));
 const artifacts=path.join(root,'training','.tmp','studio-use-loops-'+new Date().toISOString().replace(/[:.]/g,'-'));
 mkdirSync(artifacts,{recursive:true});
 const executable=[chromium.executablePath(),'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -908,6 +908,7 @@ try{
       window.cleanup?.();document.querySelector('#page').replaceChildren();
       const module=await import('/static/js/views/work.js');
       window.cleanup=await module.default(document.querySelector('#page'),{sub:['drafts'],navigate(){}});
+      const fold=[...document.querySelectorAll('#page details')].find(d=>d.textContent.includes('For experts'));if(fold)fold.open=true;      // the owner opens "For experts" (J4-F15)
     });
     await mount();
     const open=async()=>{
@@ -1502,6 +1503,7 @@ try{
       window.cleanup?.();document.querySelector('#page').replaceChildren();
       const module=await import('/static/js/views/work.js');
       window.cleanup=await module.default(document.querySelector('#page'),{sub:['drafts'],navigate:(...args)=>{window.lastNavigation=args;}});
+      const fold=[...document.querySelectorAll('#page details')].find(d=>d.textContent.includes('For experts'));if(fold)fold.open=true;      // the owner opens "For experts" (J4-F15)
     });
     const draftButton=()=>page.getByRole('button',{name:'Draft next milestone only',exact:true});
     const refresh=async()=>{
@@ -2031,6 +2033,36 @@ try{
     assert(!(await page.locator('.card',{hasText:'Documents a model may read'}).innerText()).includes('a model reads only the ones you tick'));
     loops.push({id:'B25.02',case:'A code project is not told to tick documents',result:'passed'});
     briefCandidates=[];await page.evaluate((s)=>{window.homeState=s;},before);
+  }
+  if(selected.has('B26')){
+    // Journey J4: Work opens where work waits, drafts come before expert panels, and a handbook's checks are named honestly.
+    const start=requests.length,oldDrafts=fixtureWork.drafts;
+    fixtureWork.drafts=[{id:'handbookDraft',title:'Seeded loaf in the recipe index',utc:'2026-09-28T02:55:13Z',drafted_by:'Fixture chat',
+      state:'waiting',verified:true,milestone:'m1',
+      verification:{status:'acceptance_passed',project_checks:{status:'not_applicable',ok:true,ran:0},acceptance:{status:'passed',ok:true,ran:3}},
+      files:[{path:'recipes/index.md',content:'# Recipes\n',purpose:'Link the seeded loaf.'}]}];
+    await page.setViewportSize({width:1440,height:1000});
+    await page.evaluate(async()=>{window.cleanup?.();document.querySelector('#page').replaceChildren();
+      const module=await import('/static/js/views/work.js');
+      window.cleanup=await module.default(document.querySelector('#page'),{sub:[],app:{state:{proposals:{waiting:0},drafts:{waiting:1}}},navigate(){}});});
+    await page.getByText('Seeded loaf in the recipe index',{exact:true}).waitFor();
+    if(await page.evaluate(()=>[...document.querySelectorAll('#page details')].find(d=>d.textContent.includes('For experts'))?.open)){
+      await page.locator('#page summary',{hasText:'For experts'}).click();
+      await page.evaluate(async()=>{window.cleanup?.();document.querySelector('#page').replaceChildren();
+        const module=await import('/static/js/views/work.js');
+        window.cleanup=await module.default(document.querySelector('#page'),{sub:[],app:{state:{proposals:{waiting:0},drafts:{waiting:1}}},navigate(){}});});
+      await page.getByText('Seeded loaf in the recipe index',{exact:true}).waitFor();
+    }
+    const text=await page.locator('#page').innerText();
+    assert(text.includes('your checks passed')&&!text.includes('its tests and your checks passed'),text);
+    const order=await page.evaluate(()=>{const all=[...document.querySelectorAll('#page *')];
+      const draft=all.findIndex(e=>e.textContent==='Seeded loaf in the recipe index');
+      const expert=all.findIndex(e=>e.tagName==='DETAILS'&&e.textContent.includes('For experts: source timing and author budget'));
+      return {draft,expert,open:all[expert]?.open};});
+    assert(order.draft>=0&&order.expert>order.draft&&order.open===false,JSON.stringify(order));
+    assert(requests.slice(start).every(r=>r.method==='GET'));
+    loops.push({id:'B26.01',case:'Work opens on Drafts when a draft waits, drafts come before expert panels, and checks without tests read "your checks passed"',result:'passed'});
+    fixtureWork.drafts=oldDrafts;
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));

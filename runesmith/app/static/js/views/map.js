@@ -195,7 +195,11 @@ async function environmentLens(body, ctx) {
         h('button.btn.sm.icon', { title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => pz.zoom(1 / 1.2) }, icon('minus')),
         h('button.btn.sm.icon', { title: 'Reset view', 'aria-label': 'Reset the view', onclick: () => pz.reset() }, icon('crosshair')),
         h('button.btn.sm', { title: 'Map again, running each object’s tests on throwaway copies', onclick: (e) => withBusy(e.currentTarget, async () => { await post('/api/worker/run', { job: 'map', params: { probe: true } }); toast('Mapping and measuring… the map updates when done.', 'good'); }) }, icon('refresh'), 'Re-map & measure'),
-        h('span.badge', `mapped ${ago(env.utc)}`)),
+        h('span.badge', `mapped ${ago(env.utc)}`),
+        // A map made by an earlier version lacks what this one finds (journey J4-F7); re-mapping is the owner's choice.
+        data.outdated ? h('button.btn.sm.primary', { title: 'This map was made by an earlier version of Runesmith, which found less. Map again to see everything.',
+          onclick: (e) => withBusy(e.currentTarget, async () => { await post('/api/worker/run', { job: 'map' }); toast('Mapping… the map updates when done.', 'good'); }) },
+          icon('refresh'), 'Made by an earlier version: map again') : null),
       svg,
       h('div.map-legend', ['bad', 'minimal', 'optimal', 'world_class', 'unknown'].map((b) => h('span', { class: `band ${b}` }, BAND_LABEL[b])),
         h('span.faint', '· drag to pan · scroll to zoom · Tab to an object')));

@@ -626,7 +626,9 @@ def api_map_environment(s: Studio, q, body):
     ws = _ws(s)
     work = _read_json(ws.home / "WORK.json", {})
     env_map = ws.environment_map()
-    return {"map": env_map, "round": {"utc": work.get("utc"), "objects": ws.object_statuses(work, env_map or {}),
+    from runesmith.envmap import MAPPER_REVISION
+    return {"map": env_map, "outdated": bool(env_map) and (env_map.get("mapper_revision") or 1) < MAPPER_REVISION,
+            "round": {"utc": work.get("utc"), "objects": ws.object_statuses(work, env_map or {}),
                                       "details": work.get("details", {})},
             "settings": {"exclude": ws.settings()["exclude"], "probe_tests": ws.settings()["probe_tests"]}}
 

@@ -409,7 +409,7 @@ export default async function render(root, ctx) {
     const [settings, build] = await Promise.all([get('/api/settings'), get('/api/build')]);
     const checks = h('input', {type:'checkbox', checked:settings.build_steps});
     const apply = h('input', {type:'checkbox', checked:build.apply});
-    const paths = h('input.input.mono', {value:(settings.build_paths || []).join(', '), placeholder:'src, tests, pyproject.toml'});
+    const paths = h('input.input.mono', {value:(settings.build_paths || []).join(', '), placeholder:'for example: src, tests, docs'});
     const save = h('button.btn', {onclick: () => withBusy(save, async () => {
       if (apply.checked && !build.apply && !(await confirmDialog({title:'Apply checked drafts automatically in this folder?',
         text:'Runesmith may then write only the files and folders listed below, and only when a draft passes both its own tests and your acceptance checks for the milestone. You can turn this off here at any time; backups and Undo stay available.',confirm:'Allow automatic apply'}))) return;
@@ -419,7 +419,7 @@ export default async function render(root, ctx) {
     })}, 'Save build settings');
     clear(buildCard).append(...[h('h3', icon('hammer'), 'Build continuation'),
       h('p.small.muted', 'Builds the next milestone from your project as it is now. By default you review each draft yourself. Automatic apply needs your acceptance checks to pass, not only the draft’s own tests, and nothing may have changed in the meantime.'),
-      h('label.row', checks, 'Check drafts by running their tests (Python unittest, in a throwaway working copy)'),
+      h('label.row', checks, 'Check drafts on a throwaway copy before they are written (the project’s own tests, if it has any, and your acceptance checks)'),
       h('label.row.mt-8', apply, 'Apply checked drafts automatically (needs your own acceptance checks for the milestone)'),
       h('div.label-text.mt-8', 'Allowed files or folders, comma separated'), paths,
       h('p.small.muted', 'Automatic apply needs acceptance checks for each milestone. Use “Propose acceptance checks” on a milestone above and approve them in plain words; nothing is applied automatically without them.'),

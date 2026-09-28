@@ -26,6 +26,11 @@ from runesmith.app.check_progress import PROGRESS_RUNNER, read_progress
 from runesmith.app.author_allowance import ordinary_allowance
 
 CHECK_TIMEOUT_S = 120
+# A check outcome in the owner's words, for the live log (journey J4-F17); receipts keep the raw status.
+OUTCOME_WORDS = {'acceptance_passed': 'your acceptance checks passed', 'self_checks_passed': 'its own tests passed',
+                 'unchecked': 'nothing checked it yet: add acceptance checks', 'failed': 'checks failed',
+                 'inconclusive': 'checks did not finish', 'stale': 'its inputs changed since it was drafted',
+                 'unsupported': 'it could not be checked here', 'refused': 'it was refused'}
 
 RUNNER = '''import importlib.util,json,sys,unittest
 from pathlib import Path
@@ -698,7 +703,7 @@ def _check_and_record(ws, draft, milestone, contract, *, checkpoint, allow_apply
         raise
     _save_checked_draft(ws, draft, contract, verification, allow_apply=allow_apply)
     result = {'draft':draft['id'], 'milestone':milestone['id'], 'verification':verification,
-              'summary':f"{draft['id']}: {verification['status']}. Nothing applied."}
+              'summary':f"Draft “{draft.get('title') or draft['id']}”: {OUTCOME_WORDS.get(verification['status'], verification['status'])}. Nothing was written."}
     checkpoint()
     if allow_apply:
         with ws._lock:

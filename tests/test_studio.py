@@ -575,3 +575,16 @@ def test_a_key_kept_in_a_local_settings_file_makes_an_instrument_usable(tmp_path
     assert not ws._usable("no-key", config["instruments"]["no-key"])
     listed = {i["name"]: i for i in ws.inference()["instruments"]}
     assert listed["from-file"]["key"]["env"] == f"GATEWAY_TOKEN in {tmp_path / 'gateway.env'}"
+
+
+def test_a_map_from_an_earlier_version_is_reported_so_the_owner_can_map_again(studio):
+    # Journey J4-F7: after an upgrade the Living map showed an old map without the new facts, and said nothing.
+    import json as _json
+    from runesmith.envmap import MAPPER_REVISION
+    env_map = studio.ws.map_environment()
+    assert env_map["mapper_revision"] == MAPPER_REVISION
+    assert call(studio, "GET", "/api/map/environment")[1]["outdated"] is False
+    old = dict(env_map)
+    old.pop("mapper_revision")                                    # as written before the revision stamp existed
+    (studio.ws.home / "ENVIRONMENT.json").write_text(_json.dumps(old), encoding="utf-8")
+    assert call(studio, "GET", "/api/map/environment")[1]["outdated"] is True

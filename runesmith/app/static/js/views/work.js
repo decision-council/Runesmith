@@ -13,7 +13,10 @@ const TABS = [
 
 export default async function render(root, ctx) {
   root.classList.add('work-page');
-  const tab = TABS.find((t) => t.id === ctx.sub[0]) || TABS[0];
+  // With nothing under Fixes and a draft waiting, open Drafts (journey J4-F14).
+  const s = ctx.app?.state;
+  const preferred = !ctx.sub[0] && !(s?.proposals?.waiting) && s?.drafts?.waiting ? 'drafts' : null;
+  const tab = TABS.find((t) => t.id === (ctx.sub[0] || preferred)) || TABS[0];
   const offs = [];
   const head = h('div.page-head', h('div', h('h2', 'Work & proposals'),
     h('p', 'Fixes, model-written drafts, and their check receipts. A draft is not verified until its checks run; project tests and owner acceptance are shown separately. Files are applied by you, or by a checked build under your enabled workspace grant. Every apply has a backup.')),
@@ -129,7 +132,11 @@ async function showRevisionContext(draftId, reload) {
   }});
 }
 
+let expertOpen = false;          // an opened expert section stays open when the page redraws on live updates
 function drawDrafts(body, w, reload, ctx) {
+  // Measurement and author-budget panels are for experts; the drafts come first (journey J4-F15).
+  const expert = h('details.card.mt-16', { open: expertOpen, ontoggle: (e) => { expertOpen = e.currentTarget.open; } },
+    h('summary', h('b.small', 'For experts: source timing and author budget')));
   const baseline = w.source_baseline;
   if (baseline) {
     const last = baseline.last;
@@ -152,7 +159,7 @@ function drawDrafts(body, w, reload, ctx) {
         ? `Discovered ${last.inventory.count} tests; inventory ${last.inventory.complete ? 'complete' : 'bounded / partially displayed'}.`
         : 'Discovery inventory not yet available.'),
       h('p.tiny.mono', `Source: ${last.snapshot_digest} · Evidence: ${last.evidence_dir}`)].filter(Boolean));
-    body.append(card);
+    expert.append(card);
   }
   for (const request of (w.pending_authors || [])) {
     body.append(h('div.callout.warn.mt-8',icon('cpu'),h('div.grow',
@@ -178,7 +185,7 @@ function drawDrafts(body, w, reload, ctx) {
   for (const reason of allowance?.blockers || []) budget.append(h('div.small.warn-text', reason));
   if (w.build_escalation?.used === true) budget.append(h('div.small', 'The separate alternate-author continuation is already recorded; it is not offered again on this source.'));
   budget.append(h('div.tiny.faint', 'Status at last refresh. Execution rechecks current inputs and enabled modes; this is not a provider credit balance.'));
-  body.append(h('div.card.mt-8', h('h3', 'Separate authoring from checks'),
+  expert.append(h('div.card.mt-8', h('h3', 'Separate authoring from checks'),
     h('p.small', 'Use the configured plan author for the next ready milestone under its ordinary attempt budget. A matching waiting draft is reused. No checks, file application or follow-on job; automatic-work settings stay unchanged.'),
     budget,
     h('div.row.wrap.mt-8', h('button.btn.sm', {disabled:!allowance?.can_draft, onclick: e => withBusy(e.currentTarget, async () => {
@@ -220,6 +227,7 @@ function drawDrafts(body, w, reload, ctx) {
   }
   if (!w.drafts.length) {
     body.append(empty('filePlus', 'No drafts yet', 'Open Goals & plan, pick a milestone and choose “Draft first files”.', h('button.btn.primary', { onclick: () => ctx.navigate('goals') }, icon('wand'), 'Goals & plan')));
+    body.append(expert);
     return;
   }
   for (const d of w.drafts) {
@@ -292,7 +300,7 @@ function drawDrafts(body, w, reload, ctx) {
         const settings = await get('/api/settings');
         if (!settings.build_steps) {        // say why nothing would run, and offer the one switch that makes it run
           const on = await confirmDialog({ title: 'Checking drafts is off in this folder',
-            text: 'To check a draft, Runesmith runs its tests (Python unittest) in a throwaway working copy of your folder. That executes the project’s code, so it is off until you choose. You can also change it later in Goals & plan → Build continuation.',
+            text: 'To check a draft, Runesmith tries it on a throwaway copy of your folder: the project’s own tests, if it has any, and your acceptance checks. Tests execute the project’s code, so checking is off until you choose. You can also change it later in Goals & plan → Build continuation.',
             confirm: 'Turn checking on and check this draft', icon: 'check' });
           if (!on) return;
           await post('/api/settings', { build_steps: true });
@@ -359,6 +367,7 @@ function drawDrafts(body, w, reload, ctx) {
     commentable(card, 'draft', d.id, d.title);
     body.append(card);
   }
+  body.append(expert);
 }
 
 async function showAuthorRevision(draftId, reload) {
@@ -460,6 +469,7 @@ function drawMemory(body, w) {
 function checkBadge(d) {
   const v = d.verification;
   if (!v) return 'unverified';
+  if (v.status === 'acceptance_passed' && v.project_checks?.status === 'not_applicable') return 'your checks passed';
   return ({ acceptance_passed: 'its tests and your checks passed', self_checks_passed: 'its own tests passed',
     failed: 'checks failed', inconclusive: 'checks did not finish', unchecked: 'nothing checked it yet: add acceptance checks' })[v.status] || humanize(v.status || 'unverified');
 }

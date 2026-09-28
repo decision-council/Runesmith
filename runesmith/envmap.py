@@ -310,6 +310,9 @@ _REFERENCE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+\"[^\"]*\")?\s*$
 _EXTERNAL = ("http://", "https://", "mailto:", "ftp://", "data:", "tel:", "file:")
 _LINE_SUFFIX = re.compile(r"^(.+?):\d+(?:[:-]\d+)?$")
 _TODO = re.compile(r"\b(TODO|FIXME|XXX)\b")
+# Raised whenever a map starts to record something new, so a map from an earlier version is known to be incomplete.
+# 2: pages nothing links to, notes still to do, the index's real name (journey J4).
+MAPPER_REVISION = 2
 
 
 def exists_exactly(path: Path, _listing: dict[str, set[str]] | None = None) -> bool:
@@ -649,7 +652,8 @@ def build_environment_map(workspace: Path, *, probe: bool = False, max_objects: 
                         "changed since (see measured_utc)")
     if not probe and any(o["kind"] == "python_repository" and not o.get("probe") for o in objects):
         unknowns.append("objects were not probed: pass rates, suite times and collect/pass rungs are unknown")
-    body = {"schema": "runesmith.environment_map.v1", "workspace": str(workspace), "environment": environment_facts(),
+    body = {"schema": "runesmith.environment_map.v1", "mapper_revision": MAPPER_REVISION, "workspace": str(workspace),
+            "environment": environment_facts(),
             "band_vocabulary": "bad < minimal <= value < optimal <= value < world_class; world_class needs external evidence",
             "workspace_facts": ws_facts, "objects": objects, "unknowns": unknowns}
     body["map_digest"] = digest({k: v for k, v in body.items() if k not in ("map_digest", "environment")})
