@@ -1461,9 +1461,12 @@ try{
       detail:'Evidence changed while the author responded. Retained for review, not adopted.',
       answer:{hypothesis:'Retained fixture idea',expected_effect:'Unknown',evaluation:'Review with intended data',limitations:'No result established'}}];
     await refresh();const heldStart=requests.length;
-    await page.getByText('held · fixture-author · 2026-09-27T05:00:00Z',{exact:true}).click();
+    // The newest idea is open, with plain labels (journey J5-F6); it used to be folded shut under raw keys.
+    assert(await page.getByText('fixture-author · 2026-09-27T05:00:00Z · held',{exact:true}).isVisible());
     assert(await page.getByText('Evidence changed while the author responded. Retained for review, not adopted.',{exact:true}).isVisible());
     assert(await page.getByText('Retained fixture idea',{exact:false}).isVisible());
+    const ideaText=await page.locator('details',{hasText:'Retained fixture idea'}).innerText();
+    assert(ideaText.includes('The idea: Retained fixture idea')&&ideaText.includes('What it should change: Unknown')&&!ideaText.includes('expected_effect'),ideaText);
     assert.equal(requests.length,heldStart);
     loops.push({id:'B16.11',case:'A held answer shows both its retained content and the reason it was not proposed, without retry',result:'passed'});
 

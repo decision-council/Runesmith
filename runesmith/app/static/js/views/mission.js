@@ -141,10 +141,12 @@ export default async function render(root, ctx) {
           h('button.btn.sm',{disabled:!item.enabled||live,onclick:e=>withBusy(e.currentTarget,async()=>{await post('/api/worker/run',{job:'measure',params:{measurement:item.id}});toast('Measurement queued; no model call.','good');})},icon('play'),'Measure now'))));
     }
     if(!data.measurements.items.length)metricCard.append(h('p.small','Examples: website event counts, store order/revenue totals, tool latency, support resolution times. A build-only goal can instead use its existing acceptance checks.'));
-    const proposals=h('div.card',h('h3',icon('spark'),'Optimization hypotheses'),h('p.small.muted','Proposals only: no code implementation, goal adoption or measured gain is implied.'));
-    for(const p of data.proposals)proposals.append(h('details.mt-8',h('summary.small',`${p.state} · ${p.author||'author not recorded'} · ${p.created_at}`),
+    // The newest idea open, in plain words (journey J5-F6: it was folded shut, with keys like expected_effect).
+    const IDEA_WORDS={hypothesis:'The idea',expected_effect:'What it should change',evaluation:'How to tell if it worked',limitations:'Limits'};
+    const proposals=h('div.card',h('h3',icon('spark'),'Ideas to improve your numbers'),h('p.small.muted','Suggestions only: nothing is changed, and no gain is claimed until your numbers show it.'));
+    data.proposals.forEach((p,index)=>proposals.append(h('details.mt-8',{open:index===0},h('summary.small',`${p.author||'author not recorded'} · ${p.created_at}${p.state==='proposed'?'':` · ${p.state}`}`),
       p.detail?h('p.small.warn',p.detail):null,
-      ...(p.answer?Object.entries(p.answer).map(([k,v])=>h('p.small',h('b',k+': '),v)):p.detail?[]:[h('p.small','Pending or interrupted; inspect the receipt before retrying.')]))) ;
+      ...(p.answer?Object.entries(p.answer).map(([k,v])=>h('p.small',h('b',(IDEA_WORDS[k]||k)+': '),v)):p.detail?[]:[h('p.small','Not answered yet, or interrupted: look at Activity before asking again.')]))));
     reports.update(data.support_reports);
     body.append(h('p.callout',data.limits),h('div.grid.two',h('div.col.gap-16',modesCard,intentCard),h('div.col.gap-16',reports.node,metricCard,proposals)));
     return true;

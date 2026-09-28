@@ -397,3 +397,7 @@ def test_measuring_says_the_number_in_plain_words(ws):
                aggregation='sum', field='revenue', unit='EUR')
     summary = Worker(ws, EventBus())._job_measure('revenue')['summary']
     assert summary == 'Revenue this week: 2010.5 EUR from reports/week-39.csv. No model call or project change.'
+    (ws.root / 'reports' / 'week-39.csv').write_text('item,baked,sold\nRye,40,36\nBun,20,15\n', encoding='utf-8')
+    definition(ws, id='share', name='Share sold', source_kind='csv', path='reports/week-*.csv', aggregation='ratio',
+               field='sold', denominator_field='baked')
+    assert Worker(ws, EventBus())._job_measure('share')['summary'].startswith('Share sold: 85.0% from')   # not 0.85

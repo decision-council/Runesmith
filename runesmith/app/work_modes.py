@@ -264,7 +264,8 @@ def optimize(ws, row, router):
         _write_json(path, record); raise
     _write_json(path, record)
     ws.ledger.append('optimization.proposed', {'id': key, 'author': author})
-    return {'summary': 'Optimization hypothesis saved; no code or goals changed.', 'proposal': key}
+    return {'summary': 'An idea to improve your numbers is ready under Modes & measurements; nothing was changed.',
+            'proposal': key}
 
 
 def run(worker, mid):

@@ -604,7 +604,10 @@ class Worker:
         name = next((i['name'] for i in definitions(self.ws)['items'] if i['id'] == measurement), measurement)
         if receipt['status'] == 'measured':        # the number itself, in plain words (journey J5)
             where = f" from {receipt['source_file']}" if receipt.get('source_file') else ''
-            said = f"{name}: {receipt['value']:g} {receipt.get('unit') or ''}".rstrip() + f"{where}. No model call or project change."
+            item = next((i for i in definitions(self.ws)['items'] if i['id'] == measurement), {})
+            number = (f"{receipt['value'] * 100:.1f}%" if item.get('aggregation') == 'ratio'
+                      else f"{receipt['value']:g} {receipt.get('unit') or ''}".rstrip())
+            said = f"{name}: {number}{where}. No model call or project change."
         else:
             said = f"{name}: {receipt['status']}" + (f" ({receipt['detail']})" if receipt.get('detail') else '') + '.'
         return {'summary': said, 'receipt': receipt['id']}
