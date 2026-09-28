@@ -1723,7 +1723,7 @@ try{
     await mount({...base,manual_waiting:1,drafts:{waiting:1}});
     await hero().getByRole('button',{name:'Open the chat relay',exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>window.navigation),['inference','relay']);
-    assert((await hero().innerText()).includes('needs a person'));
+    assert((await hero().innerText()).includes('paste the reply back here. Runesmith cannot send it on its own'));   // a person relays it (J2-F4 wording)
     loops.push({id:'B19.02',case:'Manual transport is clearly human-assisted and routes to the relay without work submission',result:'passed'});
 
     await mount({...base,manual_waiting:1,worker:{recovery:{required:true},paused:true,current:{id:'uncertain'}}});

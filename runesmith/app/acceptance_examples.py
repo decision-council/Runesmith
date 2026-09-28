@@ -56,7 +56,8 @@ TASK = (
     "folder, so any file it names is relative to that folder.\n"
     "- A step {\"run\": [words]} runs a command exactly as a person types it in the project folder. It starts with "
     "\"python\" followed by \"-m\" and a module, or by a script path, or with \"node\" and a script path. Use the "
-    "command the milestone or README documents, with arguments the program accepts (see source_context).\n"
+    "command the milestone or README documents, with arguments the program accepts (see source_context). An empty "
+    "word \"\" is an empty argument, as typed with two quotes.\n"
     "- A step without \"expect\" prepares the example and must succeed. On the step whose result matters, "
     "\"expect\" may say: \"exit\": \"ok\" or \"error\"; \"shows\": texts the output must contain; \"hides\": texts it "
     "must not contain; \"lines\": [{\"has\": text, \"number\": n}] for a line that shows that text together with "
@@ -122,8 +123,10 @@ def _relative(name, what):
 
 def _command(words, what, *, program_only=False):
     """A command a person types: python -m module, python script.py, or node script.js, then plain arguments."""
+    # An empty argument is allowed (journey J2-F3: "an empty query is refused" needs `--query ""`); the program
+    # part below still has to be a real python or node command.
     if not isinstance(words, list) or not words or len(words) > LIMITS['words'] or any(
-            not isinstance(w, str) or not w or len(w) > LIMITS['word'] for w in words):
+            not isinstance(w, str) or len(w) > LIMITS['word'] for w in words):
         raise WorkspaceError(f'{what} must be a list of 1-{LIMITS["words"]} words.')
     first = words[0].lower()
     if first in PYTHONS:

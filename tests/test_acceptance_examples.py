@@ -203,10 +203,22 @@ def test_texts_are_matched_whole_so_a_digit_never_matches_inside_a_year(tmp_path
     ({"doc": "README.md", "program": T + ["add"]}, "program only"),
     ({"doc": "../README.md", "program": T}, "inside the project"),
     ({"run": T, "call": "tally.a.b"}, "exactly one"),
+    ({"run": ["python", "-m", ""]}, "python -m"),                     # an empty word is an argument, never the program
+    ({"run": ["", "tally"]}, "start with python or node"),
 ])
 def test_examples_that_break_a_rule_are_refused_with_the_reason(step, why):
     with pytest.raises(WorkspaceError, match=why):
         validate_examples({"examples": [{"name": "x", "says": "x", "steps": [step]}]}, MILESTONE)
+
+
+def test_an_empty_argument_can_be_given_as_a_person_types_two_quotes(tmp_path):
+    # Journey J2-F3: "an empty query is refused" needs `--query ""`, and an empty word was refused as not a word.
+    answer = {"examples": [{"name": "empty name", "says": "An entry with an empty name is still listed by its date.",
+                            "steps": [{"run": T + ["add", "", "2026-01-05"]},
+                                      {"run": T + ["list"], "expect": {"shows": ["2026-01-05"]}}]}]}
+    shaped = validate_examples(answer, MILESTONE)
+    assert '"add", "", "2026-01-05"' in shaped["code"]
+    assert run(tmp_path, "empty", shaped["code"])["ok"]          # dropping the empty word would crash the program
 
 
 def handbook(folder: Path, *, index: str, extra_pages=()):

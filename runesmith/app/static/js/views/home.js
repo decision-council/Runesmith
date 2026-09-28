@@ -35,7 +35,7 @@ export default async function render(root, { app, navigate, refreshState }) {
     line = 'Runesmith was restarted in the middle of a job. Nothing was repeated or sent twice, and nothing continues until you have had a look.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('activity') }, icon('alert'), 'Review restart recovery');
   } else if (s.manual_waiting) {
-    line = 'A request is waiting for you to relay it to a chat model. Manual transport needs a person even when scheduling is enabled.';
+    line = 'A request is waiting for your chat window: copy it into the chat you use, then paste the reply back here. Runesmith cannot send it on its own, even on a schedule.';   // journey J2-F4
     cta = h('button.btn.primary.lg', { onclick: () => navigate('inference', 'relay') }, icon('chat'), 'Open the chat relay');
   } else if (s.worker?.current) {
     line = 'A job is already in progress. Inspect its current step and saved outcomes; running is not the same as passing checks or applying a change.';
