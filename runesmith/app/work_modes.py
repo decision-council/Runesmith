@@ -9,11 +9,11 @@ from runesmith.app import measurements
 from runesmith.app.environment_intent import inspect_intent, require_intent
 
 DESCRIPTIONS = {
-    'map_plan': 'Read the environment and propose an initial plan. Existing plans are retained; use Goals & plan for deliberate redrafting.',
-    'build': 'Construct milestones through the existing draft, check and delegated-apply gates.',
-    'troubleshoot': 'Map failing tests and propose repairs with selected component-specific support excerpts. Reports are evidence, not executable tests or verified defects.',
-    'optimize': 'Propose a measurable improvement hypothesis from selected report evidence; no automatic implementation.',
-    'operations': 'Refresh selected local reports and record values/threshold results. No live service, deployment or messaging actions.',
+    'map_plan': 'Map your folder and propose a first plan. A plan you already have is kept; redraft it in Goals & plan.',
+    'build': 'Build your plan’s milestones: draft, check on a throwaway copy, and write only when your checks pass and you allowed it.',
+    'troubleshoot': 'Find failing tests and propose repairs, using any support reports you selected. A report is a clue, not a test.',
+    'optimize': 'Suggest one change that could improve one of your numbers, from your reports. Nothing is changed automatically.',
+    'operations': 'Read your report files and record each number against its target. It never contacts a live service, deploys or sends messages.',
 }
 
 SCHEMA = 'runesmith.work-modes.v2'
@@ -306,5 +306,7 @@ def view(ws):
                 intent=inspect_intent(ws), measurements=measurements.view(ws), support_reports=safe_view(ws),
                 proposals=[{k:v for k,v in _read_json(p, {}).items() if k != 'packet'} for p in proposals],
                 scheduling={'auto_work': ws.settings()['auto_work'], 'kaizen': ws.settings()['kaizen'],
-                            'policy': 'All modes may be enabled. One job at a time; configured modes rotate fairly between scheduled turns.'},
-                limits='Modes cannot grant writes, spending, deployment or messaging. Live GA4/email adapters are not implemented.')
+                            'policy': 'Any number of modes can be on. Runesmith does one job at a time and takes turns between them on a schedule.'},
+                limits='Modes decide what Runesmith works on, never what it may do: they cannot let it write files, spend money, '
+                       'deploy or send messages. It reads report files in this folder (CSV or JSON); live connections such as '
+                       'Google Analytics or email are not available yet.')

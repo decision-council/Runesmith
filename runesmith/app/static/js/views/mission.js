@@ -67,7 +67,7 @@ export default async function render(root, ctx) {
   let dirty=false,closed=false,loadSerial=0; const runButtons=[];
   const reports=supportReportsCard();
   const heading=h('div.page-head',h('div',h('h2','Modes & measurements'),h('p','Choose what Runesmith works on and how results are observed. Every mode can be on together.')));
-  const refreshStatus=h('span.tiny.muted',{'aria-live':'polite'},'Saved receipts only; refresh does not remeasure.');
+  const refreshStatus=h('span.tiny.muted',{'aria-live':'polite'},'Shows saved results; it does not measure again.');
   const body=h('div');root.append(heading,body);
   const load=async()=>{
     if(dirty||closed)return false;
@@ -88,12 +88,13 @@ export default async function render(root, ctx) {
         h('input',{type:'checkbox',checked:selected.has(m.id),onchange:e=>{e.target.checked?selected.add(m.id):selected.delete(m.id);mode.measurement_ids=[...selected];mark();}}),m.name)));
       const run=h('button.btn.sm',{disabled:dirty||!mode.enabled||Boolean(existing?.blockers.length),onclick:e=>withBusy(e.currentTarget,async()=>{
         if(dirty){toast('Save mode changes first.','warn');return;}
-        await post('/api/worker/run',{job:'mode',params:{mode:mode.id}});toast('Queued through the normal serial worker.','good');
+        await post('/api/worker/run',{job:'mode',params:{mode:mode.id}});toast('Started. Follow it in Activity.','good');
       })},icon('play'),'Run now');runButtons.push(run);
-      rows.append(h('div.card.flat',h('div.row.mission-mode-head',h('h3',mode.name),h('span.badge',mode.executor),h('span.spacer'),h('label.switch',checkbox,h('span')),run),
-        h('p.small.muted',existing?.description||`Custom guidance over the ${mode.executor} executor; no new tools or authority.`),
-        h('details.mt-8',h('summary.small',`${mode.name}: instructions & evidence`),guidance,
-          ['operations','optimize'].includes(mode.executor)?h('div.mt-8',h('p.small','Measurements for this mode'),metrics):null),
+      rows.append(h('div.card.flat',h('div.row.mission-mode-head',h('h3',mode.name),mode.id!==mode.executor?h('span.badge',(EXECUTORS.find(([id])=>id===mode.executor)||[])[1]||mode.executor):null,h('span.spacer'),h('label.switch',checkbox,h('span')),run),
+        h('p.small.muted',existing?.description||`Your own instructions for the ${(EXECUTORS.find(([id])=>id===mode.executor)||[])[1]||mode.executor} mode; no new tools or permissions.`),
+        ['operations','optimize'].includes(mode.executor)?h('div.mt-8',h('p.small','Numbers this mode reads'),
+          data.measurements.items.length?metrics:h('p.small.faint','None defined yet: use “Add measurement” below.')):null,
+        h('details.mt-8',h('summary.small',`${mode.name}: your instructions`),guidance),
         existing?.blockers.length?h('p.small.warn',existing.blockers.join(' ')):null,
         existing?.last?h('p.tiny.muted',`${existing.last.utc}: ${existing.last.result.summary}`):null));
     };
@@ -102,7 +103,7 @@ export default async function render(root, ctx) {
     const customName=h('input.input',{placeholder:'Custom mode name','aria-label':'Custom mode name'});
     const executor=h('select.select',{'aria-label':'Custom mode executor'},EXECUTORS.map(([id,label])=>h('option',{value:id},label)));
     modesCard.append(h('h3',icon('sliders'),'Activity modes'),
-      h('p.small.muted',`${data.configured?'Explicit mode routing':'Legacy routing retained until you save modes'}. Scheduling is ${data.scheduling.auto_work?'on':'off'}; self-improvement is ${data.scheduling.kaizen?'on':'off'}. Saving modes changes neither.`),
+      h('p.small.muted',`${data.configured?'Your chosen modes are saved':'No modes chosen yet: Runesmith works with its defaults until you save'}. Working on a schedule is ${data.scheduling.auto_work?'on':'off'} and self-improvement is ${data.scheduling.kaizen?'on':'off'}; both are set in Settings, and saving here changes neither.`),
       h('p.small',data.scheduling.policy),
       h('div.mission-controls',h('label.col',h('span.small','Reason for change'),reason),dirtyLabel,
         h('button.btn.primary',{onclick:e=>withBusy(e.currentTarget,async()=>{
@@ -117,7 +118,7 @@ export default async function render(root, ctx) {
         const id='custom-'+Date.now().toString(36)+'-'+modes.length;
         const row={id,name:customName.value.trim(),executor:executor.value,enabled:false,instructions:'',measurement_ids:[]};modes.push(row);mark();drawMode(row);customName.value='';
       }},icon('plus'),'Add custom mode')),
-      h('p.tiny.muted','Current execution is serial. Production adapters and speed/concurrency controls remain open additions. Self-improvement and scheduling remain in Settings.'));
+      h('p.tiny.muted','Runesmith does one job at a time. Working on a schedule and self-improvement are in Settings.'));
     const intent=data.intent;
     const intentCard=h('div.card',h('h3',icon('map'),'Instructions & purpose'),h('span.badge',intent.purpose.basis),
       h('p',intent.purpose.text),h('p.small.muted',intent.purpose.uncertainty),h('p.tiny.muted',intent.discovery_scope),

@@ -303,7 +303,7 @@ try{
   for(const button of await page.getByRole('button',{name:'Run now',exact:true}).all())assert(await button.isDisabled());
   await page.getByLabel('Mode change reason').fill('B1 disablement test');
   await page.getByRole('button',{name:'Save modes',exact:true}).click();
-  await page.waitForFunction(()=>document.body.textContent.includes('Explicit mode routing'));
+  await page.waitForFunction(()=>document.body.textContent.includes('Your chosen modes are saved'));
   assert.equal(mission.modes.find(m=>m.id==='build').enabled,false);
   assert.equal(mission.scheduling.auto_work,false);assert.equal(mission.scheduling.kaizen,false);
   loops.push({id:'B1.01',case:'All modes, actual switch/save/run payloads and unsaved gating',result:'passed'});
@@ -311,7 +311,7 @@ try{
   await page.getByLabel('Custom mode name').fill('Daily local review');
   await page.getByLabel('Custom mode executor').selectOption('operations');
   await page.getByRole('button',{name:'Add custom mode',exact:true}).click();
-  await page.getByText('Daily local review: instructions & evidence',{exact:true}).click();
+  await page.getByText('Daily local review: your instructions',{exact:true}).click();
   await page.getByLabel('Daily local review instructions').fill('Read selected reports without outbound actions.');
   await page.getByRole('checkbox',{name:'Daily local review enabled',exact:true}).locator('..').click();
   await page.getByLabel('Mode change reason').fill('B1 custom policy test');
@@ -1649,7 +1649,7 @@ try{
     assert(!requests.slice(start).some(r=>r.path==='/api/worker/run'));
     loops.push({id:'B18.05',case:'Explicit sharing confirmation only changes receipt selection, never starts work',result:'passed'});
     const unsaved=page.getByLabel('Build instructions',{exact:true});
-    await page.getByText('Build: instructions & evidence',{exact:true}).click();
+    await page.getByText('Build: your instructions',{exact:true}).click();
     await unsaved.fill('Keep my unsaved mode edit');
     await card().getByRole('button',{name:'Exclude from future repairs',exact:true}).click();
     await card().getByText('Local only · not selected',{exact:true}).waitFor();
