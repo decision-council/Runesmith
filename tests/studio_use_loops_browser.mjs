@@ -54,6 +54,7 @@ let briefCandidates=[],ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAccept
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
 let fixtureAutonomy='propose';
+let discoverFixture=[];
 const planningBlocks=()=>[
   ...(fixtureAutonomy==='observe'?['You chose to just look (observe), so Runesmith does not ask a model to plan.']:[]),
   ...(!mission.modes.some(m=>m.executor==='map_plan'&&m.enabled)?['Map & Plan is off. Existing plans may still drive Build.']:[]),
@@ -275,7 +276,7 @@ await context.route('**/*',async route=>{
   else if(p==='/api/try')data=tryFixture;
   else if(p==='/api/try/run')data={command:body.command,real:body.real===true,exit_code:0,timed_out:false,seconds:0.2,stdout:'2026-01-30  Dune by Frank Herbert',stderr:'',utc:'2026-09-27T22:00:00Z'};
   else if(p==='/api/try/reset')data={created_utc:'2026-09-27T22:00:00Z',files:6};
-  else if(p==='/api/inference/discover')data={found:[]};
+  else if(p==='/api/inference/discover')data={found:discoverFixture};
   else if(p==='/api/worker/run'||/^\/api\/measurements\/[^/]+\/report$/.test(p)){
     if(body?.job==='revise'&&authorRevisionConflict){await route.fulfill({status:409,json:{error:'Revision quote unavailable or stale.'}});return;}
     if(body?.job==='supplement')recoveryDraft.title='Clarified answer saved fixture';
@@ -1811,6 +1812,32 @@ try{
     posts=requests.slice(chooseStart).filter(r=>r.method==='POST');
     assert.equal(posts.length,1);assert.deepEqual((typeof posts[0].body==='string'?JSON.parse(posts[0].body):posts[0].body),{policy_chosen:true});
     loops.push({id:'B19.11',case:'Explicit first-run choices: a switch posts only its key with policy_chosen; Keep these choices posts only policy_chosen',result:'passed'});
+
+    // B19.12 (journey J8-F1): a model server already running on this computer is named and offered first
+    discoverFixture=[{preset:'ollama',base_url:'http://127.0.0.1:11434/v1',models:['qwen2.5-coder:7b']}];
+    const offerStart=requests.length;await mount(base);
+    await hero().getByRole('button',{name:'Use Ollama',exact:true}).waitFor();
+    assert((await hero().innerText()).includes('Ollama is already running on this computer, with 1 model (qwen2.5-coder:7b).'));
+    assert(await hero().getByRole('button',{name:'Use Ollama',exact:true}).evaluate(b=>b.classList.contains('primary')));
+    assert(await hero().getByRole('button',{name:'Add thinking power',exact:true}).isVisible());   // still there, no longer primary
+    assert(requests.slice(offerStart).every(r=>r.method==='GET'));
+    discoverFixture=[{preset:'lmstudio',base_url:'http://127.0.0.1:1234/v1',models:[]}];   // running, but no model loaded
+    await mount(base);await page.waitForTimeout(400);
+    assert.equal(await hero().locator('[data-local-server]').count(),0);
+    assert.equal(await hero().getByRole('button',{name:'Use LM Studio',exact:true}).count(),0);
+    discoverFixture=[];
+    loops.push({id:'B19.12',case:'A local model server with a model is named on the Overview and offered first; one without a model is not',result:'passed'});
+
+    // B19.13 (journey J4-F2): a mapped folder without code says the test-runs switch has nothing to run yet
+    const documentsOnly={...base,workspace:{...base.workspace,empty:false},mapped_utc:'2026-09-28T05:00:00Z',
+      objects:[{name:'Bakery handbook',kind:'document_collection',bands:[],ladder:[]}]};
+    await mount(documentsOnly);
+    assert((await policy().innerText()).includes('Nothing to run yet: the map found no code with tests here.'));
+    await mount({...documentsOnly,objects:[{name:'app',kind:'python_repository',bands:[],ladder:[]}]});
+    assert(!(await policy().innerText()).includes('Nothing to run yet'));
+    await mount(base);                                                  // not mapped yet: no claim either way
+    assert(!(await policy().innerText()).includes('Nothing to run yet'));
+    loops.push({id:'B19.13',case:'A mapped folder without code is told the test-runs switch has nothing to run yet; code or no map says nothing',result:'passed'});
   }
   if(selected.has('B20')){
     // Acceptance checks a non-programmer approves (G1, G1.1-G1.3, G3 from out-of-box journey R1).

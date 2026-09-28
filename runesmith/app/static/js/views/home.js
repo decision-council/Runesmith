@@ -8,6 +8,21 @@ function greeting() {
   return hr < 5 ? 'Working late' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
 }
 
+// A model server already running on this computer is named and offered first (journey J8-F1).
+const SERVER_NAMES = { ollama: 'Ollama', lmstudio: 'LM Studio', llamacpp: 'llama.cpp' };
+async function offerLocalServer(hero, cta, navigate) {
+  let found = [];
+  try { found = (await get('/api/inference/discover')).found || []; } catch { return; }
+  const f = found.find((x) => x.models?.length);
+  if (!f) return;                    // the hero may not be on the page yet: it is changed in place either way
+  const name = SERVER_NAMES[f.preset] || f.preset;
+  hero.querySelector('p')?.after(h('p.small', { 'data-local-server': f.preset },
+    `${name} is already running on this computer, with ${plural(f.models.length, 'model')} (${f.models.slice(0, 3).join(', ')}). It is free and nothing leaves this computer.`));
+  cta.classList.remove('primary');
+  cta.before(h('button.btn.primary.lg', { onclick: () => { navigate('inference'); setTimeout(() => bus.emit('ui:add-model', { preset: f.preset, extra: { model: f.models[0], models: f.models } }), 250); } },
+    icon('cpu'), `Use ${name}`));
+}
+
 export default async function render(root, { app, navigate, refreshState }) {
   await refreshState();
   const s = app.state;
@@ -15,7 +30,7 @@ export default async function render(root, { app, navigate, refreshState }) {
   const waiting = (s.proposals.waiting || 0) + (s.drafts.waiting || 0);
 
   // ---- hero: the one thing to do next
-  let cta, line, extra = null;
+  let cta, line, extra = null, offerLocal = false;
   if (s.worker?.recovery?.required) {
     line = 'Runesmith was restarted in the middle of a job. Nothing was repeated or sent twice, and nothing continues until you have had a look.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('activity') }, icon('alert'), 'Review restart recovery');
@@ -42,6 +57,7 @@ export default async function render(root, { app, navigate, refreshState }) {
     // Plain words for a first-time owner (journey J1-F1): what this folder is, and the one thing Runesmith needs.
     line = `${s.workspace.empty ? `An empty folder: a clean start for ${s.workspace.name}.` : s.mapped_utc ? 'Runesmith has mapped your folder.' : 'Runesmith can map your folder.'} To plan and build, it needs thinking power: a model on this computer, an API key, or simply a chat window you already use.`;
     cta = h('button.btn.primary.lg', { onclick: () => { navigate('inference'); setTimeout(() => bus.emit('ui:add-model', {}), 250); } }, icon('cpu'), 'Add thinking power');
+    offerLocal = true;
     extra = h('button.btn.lg', { title: 'No key and no install: you relay each request to a chat you already use', onclick: (e) => withBusy(e.currentTarget, async () => {
       const { useChatWindow } = await import('./goals.js');
       await useChatWindow();
@@ -74,6 +90,7 @@ export default async function render(root, { app, navigate, refreshState }) {
       extra ? null : h('button.btn.lg', { onclick: () => navigate('map') }, icon('map'), 'Open the living map'),
       h('button.btn.lg.ghost', { onclick: () => import('../core.js').then((c) => c.openNotes('workspace', 'root', 'the whole workspace')) }, icon('note'), 'Tell Runesmith something')));
   commentable(hero, 'workspace', 'root', 'the whole workspace');
+  if (offerLocal) offerLocalServer(hero, cta, navigate);
 
   // ---- setup checklist
   const steps = [
@@ -123,6 +140,8 @@ export default async function render(root, { app, navigate, refreshState }) {
     choice('auto_work', 'Work on a schedule',
       `Run a round every ${s.settings.interval_minutes} minutes while the Studio is open. Each round can spend model calls. Pause, mode guards and provider limits still apply.`),
     choice('probe_tests', 'Run this project’s tests while mapping',
+      // Journey J4-F2: a folder of documents was offered this switch with nothing to run.
+      (s.mapped_utc && !s.objects.some((o) => o.kind === 'python_repository') ? 'Nothing to run yet: the map found no code with tests here. ' : '') +
       'This executes the project’s own code, on a throwaway copy of the folder. Only for projects you trust: the copy is not a security boundary.'),
     choice('kaizen', 'Let Runesmith improve itself',
       'Separate from Optimize. A self-made improvement becomes active only by winning a trial on your work.'),

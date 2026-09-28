@@ -26,6 +26,7 @@
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
 - **Journey J8 (every way to connect a model):** a fresh profile, with docs-conformant stand-ins on the real default ports (Ollama 11434, LM Studio 1234, llama.cpp 8080) and a key-checking OpenAI-compatible endpoint.
   - **A wrong key is said plainly and is not retried (J8-F3).** The test showed `http_401 {"message": "Invalid API Key", …}` as a transport error, which the router would retry with the same key. A 401 or 403 is now a configuration error, sent once: "The service refused the key (401). Check it, or paste it again, under Thinking power; a retry with the same key cannot help." The test uses a key file with a typo, then the corrected file, so a key read from the owner's own file is covered too.
+  - **The Overview names a model server already running on this computer (J8-F1).** It used to say only "Add thinking power". Now, for example: "Ollama is already running on this computer, with 1 model (qwen2.5-coder:7b). It is free and nothing leaves this computer." "Use Ollama" opens the setup form prefilled with that server and model. A server without a model loaded is not offered.
   - Seen working:
     - Thinking power discovered all three local servers, each with "Use it";
     - the Ollama preset form, "List models" and "Save and test" ("answered with usable JSON in 0.02 s");
@@ -64,6 +65,7 @@
   - **Notes in plain words (J1-F5):** "Open notes travel with the work they are about, newest first, as long as there is room. A draft's details show which notes went with it." It used to speak of a "bounded prompt budget" and a "Revision packet".
   - **Changing pages closes an open drawer (J1-F6).** Using the Back button or typing an address left a drawer covering the next page. A page that redraws itself keeps its drawers.
   - With a plan under way, the Overview now reads, for example: Next in your plan: "Record a sale" (1 of 5 done). Try what was built below, or continue in Goals & plan. It offers "Continue the plan", instead of "Review enabled modes and their prerequisites…".
+  - **A fresh draft is checked at once when checking is on (J1-F7).** "Draft first files" left the draft unverified until the owner pressed Recheck. With checking on, the same recheck now follows in the same job: no model call, and nothing is applied. With checking off, nothing changes.
 - **The measurement catalogue for self-improvement** (`docs/design/SELF_IMPROVEMENT_MEASUREMENTS.md`, `measurements_catalog.json`). Lars asked for "the precisely right measurement points": 424 points in 9 domains and 65 breakdown dimensions, built and adversarially verified by a 13-agent workflow.
   - Every point has an exact definition, its source (or the recording it still needs), its role (primary, guardrail or diagnostic), the levers it judges, a minimum sample, gaming risks and guards, and a privacy class.
   - A project scorecard (lead time, cost, full-pipeline success and throughput per milestone) judges any trial of any lever, with guardrails.
@@ -99,6 +101,7 @@
     - A draft that passed the owner's checks with no project tests to run reads "your checks passed", not "its tests and your checks passed".
     - The live log names a check outcome in plain words: "Draft “Seeded loaf in the recipe index”: your acceptance checks passed. Nothing was written." It used to show the raw status "acceptance_passed".
     - The checking switch and its dialog no longer speak only of Python unittest. They say that a draft is tried on a throwaway copy with the project's own tests, if it has any, and the owner's acceptance checks. The allowed-paths hint no longer suggests `pyproject.toml` to a folder of documents.
+    - In a mapped folder without code, the switch for running the project's tests while mapping says there is nothing to run yet (J4-F2).
   - **Restart recovery in plain words (J4-F11).** After a restart interrupted a request waiting for the chat window, the Overview said "Saved work needs restart recovery review. Inspect retained outcomes…", and the recovery panel spoke of current-job markers, provider receipts and spent check allocations. The rules are unchanged; only the words are new.
     - The Overview now says that Runesmith was restarted in the middle of a job, that nothing was repeated or sent twice, and that nothing continues until you have had a look.
     - The panel opens with one plain summary, for example: "Runesmith was restarted while proposing acceptance checks, waiting for your chat window. Nothing was repeated or sent twice. It changes no file in your folder, so nothing there was touched. The request it waited on was set aside; ask again when you are ready." It then says the three steps to carry on.

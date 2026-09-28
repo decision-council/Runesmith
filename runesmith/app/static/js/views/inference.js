@@ -140,7 +140,7 @@ export default async function render(root, ctx) {
     chosen ? step2() : step1();
   };
   await load();
-  offs.push(bus.on('inference', debounce(load, 300)), bus.on('manual', debounce(load, 300)), bus.on('ui:add-model', () => addModel()));
+  offs.push(bus.on('inference', debounce(load, 300)), bus.on('manual', debounce(load, 300)), bus.on('ui:add-model', (e) => addModel(e?.preset, e?.extra || {})));
   return () => offs.forEach((f) => f());
 
   function threeWays() {

@@ -369,3 +369,21 @@ def test_recheck_uses_saved_candidate_without_inference_or_apply(tmp_path, monke
         worker._job_build(draft_id='')
     ws.update_milestone('m1',{'status':'dropped'})
     assert 'no longer active' in recheck_draft(ws,draft['id'])['summary']
+
+
+@pytest.mark.parametrize('checking', [True, False])
+def test_a_fresh_draft_is_checked_at_once_only_when_checking_is_on(tmp_path, checking):
+    # Journey J1-F7: with checking on, "Draft first files" left the draft unverified until Recheck.
+    ws = setup(tmp_path, acceptance=True)
+    if checking: enable(ws)
+    worker = Worker(ws, EventBus())
+    worker._execute({'id': 'first-files', 'kind': 'draft', 'params': {'milestone': 'm1'}, 'by': 'owner'})
+    done = worker.history[-1]
+    assert done['result'] == 'done', done
+    draft = ws._draft(done['outcome']['draft'])
+    if checking:
+        assert draft['verification']['status'] == 'acceptance_passed' and draft['state'] == 'waiting'
+        assert 'passed' in done['outcome']['summary'] and 'Nothing was written' in done['outcome']['summary']
+    else:
+        assert not draft.get('verification') and done['outcome']['summary'] == draft['title']
+    assert not (tmp_path / 'app.py').exists()          # checked or not, a fresh draft is never applied here

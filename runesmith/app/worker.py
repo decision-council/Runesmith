@@ -649,7 +649,14 @@ class Worker:
         draft = draft_files(self.ws, self.ws.router(on_call=self._on_call, backoff_s=(5, 20, 60)), milestone)
         self.say(f"Draft ready: {draft['title']} ({len(draft['files'])} files). Nothing is written until you apply it.")
         self.bus.publish("work", {"draft": draft["id"]})
-        return {"summary": draft["title"]}
+        from runesmith.app.building import status as checking
+        if checking(self.ws)["enabled"] and self.ws.settings()["autonomy"] != "observe":
+            # Journey J1-F7: with checking on, a fresh draft waited unverified until Recheck. The same recheck runs
+            # now, under the same guards: no model call, and nothing is applied.
+            checked = self._run_build_job("build", "Checking the fresh draft on a throwaway copy; no model call or apply",
+                                          draft_id=draft["id"], author_only=False)
+            return {"summary": checked["summary"], "draft": draft["id"]}
+        return {"summary": draft["title"], "draft": draft["id"]}
 
     def _job_breakdown(self,milestone: str) -> dict[str, Any]:
         from runesmith.app.breakdowns import propose_breakdown
