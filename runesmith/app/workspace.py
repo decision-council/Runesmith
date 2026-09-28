@@ -1413,9 +1413,13 @@ class Workspace:
 
     def manual_waiting(self) -> int:
         """How many chat-relay requests wait for the owner (without reading their texts)."""
+        return len(self.manual_waiting_ids())
+
+    def manual_waiting_ids(self) -> list[str]:
+        """Which chat-relay requests wait for the owner, oldest first."""
         from runesmith.manual import directory_for, pending_requests
         directory = directory_for(self.config(), self.home)
-        return sum(1 for r in pending_requests(directory) if not r["answered"]) if directory.exists() else 0
+        return [r["id"] for r in pending_requests(directory) if not r["answered"]] if directory.exists() else []
 
     def set_aside_orphaned_requests(self) -> int:
         """Relay requests left from a closed Studio have no waiting call: move them aside, unanswered, and say so."""

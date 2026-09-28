@@ -1,7 +1,13 @@
 // Runesmith Studio: the shell (navigation, status, command palette, comment mode) and the router.
 import { $, $$, h, icon, clear, get, post, bus, connectEvents, toast, notesState, openNotes, refreshNoteBadges,
-  confirmDialog, debounce, ago, modal, withBusy, closeDrawers } from './core.js';
+  confirmDialog, debounce, ago, modal, withBusy, closeDrawers, humanize } from './core.js';
 import { LOGO } from './icons.js';
+
+// What a job is called in plain words (the worker's JOB_WORDS), for toasts (journey J2-F9).
+const JOB_WORDS = { propose_acceptance: 'Proposing acceptance checks', plan: 'Drafting a plan', goalposts: 'Proposing goalposts',
+  draft: 'Drafting files', build: 'Building the next step', revise: 'Revising a draft', correct: 'Correcting a draft',
+  escalate: 'Asking a stronger model', supplement: 'Asking for missing files', breakdown: 'Proposing smaller steps',
+  map: 'Mapping the folder', round: 'The round', measure: 'Taking a measurement' };
 
 const NAV = [
   { section: 'Workspace' },
@@ -189,12 +195,13 @@ function wireEvents() {
     if (d.what === 'reachability') toast(`Model not reachable: ${d.detail}`, 'warn', 8000);
   });
   bus.on('job', (j) => {
-    if (j.result === 'failed') toast(`${j.kind} failed: ${j.outcome?.error || ''}`, 'bad', 8000);
+    if (j.result === 'failed') toast(`${JOB_WORDS[j.kind] || humanize(j.kind)} did not finish: ${j.outcome?.error || ''}`, 'bad', 8000);
   });
   let lastWaiting = 0;
   bus.on('manual', (d) => {
     const n = d && typeof d.waiting === 'number' ? d.waiting : null;
-    if (n !== null && n > lastWaiting && !location.hash.startsWith('#/inference')) {
+    // A new request can replace an answered one at the same count (journey J2-B4), so `new` is announced too.
+    if (n !== null && (d.new > 0 || n > lastWaiting) && !location.hash.startsWith('#/inference')) {
       actionToast('Runesmith needs you: a request is ready to relay to your chat model.', 'Open the relay',
         () => import('./views/inference.js').then((m) => m.openRelayDrawer()));
     }

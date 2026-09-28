@@ -241,6 +241,7 @@ def test_worker_build_failure_has_cooldown_and_history(tmp_path):
     worker=Worker(ws,EventBus())
     worker._execute({'id':'test','kind':'build','params':{},'by':'owner'})
     assert worker.history[-1]['result']=='failed'
+    assert any(line['text'].startswith('Building the next step did not finish: ') for line in worker.lines)   # J2-F9
     assert worker._due()>0
 
 

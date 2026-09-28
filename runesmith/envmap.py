@@ -198,6 +198,9 @@ def probe_pytest(path: Path, *, timeout_s: int = 900, python: str = sys.executab
     try:
         collect = subprocess.run([python, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
                                  cwd=str(path), env=env, capture_output=True, text=True, timeout=timeout_s, errors="replace")
+        if "No module named pytest" in collect.stderr:
+            # Journey J2-B3: without pytest this read as "tests do not collect or pass" for 16 passing tests.
+            return _probe_unittest(path, env, timeout_s=timeout_s, python=python)
         match = re.search(r"(\d+) tests? collected", collect.stdout + collect.stderr)
         out["collected"] = int(match.group(1)) if match else None
         out["collect_exit"] = collect.returncode
@@ -219,6 +222,32 @@ def probe_pytest(path: Path, *, timeout_s: int = 900, python: str = sys.executab
     return out
 
 
+def _probe_unittest(path: Path, env: dict[str, str], *, timeout_s: int, python: str) -> dict[str, Any]:
+    """Run the tests with Python's own unittest, as the build checks do when pytest is not installed.
+
+    If unittest finds no tests (pytest-style test functions, say), nothing is known: the probe says so instead of
+    reporting tests that do not collect.
+    """
+    where = ["-s", "tests", "-t", "."] if (path / "tests").is_dir() else ["-s", ".", "-t", "."]
+    started = time.monotonic()
+    try:
+        run = subprocess.run([python, "-m", "unittest", "discover", *where], cwd=str(path), env=env,
+                             capture_output=True, text=True, timeout=timeout_s, errors="replace")
+    except subprocess.TimeoutExpired:
+        return {"collected": None, "runner": "unittest", "error": "test run timed out", "suite_seconds": None}
+    text = run.stdout + run.stderr
+    ran = re.search(r"Ran (\d+) tests?", text)
+    if not ran or int(ran.group(1)) == 0:
+        return {"collected": None, "runner": None,
+                "unavailable": "pytest is not installed in this Python, and unittest found no tests to run"}
+    counts = {kind: int(n) for kind, n in re.findall(r"(failures|errors|skipped)=(\d+)", text)}
+    total = int(ran.group(1))
+    failed, errors, skipped = counts.get("failures", 0), counts.get("errors", 0), counts.get("skipped", 0)
+    return {"collected": total, "collect_exit": 0, "runner": "unittest",
+            "suite_seconds": round(time.monotonic() - started, 2), "exit_code": run.returncode,
+            "passed": total - failed - errors - skipped, "failed": failed, "errors": errors, "skipped": skipped}
+
+
 def python_object(path: Path, *, probe: bool, scratch: Path | None = None) -> dict[str, Any]:
     facts = python_facts(path)
     measured: dict[str, float | None] = {
@@ -234,12 +263,13 @@ def python_object(path: Path, *, probe: bool, scratch: Path | None = None) -> di
         value = measured.get(template["metric"])
         objectives.append(dict(template, status="proposed", value=round(value, 4) if value is not None else None,
                                band=band(value, template), evidence="observed" if value is not None else "unknown"))
+    ran = None if not probe_result or probe_result.get("unavailable") else probe_result   # nothing ran: unknown
     rungs = {
         "source_present": facts["source_files"] > 0,
         "tests_present": facts["test_files"] > 0,
-        "tests_collect": (probe_result.get("collected", 0) or 0) > 0 if probe_result else None,
-        "tests_pass": (probe_result.get("exit_code") == 0) if probe_result and "exit_code" in probe_result else None,
-        "fast_suite": ((probe_result.get("suite_seconds") or 1e9) <= 60) if probe_result and probe_result.get("suite_seconds") else None,
+        "tests_collect": (ran.get("collected", 0) or 0) > 0 if ran else None,
+        "tests_pass": (ran.get("exit_code") == 0) if ran and "exit_code" in ran else None,
+        "fast_suite": ((ran.get("suite_seconds") or 1e9) <= 60) if ran and ran.get("suite_seconds") else None,
         "coverage_measured": None,
         "mutation_tested": None,
     }
@@ -312,7 +342,8 @@ _LINE_SUFFIX = re.compile(r"^(.+?):\d+(?:[:-]\d+)?$")
 _TODO = re.compile(r"\b(TODO|FIXME|XXX)\b")
 # Raised whenever a map starts to record something new, so a map from an earlier version is known to be incomplete.
 # 2: pages nothing links to, notes still to do, the index's real name (journey J4).
-MAPPER_REVISION = 2
+# 3: tests run with unittest when pytest is missing, and a probe that ran nothing is unknown (journey J2-B3).
+MAPPER_REVISION = 3
 
 
 def exists_exactly(path: Path, _listing: dict[str, set[str]] | None = None) -> bool:

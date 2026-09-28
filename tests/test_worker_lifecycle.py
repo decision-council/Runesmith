@@ -46,6 +46,8 @@ def test_interruption_preserves_remote_and_spent_receipts_without_replay(tmp_pat
     worker = Worker(ws, EventBus()); worker.pause(); worker._recover()
     assert worker.paused and not worker._jobs
     assert worker.snapshot()['recovery']['interrupted'] == 'build'     # named in the owner's plain summary (J4-F11)
+    said = [line['text'] for line in worker.lines if 'Studio closed during this job' in line['text']]
+    assert said and said[0].startswith('The Studio closed during this job: Building the next step.')   # not "build marker" (J2-F5)
     assert all(p.read_bytes() == content for p, content in protected.items())
     assert not (ws.home / 'STUDIO_CURRENT.json').exists()
     job = worker.snapshot()['history'][0]
@@ -134,3 +136,31 @@ def test_a_skipped_chat_request_is_reported_as_skipped_in_plain_words(tmp_path, 
     assert "You skipped the chat-window request (acceptance)." in texts
     assert "Proposing acceptance checks: you skipped the request, so nothing changed." in texts
     assert not any("answered" in t or "Propose_acceptance" in t for t in texts)
+
+
+def test_a_new_request_that_replaces_an_answered_one_is_announced(tmp_path):
+    # Journey J2-B4: the Checker's answer was refused and its revision request written within one poll. The count
+    # stayed at 1, so the page was never told, and the owner saw "nothing waiting" while the job waited.
+    ws = workspace(tmp_path)
+    folder = ws.home / 'manual'
+    folder.mkdir(parents=True, exist_ok=True)
+
+    def request(rid, utc):
+        (folder / f'{rid}.request.json').write_text(json.dumps({'id': rid, 'created_utc': utc}), encoding='utf-8')
+        (folder / f'{rid}.prompt.md').write_text('a request', encoding='utf-8')
+
+    bus = EventBus()
+    worker = Worker(ws, bus)
+    events = bus.subscribe()
+    request('acceptance-first', '2026-09-28T06:54:45Z')
+    worker._check_manual()
+    (folder / 'acceptance-first.answer.md').write_text('the answer', encoding='utf-8')
+    request('acceptance-first-retry', '2026-09-28T06:55:20Z')                       # answered and replaced before the next poll
+    worker._check_manual()
+    manual = [events.get_nowait() for _ in range(events.qsize())]
+    manual = [e['data'] for e in manual if e['kind'] == 'manual']
+    assert manual == [{'waiting': 1, 'new': 1}, {'waiting': 1, 'new': 1}]   # two announcements, one per request
+    said = [line['text'] for line in worker.lines if line['text'].startswith('A request is waiting')]
+    assert len(said) == 2
+    worker._check_manual()                                        # nothing new: no repeat
+    assert events.qsize() == 0 or all(e['kind'] != 'manual' for e in [events.get_nowait() for _ in range(events.qsize())])

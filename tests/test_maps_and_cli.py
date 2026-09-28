@@ -235,6 +235,41 @@ def test_a_flat_project_with_failing_tests_is_probed_and_its_failures_found(tmp_
     assert rungs["tests_collect"] == "achieved" and rungs["tests_pass"] == "not_achieved"
 
 
+def test_without_pytest_the_tests_run_with_unittest_or_stay_unknown(tmp_path, monkeypatch):
+    # Journey J2-B3: in a Python without pytest, the map said Reading Log's 16 passing tests "do not collect" and
+    # "do not pass", and called the failed start a fast suite.
+    import subprocess as sp
+    from runesmith import envmap
+    real = sp.run
+
+    def no_pytest(args, **kwargs):
+        if list(args[1:3]) == ["-m", "pytest"]:
+            return sp.CompletedProcess(args, 1, "", f"{args[0]}: No module named pytest\n")
+        return real(args, **kwargs)
+    monkeypatch.setattr(envmap.subprocess, "run", no_pytest)
+
+    def shop(folder, body, test):
+        (folder / "shop").mkdir(parents=True)
+        (folder / "shop" / "__init__.py").write_text(body, encoding="utf-8")
+        (folder / "tests").mkdir()
+        (folder / "tests" / "__init__.py").write_text("", encoding="utf-8")
+        (folder / "tests" / "test_shop.py").write_text(test, encoding="utf-8")
+        root = next(o for o in build_environment_map(folder, probe=True)["objects"] if o["root"])
+        return {r["rung"]: r["status"] for r in root["ladder"]}, root["probe"]
+
+    unit = ("import unittest\nfrom shop import total\n\n\nclass T(unittest.TestCase):\n"
+            "    def test_total(self):\n        self.assertEqual(total(2, 3), 5)\n")
+    rungs, probe = shop(tmp_path / "good", "def total(a, b):\n    return a + b\n", unit)
+    assert rungs["tests_collect"] == rungs["tests_pass"] == "achieved"
+    assert probe["runner"] == "unittest" and probe["passed"] == 1
+    rungs, probe = shop(tmp_path / "bad", "def total(a, b):\n    return a - b\n", unit)
+    assert rungs["tests_collect"] == "achieved" and rungs["tests_pass"] == "not_achieved" and probe["failed"] == 1
+    rungs, probe = shop(tmp_path / "pytest_style", "def total(a, b):\n    return a + b\n",
+                        "from shop import total\n\n\ndef test_total():\n    assert total(2, 3) == 5\n")
+    assert rungs["tests_collect"] == rungs["tests_pass"] == rungs["fast_suite"] == "unknown"
+    assert "pytest is not installed" in probe["unavailable"]
+
+
 def test_the_index_is_named_as_it_is_on_disk(tmp_path):
     # J4-F3: on a case-insensitive disk "INDEX.md" exists when index.md does; the map shows the real name.
     (tmp_path / "index.md").write_text("# Recipes" + chr(10), encoding="utf-8")

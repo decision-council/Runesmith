@@ -70,7 +70,8 @@ TASK = (
     "as if the power failed. Use it when the milestone promises safety against interruption, then check the result "
     "with a later step.\n"
     "- \"files\": [{\"name\", \"text\"}] creates files before the steps (for example a damaged data file). "
-    "\"unchanged\": [names] checks that those files are exactly the same afterwards; \"exists\": [names]; "
+    "\"unchanged\": [names of files this example creates with \"files\"] checks that they are exactly the same "
+    "afterwards (to check that a program leaves its data alone, create that data file with \"files\"); \"exists\": [names]; "
     "\"contains\": [{\"name\", \"texts\"}] checks a file's text afterwards; \"links_resolve\": true checks that every "
     "link between the Markdown pages leads to an existing file; \"pages_reachable\": true checks that every Markdown "
     "page can be reached by following links from the front page (README.md or index.md). For documents there is often "
@@ -111,6 +112,19 @@ def _texts(value, what):
     if not isinstance(value, list) or len(value) > LIMITS['texts']:
         raise WorkspaceError(f'{what} must be a list of at most {LIMITS["texts"]} texts.')
     return [_plain(v, what) for v in value]
+
+
+def _notes(value, limit=400):
+    """What the examples leave unchecked, in the Checker's words, for the owner to judge.
+
+    A long note is shortened, never a reason to refuse the whole answer (journey J2-F8: a 220-character note did).
+    """
+    notes = []
+    for note in ([value] if isinstance(value, str) else value if isinstance(value, list) else [])[:8]:
+        if isinstance(note, str) and note.strip():
+            note = ' '.join(note.split())
+            notes.append(note if len(note) <= limit else note[:limit - 1].rsplit(' ', 1)[0] + '…')
+    return notes
 
 
 def _relative(name, what):
@@ -483,7 +497,7 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
         dropped += [f'{what}: {d}' for d in _ground(example, milestone_text, source_text)]
         checks.append({'test': example['test'], 'says': says, 'exact': exact(example)})
         examples.append(example)
-    not_checked = _texts(data.get('not_checked'), '"not_checked"')[:8] if data.get('not_checked') else []
+    not_checked = _notes(data.get('not_checked'))
     code = render(examples)
     return {'checks': checks, 'assumes': [], 'examples': examples, 'dropped': dropped[:20], 'not_checked': not_checked,
             'code': code, 'code_sha256': hashlib.sha256(code.encode('utf-8')).hexdigest(), 'style': 'examples'}

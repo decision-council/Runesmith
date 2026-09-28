@@ -83,3 +83,14 @@ def test_the_checks_catch_the_slips_they_are_for():
     assert null_appends("el.append(ok && h('p', 'x'));") == [1]
     assert target_after_await("b.onclick = async (e) => { await save(); e.currentTarget.blur(); };") == [1]
     assert target_after_await("b.onclick = async (e) => { const b = e.currentTarget; await save(); b.blur(); };") == []
+
+
+def test_the_page_names_jobs_as_the_worker_does():
+    # Journey J2-F9: a failed job toasted "propose_acceptance failed: …". The page's names must match the worker's.
+    import re
+    from runesmith.app.worker import JOB_WORDS
+    source = (Path(__file__).resolve().parents[1] / "runesmith" / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    block = re.search(r"const JOB_WORDS = \{(.*?)\};", source, re.S).group(1)
+    page = dict(re.findall(r"(\w+): '([^']*)'", block))
+    assert page == JOB_WORDS
+    assert "did not finish" in source and "failed: ${" not in source

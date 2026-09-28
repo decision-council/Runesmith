@@ -162,7 +162,7 @@ class Worker:
         self.history: deque[dict[str, Any]] = deque(history[-30:], maxlen=30)
         self._recovered = False
         self.lines: deque[dict[str, Any]] = deque(maxlen=300)
-        self._manual_seen = -1
+        self._manual_seen: list[str] | None = None
         self._thread = threading.Thread(target=self._run, name="runesmith-worker", daemon=True)
         self._watch = threading.Thread(target=self._watch_manual, name="runesmith-watch", daemon=True)
 
@@ -228,7 +228,8 @@ class Worker:
             self._save_queue(remaining)
             self._jobs = deque(remaining)
             marker.remove()
-            self.say(f"Recovered the last {interrupted['kind']} marker; its saved outcome is retained. {guidance}",
+            what = JOB_WORDS.get(interrupted['kind'], interrupted['kind'].replace('_', ' ').capitalize())
+            self.say(f"The Studio closed during this job: {what}. Its saved outcome is kept. {guidance}",   # J2-F5
                      "warn")
         if self._recovery:
             # A park decision is written before changing the queue/history. A
@@ -536,7 +537,8 @@ class Worker:
             result = "failed"
             explained = type(error).__name__ in ("PlannerUnavailable", "WorkspaceError")   # already in plain words
             outcome = {"error": (str(error) if explained else f"{type(error).__name__}: {error}")[:500]}
-            self.say(f"{job['kind']} failed: {outcome['error']}", "error")
+            what = JOB_WORDS.get(job['kind'], job['kind'].replace('_', ' ').capitalize())   # not "propose_acceptance" (J2-F9)
+            self.say(f"{what} did not finish: {outcome['error']}", "error")
             (self.ws.home / "logs").mkdir(parents=True, exist_ok=True)
             with open(self.ws.home / "logs" / "worker-errors.log", "a", encoding="utf-8", newline="\n") as stream:
                 stream.write(f"{_now()} {job['kind']}\n{traceback.format_exc()}\n")
@@ -930,18 +932,23 @@ class Worker:
         """Tell the page when a chat-relay request is waiting for the owner, and when it is answered."""
         while not self._closing:
             try:
-                waiting = self.ws.manual_waiting()
-                if waiting != self._manual_seen:
-                    self._manual_seen = waiting
-                    if waiting:
-                        self.say("A request is waiting for you to relay it to a chat model (Thinking power, Chat relay).",
-                                 "warn")
-                    self.bus.publish("manual", {"waiting": waiting})
+                self._check_manual()
             except Exception:                              # never let the watcher die on a half-written file
                 pass
             with self._cv:
                 if not self._closing:
                     self._cv.wait(timeout=3.0)
+
+    def _check_manual(self) -> None:
+        # Which requests, not how many (journey J2-B4): an answer and the revision request that followed it
+        # within one poll left the count at 1, so the page never heard of the new request.
+        waiting = self.ws.manual_waiting_ids()
+        if waiting != self._manual_seen:
+            fresh = [r for r in waiting if r not in (self._manual_seen or [])]
+            self._manual_seen = waiting
+            if fresh:
+                self.say("A request is waiting for you to relay it to a chat model (Thinking power, Chat relay).", "warn")
+            self.bus.publish("manual", {"waiting": len(waiting), "new": len(fresh)})
 
 
 def dump_json(value: Any) -> str:

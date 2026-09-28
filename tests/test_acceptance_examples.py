@@ -221,6 +221,20 @@ def test_an_empty_argument_can_be_given_as_a_person_types_two_quotes(tmp_path):
     assert run(tmp_path, "empty", shaped["code"])["ok"]          # dropping the empty word would crash the program
 
 
+def test_a_long_not_checked_note_is_shortened_and_the_unchanged_rule_is_stated():
+    # Journey J2-F8: a 220-character note made Runesmith refuse the whole answer. J2-F7: "unchanged" may only name
+    # files the example creates, and the Checker was never told.
+    from runesmith.app.acceptance_examples import TASK
+    long_note = "That the file holds exactly these books and nothing else, and that reading it back gives the same " \
+                "data: the checks look for the header and for each title, author and date, not for the exact row layout."
+    answer = {"examples": [{"name": "listed", "says": "An entry is listed.",
+                            "steps": [add("Tea", "2026-01-05"), {"run": T + ["list"], "expect": {"shows": ["Tea"]}}]}],
+              "not_checked": [long_note, "x " * 300, "", 7]}
+    notes = validate_examples(answer, MILESTONE)["not_checked"]
+    assert notes[0] == long_note and len(notes) == 2 and len(notes[1]) <= 400 and notes[1].endswith("…")
+    assert 'names of files this example creates with "files"' in TASK
+
+
 def handbook(folder: Path, *, index: str, extra_pages=()):
     """Journey J4's bakery handbook: a front page, a recipe index and recipe pages, and no program to run."""
     (folder / "recipes").mkdir(parents=True)
