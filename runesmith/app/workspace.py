@@ -679,9 +679,10 @@ class Workspace:
     def goalposts(self) -> dict[str, Any] | None:
         return _read_json(self.home / "GOALPOSTS.json", None)
 
-    def save_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
+    def save_plan(self, plan: dict[str, Any], *, kept: list[dict[str, Any]] = ()) -> dict[str, Any]:
+        """Save a plan. `kept` milestones (a redraft's finished or linked work) go first, exactly as they were."""
         previous = self.plan()
-        milestones = []
+        milestones = [json.loads(json.dumps(m)) for m in kept]
         for index, m in enumerate(plan.get("milestones") or []):
             if not isinstance(m, dict) or not str(m.get("title") or "").strip():
                 continue
@@ -691,8 +692,9 @@ class Workspace:
                                "done_when": str(m.get("done_when") or "").strip()[:400],
                                "status": m.get("status") if m.get("status") in MILESTONE_STATES else "open"})
         body = {"summary": str(plan.get("summary") or "").strip()[:3000], "milestones": milestones[:30],
-                "tracks": [{"name": str(t.get("name") or "")[:60], "purpose": str(t.get("purpose") or "")[:300]}
-                           for t in (plan.get("tracks") or []) if isinstance(t, dict) and t.get("name")][:10],
+                "tracks": _with_kept_tracks([{"name": str(t.get("name") or "")[:60], "purpose": str(t.get("purpose") or "")[:300]}
+                                             for t in (plan.get("tracks") or []) if isinstance(t, dict) and t.get("name")][:10],
+                                            kept, (previous or {}).get("tracks") or []),
                 "first_steps": [str(s)[:300] for s in (plan.get("first_steps") or [])][:10],
                 "questions": [str(s)[:300] for s in (plan.get("questions") or [])][:10],
                 "assumptions": [str(s)[:500] for s in (plan.get("assumptions") or [])][:20],
@@ -771,7 +773,9 @@ class Workspace:
         from runesmith.app.source_baseline import baseline_status
         from runesmith.app.verification_allocation import allocation_status
         from runesmith.app.verification_reconciliation import reconciliation_status
+        superseded = superseded_drafts(drafts, self.plan())
         for draft in drafts:
+            draft['superseded_by'] = superseded.get(draft['id'])
             if draft.get('milestone'):
                 draft['requirement_supplement'] = supplement_status(self,draft)
             draft['public_feedback'] = owner_feedback(self,draft.get('verification') or {})
@@ -788,7 +792,7 @@ class Workspace:
                 "pending_authors": pending_authors(self),
                 "source_baseline": baseline_status(self),
                 "counts": dict(Counter(p["state"] for p in proposals)),
-                "draft_counts": dict(Counter(d["state"] for d in drafts))}
+                "draft_counts": draft_counts(drafts, superseded)}
 
     def _inside(self, path: Path) -> bool:
         path = Path(path).resolve()
@@ -1480,7 +1484,7 @@ class Workspace:
         self_map = _read_json(self.home / "SELF_MAP.json", None)
         round_file = _read_json(self.home / "WORK.json", {})
         drafts = self.drafts()
-        work = {"counts": self.proposal_counts(), "draft_counts": dict(Counter(d["state"] for d in drafts)),
+        work = {"counts": self.proposal_counts(), "draft_counts": draft_counts(drafts, superseded_drafts(drafts, self.plan())),
                 "opportunities": round_file.get("opportunities", []), "last_round": round_file.get("summary"),
                 "round_utc": round_file.get("utc")}
         settings = self.settings()
@@ -1499,6 +1503,9 @@ class Workspace:
                          "ladder": [r["status"] for r in o.get("ladder", [])]}
                         for o in (env_map or {}).get("objects", [])],
             "mapped_utc": (env_map or {}).get("utc"),
+            # A map written by an earlier mapper may miss what today's mapper sees (journey J2: an old map
+            # listed a package and its tests as plain folders); the Overview then makes no claim from it.
+            "map_outdated": bool(env_map) and (env_map.get("mapper_revision") or 1) < _mapper_revision(),
             "capabilities": (self_map or {}).get("capabilities", {}),
             "active_generation": generations.active(self.home),
             "active_name": self.generation_name(generations.active(self.home)),
@@ -1528,3 +1535,35 @@ class Workspace:
         shutil.rmtree(staging, ignore_errors=True)
         self.ledger.append("snapshot.exported", {"file": Path(archive).name})
         return Path(archive)
+
+
+def _mapper_revision() -> int:
+    from runesmith.envmap import MAPPER_REVISION
+    return MAPPER_REVISION
+
+
+def superseded_drafts(drafts: list[dict[str, Any]], plan: dict[str, Any] | None) -> dict[str, str]:
+    """Drafts still pending for a milestone that another draft finished and wrote: {draft id: that draft's id}.
+
+    Journey J2-F1: an early, never-checked draft for a milestone finished hours later by a second draft kept the
+    Overview saying "1 draft waits for your review". Only the listing and the counts change; the stored state does not.
+    """
+    done = {m.get("id") for m in (plan or {}).get("milestones", []) if m.get("status") == "done"}
+    written = {d.get("milestone"): d["id"] for d in drafts if d.get("state") == "applied" and d.get("milestone") in done}
+    return {d["id"]: written[d["milestone"]] for d in drafts
+            if d.get("state") in ("waiting", "needs_revision") and d.get("milestone") in written}
+
+
+def draft_counts(drafts: list[dict[str, Any]], superseded: dict[str, str]) -> dict[str, int]:
+    return dict(Counter("superseded" if d["id"] in superseded else d["state"] for d in drafts))
+
+
+def _with_kept_tracks(tracks: list[dict[str, str]], kept, earlier: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """A kept milestone keeps its track, with the purpose it had, even when a redraft names only new tracks."""
+    names = {t["name"] for t in tracks}
+    purposes = {t.get("name"): t.get("purpose", "") for t in earlier if isinstance(t, dict)}
+    for m in kept:
+        if m.get("track") and m["track"] not in names:
+            names.add(m["track"])
+            tracks.append({"name": m["track"], "purpose": str(purposes.get(m["track"]) or "")[:300]})
+    return tracks

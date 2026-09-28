@@ -276,18 +276,19 @@ function roleLane(role, data, reload) {
   const others = data.instruments.filter((i) => !names.includes(i.name));
   const lane = h('div.role-lane.mt-8');
   const save = (list) => post('/api/inference/roles', { roles: { [role]: list } }).then(reload);
+  const who = (data.role_labels[role] || role).split(':')[0];     // screen readers hear which role (journey J2-F2)
   lane.append(h('h4', icon(ROLE_ICON[role]), data.role_labels[role], h('span.spacer'),
     role === 'plan' && !names.length && data.ready.plan ? h('span.badge', `uses ${data.ready.plan_source}`) :
     role === 'acceptance' && !names.length && data.ready.acceptance ? h('span.badge', 'uses the Planner’s model') : names.length && !usable.size ? h('span.badge.warn', 'not ready') : names.length ? h('span.badge.good', 'ready') : h('span.badge', 'empty')));
   const box = h('div.pillbox');
   names.forEach((n, idx) => {
     const tag = h('span.tag', { draggable: 'true', title: idx ? 'fallback' : 'preferred' }, idx ? h('span.faint.tiny', `${idx + 1}.`) : icon('check'), n,
-      idx ? h('button', { title: 'Move up', onclick: () => { const l = names.slice(); [l[idx - 1], l[idx]] = [l[idx], l[idx - 1]]; save(l); } }, icon('up')) : null,
-      h('button', { title: 'Remove from this role', onclick: () => save(names.filter((x) => x !== n)) }, icon('x')));
+      idx ? h('button', { title: 'Move up', 'aria-label': `Move ${n} up for the ${who}`, onclick: () => { const l = names.slice(); [l[idx - 1], l[idx]] = [l[idx], l[idx - 1]]; save(l); } }, icon('up')) : null,
+      h('button', { title: 'Remove from this role', 'aria-label': `Remove ${n} from the ${who}`, onclick: () => save(names.filter((x) => x !== n)) }, icon('x')));
     box.append(tag);
   });
   if (others.length) {
-    const sel = h('select.select', { style: { width: 'auto', height: '28px', fontSize: '12.5px' }, onchange: () => { if (sel.value) save([...names, sel.value]); } },
+    const sel = h('select.select', { 'aria-label': `Add a model to the ${who}`, style: { width: 'auto', height: '28px', fontSize: '12.5px' }, onchange: () => { if (sel.value) save([...names, sel.value]); } },
       h('option', { value: '' }, '+ add a model'), others.map((i) => h('option', { value: i.name }, i.label + ' (' + i.name + ')')));
     box.append(sel);
   }

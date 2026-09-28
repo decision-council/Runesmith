@@ -181,7 +181,7 @@ export default async function render(root, ctx) {
     const planningBlocks=data.planning_blockers||[];
     const draftBtn = h('button.btn.primary', { disabled: !data.ready||planningBlocks.length>0, title: planningBlocks.join(' ')||(data.ready ? '' : 'Add a model under Thinking power first') }, icon('wand'), plan ? 'Redraft the plan' : 'Draft a plan');
     draftBtn.addEventListener('click', () => withBusy(draftBtn, async () => {
-      if (plan && !(await confirmDialog({ title: 'Redraft the plan?', text: 'The Planner writes a new version from your brief, goals, blueprints, notes and the map. The current version is kept in the home’s plans/ folder.', confirm: 'Redraft' }))) return;
+      if (plan && !(await confirmDialog({ title: 'Redraft the plan?', text: 'The Planner writes a new version from your brief, goals, blueprints, notes and the map. Finished milestones, and any with your checks or drafts, stay exactly as they are: it plans only what is still to do. The current version is kept in the home’s plans/ folder.', confirm: 'Redraft' }))) return;
       await post('/api/worker/run', { job: 'plan' }); toast('The Planner is drafting. This page updates when it is done.', 'good', 6000);
     }));
     clear(planCard).append(h('div.card-head', h('h3', icon('route'), 'Plan'), plan ? h('span.badge', `v${plan.version} · ${plan.drafted_by || 'owner'} · ${ago(plan.utc)}`) : null,

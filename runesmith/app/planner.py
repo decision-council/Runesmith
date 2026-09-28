@@ -21,6 +21,7 @@ import copy
 import json
 import hashlib
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -142,9 +143,52 @@ def _workspace_summary(ws) -> dict[str, Any]:
             "file_count": facts.get("files"), "kinds_of_files": facts.get("top_extensions"), "objects": objects}
 
 
+def kept_milestones(ws, plan=None) -> list[dict[str, Any]]:
+    """The milestones a redraft keeps exactly as they are (journey J2-B2).
+
+    A model answers with titles only. Saving that answer as the whole plan reopened finished milestones, and gave
+    ids by position, so the owner's approved checks, drafts and public expectations (all keyed by milestone id)
+    would have attached to other milestones. Kept: anything finished, under way or dropped, anything with drafts,
+    checks, proposals, public expectations or a breakdown, and whatever a kept milestone depends on.
+    """
+    from runesmith.app.acceptance_contracts import expectation_digest
+    milestones = ((ws.plan() if plan is None else plan) or {}).get("milestones", [])
+    drafted = {d.get("milestone") for d in ws.drafts()}
+    proposed = {p.stem for p in (ws.home / "acceptance-proposals").glob("*.json")}
+
+    def linked(m):
+        return (m.get("status") != "open" or m["id"] in drafted or m["id"] in proposed
+                or m.get("breakdown_id") or m.get("parent_id") or m.get("decomposed_by")
+                or (ws.home / "acceptance" / (m["id"] + ".py")).exists() or expectation_digest(ws, m["id"]))
+    keep = {m["id"] for m in milestones if linked(m)}
+    grew = True
+    while grew:
+        grew = False
+        for m in milestones:
+            for prerequisite in m.get("depends_on", []) if m["id"] in keep else []:
+                if prerequisite not in keep:
+                    keep.add(prerequisite)
+                    grew = True
+    return [m for m in milestones if m["id"] in keep]
+
+
+def _fresh_ids(ws, plan, count: int) -> list[str]:
+    """New milestone ids that were never used here: not in the plan, a draft or a checks file."""
+    used = {m.get("id") for m in (plan or {}).get("milestones", [])} | {d.get("milestone") for d in ws.drafts()}
+    used |= {p.stem for p in (ws.home / "acceptance").glob("*.py")} | {p.stem for p in (ws.home / "acceptance-proposals").glob("*.json")}
+    n = max((int(i[1:]) for i in used if isinstance(i, str) and re.fullmatch(r"m\d+", i)), default=0)
+    ids = []
+    while len(ids) < count:
+        n += 1
+        if f"m{n}" not in used:
+            ids.append(f"m{n}")
+    return ids
+
+
 def plan_prompt(ws) -> str:
     from runesmith.app.work_modes import prompt_context, configuration
     brief = ws.brief()
+    kept = kept_milestones(ws)
     packet = {
         "task": ("Draft a development plan for this folder. Use the owner's brief and blueprints as the source of "
                  "intent; use the map for what exists now. Milestones must be concrete and checkable, ordered, and "
@@ -164,11 +208,19 @@ def plan_prompt(ws) -> str:
         "proposed_goalposts": ws.goalposts(),
         "output": {"summary": "3-6 sentences: what will be built and the approach",
                    "tracks": "2-5 tracks, each {name, purpose}",
-                   "milestones": "4-12 milestones, each {title, detail, track, done_when}",
+                   "milestones": ("1-12 further milestones, each {title, detail, track, done_when}: only work that is "
+                                  "still to do, never one of kept_milestones again" if kept else
+                                  "4-12 milestones, each {title, detail, track, done_when}"),
                    "first_steps": "up to 5 concrete next actions",
                    "questions": "up to 5 decisions only the owner can make",
                    "assumptions": "explicit inferred purpose/goals and uncertainties; never evidence of achievement"},
     }
+    if kept:
+        packet["kept_milestones"] = [{"title": m["title"], "status": m.get("status"), "done_when": m.get("done_when", "")}
+                                     for m in kept]
+        packet["task"] += (" Some milestones are finished, under way or carry the owner's checks (kept_milestones): "
+                           "they stay exactly as they are and are not yours to repeat, reword or reopen. Plan only what "
+                           "is still to do, including anything new in the owner's goals.")
     text = json.dumps(packet, ensure_ascii=False, indent=1)
     blueprints = ws.blueprint_text()
     if blueprints:
@@ -336,7 +388,18 @@ def draft_plan(ws, router, *, checkpoint=lambda: None, automatic=False) -> dict[
             checkpoint()
             if require_planning(ws, automatic=automatic) != binding:
                 raise WorkspaceError('Planning inputs or switches changed during authoring.')
-            return ws.save_plan(data)
+            current = ws.plan()
+            kept = kept_milestones(ws, current)
+            # Kept milestones stay first, as they were; the answer adds only new work, under ids never used here.
+            titles = {m["title"].strip().casefold() for m in kept}
+            further = [m for m in data.get("milestones") or []
+                       if isinstance(m, dict) and str(m.get("title") or "").strip()
+                       and str(m["title"]).strip().casefold() not in titles]
+            ids = _fresh_ids(ws, current, len(further)) if kept else [f"m{i + 1}" for i in range(len(further))]
+            for m, new_id in zip(further, ids):
+                m.pop("status", None)                  # a model never marks work done, nor picks an id
+                m["id"] = new_id
+            return ws.save_plan(dict(data, milestones=further), kept=kept)
     except Exception as error:
         # Retain a paid/manual answer without installing stale intent or silently
         # retrying it through the automatic empty-folder build path.

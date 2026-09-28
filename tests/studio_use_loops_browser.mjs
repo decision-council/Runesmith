@@ -393,6 +393,14 @@ try{
     assert.deepEqual(saved.body.roles,['kaizen','plan']);assert.equal(saved.body.spec.kind,'manual');assert(!saved.body.key);
     assert(!requests.some(r=>r.path.includes('/test')));
     loops.push({id:'B2.02',case:'Keyless setup, accessible labels, default roles and save-without-test semantics',result:'passed'});
+    // B2.06 (journey J2-F2): every role's controls say which role, and which model, they act on
+    await page.evaluate(()=>window.mount('inference'));
+    await page.getByRole('button',{name:'Remove chat-author from the Planner',exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Remove chat-author from the Improver',exact:true}).count(),1);
+    for(const role of ['Worker','Checker'])
+      assert.equal(await page.getByRole('combobox',{name:`Add a model to the ${role}`,exact:true}).count(),1,role);
+    assert.equal(await page.getByRole('combobox',{name:'+ add a model',exact:true}).count(),0);
+    loops.push({id:'B2.06',case:'Role controls name their role and model for screen readers (not four identical "+ add a model")',result:'passed'});
 
     manualRequests=[{id:'fixture-request',text:'Complete fixture packet with its schema.',approx_tokens:20}];
     await page.evaluate(()=>window.mount('inference'));
@@ -1835,9 +1843,12 @@ try{
     assert((await policy().innerText()).includes('Nothing to run yet: the map found no code with tests here.'));
     await mount({...documentsOnly,objects:[{name:'app',kind:'python_repository',bands:[],ladder:[]}]});
     assert(!(await policy().innerText()).includes('Nothing to run yet'));
+    await mount({...documentsOnly,map_outdated:true});                 // journey J2: a map by an earlier version
+    assert(!(await policy().innerText()).includes('Nothing to run yet'));
+    assert((await page.locator('#page').innerText()).includes('made by an earlier version: map again'));
     await mount(base);                                                  // not mapped yet: no claim either way
     assert(!(await policy().innerText()).includes('Nothing to run yet'));
-    loops.push({id:'B19.13',case:'A mapped folder without code is told the test-runs switch has nothing to run yet; code or no map says nothing',result:'passed'});
+    loops.push({id:'B19.13',case:'A mapped folder without code is told the test-runs switch has nothing to run yet; code, an outdated map or no map says nothing',result:'passed'});
   }
   if(selected.has('B20')){
     // Acceptance checks a non-programmer approves (G1, G1.1-G1.3, G3 from out-of-box journey R1).
@@ -2094,6 +2105,29 @@ try{
     assert(order.draft>=0&&order.expert>order.draft&&order.open===false,JSON.stringify(order));
     assert(requests.slice(start).every(r=>r.method==='GET'));
     loops.push({id:'B26.01',case:'Work opens on Drafts when a draft waits, drafts come before expert panels, and checks without tests read "your checks passed"',result:'passed'});
+
+    // B26.02 (journey J2-F1): an early draft for a milestone that a later draft finished and wrote is superseded
+    fixtureWork.drafts=[
+      {id:'earlyDraft',title:'Books per month',utc:'2026-09-27T18:14:30Z',drafted_by:'Fixture free model',state:'waiting',
+       milestone:'m4',superseded_by:'laterDraft',files:[{path:'readinglog/months.py',content:'# early\n',purpose:'First try.'}]},
+      {id:'laterDraft',title:'Implement books-per-month command',utc:'2026-09-27T21:07:13Z',drafted_by:'Fixture free model',
+       state:'applied',verified:true,milestone:'m4',superseded_by:null,
+       verification:{status:'acceptance_passed',project_checks:{status:'passed',ok:true,ran:16},acceptance:{status:'passed',ok:true,ran:3}},
+       files:[{path:'readinglog/months.py',content:'# later\n',purpose:'Months.'}]}];
+    const supersededStart=requests.length;
+    await page.evaluate(async()=>{window.cleanup?.();document.querySelector('#page').replaceChildren();
+      const module=await import('/static/js/views/work.js');
+      window.cleanup=await module.default(document.querySelector('#page'),{sub:['drafts'],app:{state:{proposals:{waiting:0},drafts:{applied:1,superseded:1}}},navigate(){}});});
+    const early=page.locator('#page .card',{has:page.getByText('Books per month',{exact:true})}).first();
+    await early.waitFor();
+    const earlyText=await early.innerText();
+    assert(earlyText.includes('superseded')&&!earlyText.includes('waiting for you'),earlyText);
+    assert(earlyText.includes('Nothing to do here: its milestone is done. A later draft finished it and was written'),earlyText);
+    for(const name of ['Write these files','Recheck saved draft'])
+      assert.equal(await early.getByRole('button',{name,exact:true}).count(),0,name);
+    assert(!(await early.evaluate(e=>e.classList.contains('glow'))));
+    assert(requests.slice(supersededStart).every(r=>r.method==='GET'));
+    loops.push({id:'B26.02',case:'A draft whose milestone a later draft finished is marked superseded, says so plainly and offers no write or recheck',result:'passed'});
     fixtureWork.drafts=oldDrafts;
   }
   assert.deepEqual(errors,[]);

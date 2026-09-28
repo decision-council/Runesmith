@@ -387,3 +387,22 @@ def test_a_fresh_draft_is_checked_at_once_only_when_checking_is_on(tmp_path, che
     else:
         assert not draft.get('verification') and done['outcome']['summary'] == draft['title']
     assert not (tmp_path / 'app.py').exists()          # checked or not, a fresh draft is never applied here
+
+
+def test_a_draft_left_for_a_milestone_another_draft_finished_no_longer_waits(tmp_path):
+    # Journey J2-F1: R1's first, never-checked m4 draft kept the Overview saying "1 draft waits for your review"
+    # hours after a second m4 draft had passed its checks, been written and finished the milestone.
+    ws = setup(tmp_path)
+    early = draft_files(ws, ws.router(), 'm1')
+    scripted(ws, [{'title': 'Second try', 'files': [{'path': 'app.py', 'content': 'def answer():\n    return 42\n'}]}],
+             roles=('plan',))
+    (tmp_path / 'app.py').write_text('def answer():\n    return 0\n')          # the source changed in between, as in R1
+    later = draft_files(ws, ws.router(), 'm1')
+    assert ws.state()['drafts'] == {'waiting': 2}
+    ws.apply_draft(later['id'])
+    ws.update_milestone('m1', {'status': 'done'})
+    assert ws.state()['drafts'] == {'superseded': 1, 'applied': 1}
+    listed = {d['id']: d for d in ws.work()['drafts']}
+    assert listed[early['id']]['superseded_by'] == later['id'] and listed[later['id']]['superseded_by'] is None
+    assert ws.work()['draft_counts'] == {'superseded': 1, 'applied': 1}
+    assert ws._draft(early['id'])['state'] == 'waiting'          # the stored record is unchanged

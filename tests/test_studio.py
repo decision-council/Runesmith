@@ -392,6 +392,37 @@ def test_the_planner_drafts_a_plan_and_first_files_through_any_model(tmp_path):
     assert ws.plan()["version"] == 1 and ws.plan()["milestones"][0]["title"] == "A list you can add to"
 
 
+def test_a_redraft_keeps_finished_work_its_checks_and_its_ids(tmp_path):
+    # Journey J2-B2: a redraft saved the model's titles as the whole plan. Finished milestones reopened, and ids
+    # given by position would have attached the owner's approved checks (acceptance/m3.py) to another milestone.
+    from runesmith.app.planner import plan_prompt
+    ws = Workspace(tmp_path)
+    ws.set_brief("A reading log for my books.")
+    first = {"summary": "A reading log.", "tracks": [{"name": "Features", "purpose": "what it does"}],
+             "milestones": [{"title": "Add a book", "track": "Features"}, {"title": "List books", "track": "Features"},
+                            {"title": "Books per month", "track": "Features"}, {"title": "A later idea", "track": "Features"}]}
+    redraft = {"summary": "Now also search and export.", "tracks": [{"name": "Search", "purpose": "find books"}],
+               "milestones": [{"title": "add a book "},                                   # repeated despite the rule
+                              {"title": "Find a book", "track": "Search", "status": "done", "id": "m1"},
+                              {"title": "Export to CSV", "track": "Search"}]}
+    scripted(ws, [first, redraft], roles=("plan",))
+    router = ws.router()
+    assert [m["id"] for m in draft_plan(ws, router)["milestones"]] == ["m1", "m2", "m3", "m4"]
+    ws.update_milestone("m1", {"status": "done"})
+    ws.update_milestone("m2", {"status": "doing"})
+    checks = ws.home / "acceptance" / "m3.py"                    # the owner approved checks for m3, still open
+    checks.parent.mkdir(parents=True)
+    checks.write_text("# approved checks\n", encoding="utf-8")
+    prompt = plan_prompt(ws)
+    assert '"kept_milestones"' in prompt and "Books per month" in prompt and "only what is still to do" in prompt
+    plan = draft_plan(ws, router)
+    assert [(m["id"], m["title"], m["status"]) for m in plan["milestones"]] == [
+        ("m1", "Add a book", "done"), ("m2", "List books", "doing"), ("m3", "Books per month", "open"),
+        ("m5", "Find a book", "open"), ("m6", "Export to CSV", "open")]    # m4 had no history: replaced, id not reused
+    assert {t["name"] for t in plan["tracks"]} == {"Features", "Search"}
+    assert plan["tracks"][-1] == {"name": "Features", "purpose": "what it does"}
+
+
 def test_a_worker_round_finds_repairs_and_proposes_with_the_owners_notes(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -584,7 +615,10 @@ def test_a_map_from_an_earlier_version_is_reported_so_the_owner_can_map_again(st
     env_map = studio.ws.map_environment()
     assert env_map["mapper_revision"] == MAPPER_REVISION
     assert call(studio, "GET", "/api/map/environment")[1]["outdated"] is False
+    assert studio.ws.state()["map_outdated"] is False
     old = dict(env_map)
     old.pop("mapper_revision")                                    # as written before the revision stamp existed
     (studio.ws.home / "ENVIRONMENT.json").write_text(_json.dumps(old), encoding="utf-8")
     assert call(studio, "GET", "/api/map/environment")[1]["outdated"] is True
+    # Journey J2: the Overview claimed "no code with tests here" from such a map; the state now says it is outdated.
+    assert studio.ws.state()["map_outdated"] is True

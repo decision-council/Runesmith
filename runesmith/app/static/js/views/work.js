@@ -231,7 +231,9 @@ function drawDrafts(body, w, reload, ctx) {
     return;
   }
   for (const d of w.drafts) {
-    const [cls, label] = STATE_BADGE[d.state] || ['', d.state];
+    // Journey J2-F1: a draft whose milestone another draft already finished and wrote no longer waits for anyone.
+    const live = !d.superseded_by;
+    const [cls, label] = live ? STATE_BADGE[d.state] || ['', d.state] : ['', 'superseded'];
     const files = h('div.col.gap-6');
     for (const f of d.files) {
       const edit = 'base' in f;
@@ -276,7 +278,7 @@ function drawDrafts(body, w, reload, ctx) {
         await post('/api/worker/run',{job:'resume_check',params:{draft_id:d.id,reason}});
         toast('One extended check queued. No inference or counter reset.');reload();
       })},icon('check'),'Resume timed-out check once'));
-    if(d.requirement_supplement?.eligible) actions.append(h('button.btn',{
+    if(live && d.requirement_supplement?.eligible) actions.append(h('button.btn',{
       onclick:(e)=>withBusy(e.currentTarget,async()=>{
         const inference=await get('/api/inference');
         const names=inference.instruments.map(i=>i.name);
@@ -290,12 +292,12 @@ function drawDrafts(body, w, reload, ctx) {
         await post('/api/worker/run',{job:'supplement',params:{draft_id:d.id,reason,instrument,author_only:true}});
         toast('One author-only revision queued. No checks or apply; prior attempts retained.');reload();
       })},icon('pencil'),'Revise after clarification'));
-    if (d.state === 'needs_revision' && d.milestone) actions.append(h('button.btn', {
+    if (live && d.state === 'needs_revision' && d.milestone) actions.append(h('button.btn', {
       onclick: e => withBusy(e.currentTarget, () => showRevisionContext(d.id, reload))
     }, icon('eye'), 'Revision packet'), h('button.btn', {
       onclick: e => withBusy(e.currentTarget, () => showAuthorRevision(d.id, reload))
     }, icon('pencil'), 'Create one revision draft'));
-    if (['waiting', 'needs_revision'].includes(d.state) && d.milestone) actions.append(h('button.btn', {
+    if (live && ['waiting', 'needs_revision'].includes(d.state) && d.milestone) actions.append(h('button.btn', {
       onclick: (e) => withBusy(e.currentTarget, async () => {
         const settings = await get('/api/settings');
         if (!settings.build_steps) {        // say why nothing would run, and offer the one switch that makes it run
@@ -308,12 +310,13 @@ function drawDrafts(body, w, reload, ctx) {
         await post('/api/worker/run', {job:'build', params:{draft_id:d.id}});
         toast('Checking this draft now: its tests run in a throwaway copy. No model call and nothing is written. Follow it in Activity.', 'good', 7000);
       })}, icon('check'), 'Recheck saved draft'));
-    if (d.state !== 'applied') actions.append(h('button.btn.primary', { onclick: (e) => applyDraft(e.currentTarget, d, reload) }, icon('check'), 'Write these files'));
+    if (live && d.state !== 'applied') actions.append(h('button.btn.primary', { onclick: (e) => applyDraft(e.currentTarget, d, reload) }, icon('check'), 'Write these files'));
     if (d.state === 'waiting') actions.append(h('button.btn', { onclick: async (e) => { const button = e.currentTarget; const reason = await askText({ title: 'Reject this draft', text: 'Optional: say why; the Planner reads it next time.', multiline: true, confirm: 'Reject' }); if (reason === null) return; withBusy(button, async () => { await post(`/api/drafts/${d.id}/reject`, { reason }); reload(); }); } }, icon('x'), 'Reject'));
     if (d.state === 'applied') actions.append(h('button.btn', { onclick: (e) => withBusy(e.currentTarget, async () => { const r = await post(`/api/drafts/${d.id}/undo`, {}); r.ok ? toast('Undone.', 'good') : toast(r.detail, 'warn'); reload(); }) }, icon('undo'), 'Undo'));
-    const card = h('div.card.mt-16', { class: d.state === 'waiting' ? 'glow' : '' },
+    const card = h('div.card.mt-16', { class: live && d.state === 'waiting' ? 'glow' : '' },
       h('div.card-head', h('div.grow', h('h3', icon('filePlus'), d.title), h('div.small.muted', `${plural(d.files.length, 'file')} · by ${d.drafted_by || 'a model'} · ${ago(d.utc)}${d.milestone ? ' · milestone ' + d.milestone : ''}`)),
         h('span', {class:`badge ${d.verified ? 'good' : 'warn'}`, title: d.verification?.status || 'unverified'}, checkBadge(d)), h('span', { class: `badge ${cls}` }, label)),
+      live ? null : h('div.callout.mt-8', h('p.small', 'Nothing to do here: its milestone is done. A later draft finished it and was written, so this one is no longer needed.')),
       d.review_reason || d.review_note || d.review_requested_by ? h('div.callout.warn.mt-8', h('div',
         h('b.small', 'Recorded review feedback — separate from check status'),
         h('p.small', d.review_reason || 'Review feedback is recorded in this draft’s notes.'),

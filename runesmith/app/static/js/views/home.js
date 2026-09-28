@@ -141,7 +141,7 @@ export default async function render(root, { app, navigate, refreshState }) {
       `Run a round every ${s.settings.interval_minutes} minutes while the Studio is open. Each round can spend model calls. Pause, mode guards and provider limits still apply.`),
     choice('probe_tests', 'Run this project’s tests while mapping',
       // Journey J4-F2: a folder of documents was offered this switch with nothing to run.
-      (s.mapped_utc && !s.objects.some((o) => o.kind === 'python_repository') ? 'Nothing to run yet: the map found no code with tests here. ' : '') +
+      (s.mapped_utc && !s.map_outdated && !s.objects.some((o) => o.kind === 'python_repository') ? 'Nothing to run yet: the map found no code with tests here. ' : '') +
       'This executes the project’s own code, on a throwaway copy of the folder. Only for projects you trust: the copy is not a security boundary.'),
     choice('kaizen', 'Let Runesmith improve itself',
       'Separate from Optimize. A self-made improvement becomes active only by winning a trial on your work.'),
@@ -187,7 +187,7 @@ export default async function render(root, { app, navigate, refreshState }) {
   const kpi = (k, v, sub, onclick, iconName) => h('div.card.hoverable', { onclick }, h('div.kpi', h('div.k', icon(iconName), ' ', k), h('div.v', v), h('div.trend', sub)));
   const trialText = s.attention ? `attention ${humanize(s.attention.mode).toLowerCase()}` : 'no work observed yet';
   const kpis = h('div.grid.four',
-    kpi('Objects mapped', String(s.objects.length), s.mapped_utc ? `mapped ${ago(s.mapped_utc)}` : 'not mapped yet', () => navigate('map'), 'map'),
+    kpi('Objects mapped', String(s.objects.length), s.map_outdated ? 'made by an earlier version: map again' : s.mapped_utc ? `mapped ${ago(s.mapped_utc)}` : 'not mapped yet', () => navigate('map'), 'map'),
     kpi('Waiting for you', String(waiting), `${(s.proposals.applied || 0) + (s.drafts.applied || 0)} applied so far`, () => navigate('work'), 'inbox'),
     kpi('Repairs accepted', `${s.repairs.accepted}`, `of ${plural(s.repairs.judged, 'judged attempt')}`, () => navigate('work', 'attempts'), 'check'),
     kpi('Active generation', s.active_name || '—', `${(s.active_generation || '').replace('gen-', '')} · ${plural(s.generations, 'generation')} · ${trialText}`, () => navigate('improve'), 'branch'));
