@@ -233,3 +233,16 @@ def test_rejection_is_retained_and_enters_new_proposal_context(tmp_path):
     assert packet['review_feedback'][0]['reason']=='The failed candidate was not installed.'
     assert ws.plan()==before
     with pytest.raises(WorkspaceError):adopt_breakdown(ws,b['id'])
+
+
+def test_a_dropped_prerequisite_no_longer_blocks_its_goal():
+    # Journey J2-B8: the owner dropped the "Add integration tests for export" step (the goal's own approved checks
+    # already test that); its goal then said "Waiting for: Add integration tests for export (dropped)" forever.
+    from runesmith.app.planner import milestone_ready, plan_readiness
+    plan = {'milestones': [{'id': 's1', 'status': 'done'}, {'id': 's3', 'title': 'Integration tests', 'status': 'dropped'},
+                           {'id': 's4', 'title': 'Another step', 'status': 'open'},
+                           {'id': 'm8', 'status': 'open', 'depends_on': ['s1', 's3']},
+                           {'id': 'm9', 'status': 'open', 'depends_on': ['s3', 's4']}]}
+    goal, other = plan['milestones'][3], plan['milestones'][4]
+    assert milestone_ready(plan, goal) and plan_readiness(plan)['m8']['unmet'] == []
+    assert not milestone_ready(plan, other) and [u['id'] for u in plan_readiness(plan)['m9']['unmet']] == ['s4']

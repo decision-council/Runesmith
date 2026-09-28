@@ -109,10 +109,15 @@ def milestone_contract(ws, milestone: dict) -> str:
     return hashlib.sha256(json.dumps(material,sort_keys=True).encode()).hexdigest()
 
 
+# A prerequisite the owner dropped no longer blocks: it is not needed any more, and the goal's own checks still judge
+# the result. Dropping one used to leave its goal "Waiting for" it forever (journey J2-B8).
+SETTLED = ('done', 'dropped')
+
+
 def milestone_ready(plan, milestone):
     states={m['id']:m.get('status') for m in (plan or {}).get('milestones',[])}
     return milestone.get('status') in ('open','doing') and all(
-        states.get(key)=='done' for key in milestone.get('depends_on',[]))
+        states.get(key) in SETTLED for key in milestone.get('depends_on',[]))
 
 
 def plan_readiness(plan):
@@ -121,7 +126,7 @@ def plan_readiness(plan):
     return {m['id']: {'ready': milestone_ready(plan, m),
             'unmet': [{'id': key, 'title': by_id.get(key, {}).get('title', 'Missing prerequisite'),
                        'status': by_id.get(key, {}).get('status', 'missing')}
-                      for key in m.get('depends_on', []) if by_id.get(key, {}).get('status') != 'done']}
+                      for key in m.get('depends_on', []) if by_id.get(key, {}).get('status') not in SETTLED]}
             for m in milestones}
 
 

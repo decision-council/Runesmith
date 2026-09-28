@@ -249,7 +249,7 @@ export default async function render(root, ctx) {
           m.parent_id ? h('div.tiny.faint', `Prerequisite of ${m.parent_id} · authored by ${m.drafted_by || 'model'}`) : null,
           readiness?.unmet.length ? h('div.tiny.warn', `Waiting for: ${readiness.unmet.map(p => `${p.title} (${p.status})`).join('; ')}`) : readiness?.ready ? h('div.tiny.good', 'Prerequisites satisfied — ready to draft') : null,
           h('div.row.mt-8.wrap', sel, h('button.btn.sm', { disabled: !data.ready || !readiness?.ready, onclick: (e) => withBusy(e.currentTarget, async () => { await post('/api/worker/run', { job: 'draft', params: { milestone: m.id } }); toast('Drafting first files for this milestone. They appear under Work → Drafts.', 'good', 6000); }) }, icon('filePlus'), 'Draft first files'),
-            ['open','doing'].includes(m.status) && (m.depends_on || []).every(id=>byId.get(id)?.status==='done') ? h('button.btn.sm',{
+            ['open','doing'].includes(m.status) && (m.depends_on || []).every(id=>['done','dropped'].includes(byId.get(id)?.status)) ? h('button.btn.sm',{
               onclick:(e)=>withBusy(e.currentTarget,async()=>{
                 await post('/api/worker/run',{job:'review_current',params:{milestone:m.id}});
                 toast('Checking current files against the milestone. No model call, source edits or automatic completion.','good',7000);
