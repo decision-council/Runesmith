@@ -106,7 +106,7 @@ def blockers(ws, row):
     reasons = []
     if not row['enabled']: reasons.append('Mode is off.')
     if ws.settings()['autonomy'] == 'observe' and row['executor'] != 'operations':
-        reasons.append('Observe permission allows mapping/report reads, not model work.')
+        reasons.append('You chose to just look (observe), so Runesmith reads and reports but asks no model to work.')
     if row['executor'] == 'build' and not ws.settings()['build_steps']:
         reasons.append('Executable build steps are not enabled under Goals & plan.')
     if row['executor'] == 'map_plan':
@@ -187,7 +187,7 @@ def planning_blockers(ws, *, automatic=False):
     if not any(r['enabled'] and r['executor'] == 'map_plan' for r in config['modes']):
         reasons.append('Map & Plan is off. Existing plans may still drive Build.')
     if ws.settings()['autonomy'] == 'observe':
-        reasons.append('Observe permission allows reading facts, not model planning.')
+        reasons.append('You chose to just look (observe), so Runesmith does not ask a model to plan.')
     if not config['infer_purpose'] and not planning_direction(ws)['explicit']:
         reasons.append('Purpose inference is off. Add a brief, active owner goal or selected blueprint before planning.')
     if automatic:

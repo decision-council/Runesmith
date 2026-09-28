@@ -32,6 +32,13 @@ ANSWER = {"checks": [{"test": "test_a_book_can_be_added", "says": "You can add a
           "assumes": ["The command is run as python -m readinglog with --file for the saved data."], "code": GOOD}
 
 
+@pytest.fixture(autouse=True)
+def code_style(monkeypatch):
+    # These tests cover the style where the model writes the checks file itself; the default style, examples turned
+    # into checks by Runesmith's own template, is covered in test_acceptance_examples.py.
+    monkeypatch.setattr("runesmith.app.acceptance_proposals.STYLE", "code")
+
+
 def workspace(tmp_path, answers=()):
     ws = Workspace(tmp_path)
     ws.save_plan({"summary": "Reading log", "milestones": [

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from runesmith import atomic
+from runesmith.app import acceptance_examples
 from runesmith.app.acceptance_contracts import expectations, publish_expectations
 from runesmith.app.building import _run_checks
 from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, source_context, why_no_answer
@@ -67,6 +68,11 @@ ANSWER_TOKENS = 3000
 ASSERT_ARGS = {'assertTrue': 1, 'assertFalse': 1, 'assertIn': 2, 'assertNotIn': 2, 'assertEqual': 2, 'assertNotEqual': 2,
                'assertRegex': 2, 'assertNotRegex': 2, 'assertCountEqual': 2, 'assertListEqual': 2,
                'assertMultiLineEqual': 2, 'assertStartsWith': 2, 'assertEndsWith': 2}
+# How the model is asked. 'examples' (the default since 2026-09-28): the model describes examples as data and
+# Runesmith's trusted template writes the code (acceptance_examples.py); free models' own test code rejected correct
+# builds in 16 of 17 overnight trials. 'code': the model writes the unittest file itself.
+STYLE = 'examples'
+SCHEMAS = {'code': SCHEMA, 'examples': acceptance_examples.SCHEMA}
 MILESTONE_ID = re.compile(r'[A-Za-z0-9_-]+')
 CRITERION_ID = re.compile(r'[A-Za-z0-9_.-]{1,100}')
 
@@ -191,14 +197,62 @@ def validate(data: Any) -> dict[str, Any]:
             'code_sha256': hashlib.sha256(code.encode('utf-8')).hexdigest()}
 
 
-def packet(ws, milestone_id) -> dict[str, Any]:
+def packet(ws, milestone_id, style='code') -> dict[str, Any]:
     milestone = _milestone(ws, milestone_id)
-    return {'task': TASK,
+    return {'task': acceptance_examples.TASK if style == 'examples' else TASK,
             'milestone': {k: milestone.get(k) for k in ('id', 'title', 'detail', 'done_when', 'track')},
             'brief': ws.brief().get('text', ''),
             'public_acceptance': expectations(ws, milestone_id),
             'source_context': source_context(ws, limit=16000),
-            'note': 'Owner acceptance runs on a clean copy of the project folder, with the current directory set to it.'}
+            'note': 'Each example runs in its own fresh copy of the project folder, with the current directory set to it.'
+            if style == 'examples' else
+            'Owner acceptance runs on a clean copy of the project folder, with the current directory set to it.'}
+
+
+def _clean(answer, style, data) -> dict[str, Any]:
+    """The proposal as stored, from the model's answer in either style; a WorkspaceError says what is wrong."""
+    if style != 'examples':
+        return validate(answer)
+    milestone = data['milestone']
+    shaped = acceptance_examples.validate_examples(
+        answer, ' '.join(str(milestone.get(k) or '') for k in ('title', 'detail', 'done_when')),
+        json.dumps(data.get('source_context'), ensure_ascii=False))
+    checked = validate({'checks': [{'test': c['test'], 'says': c['says']} for c in shaped['checks']],
+                        'assumes': [], 'code': shaped['code']})
+    checks = [{'test': c['test'], 'says': c['says'], 'exact': e['exact']} for c, e in zip(checked['checks'], shaped['checks'])]
+    return dict(shaped, checks=checks, code_sha256=checked['code_sha256'])
+
+
+# A revision or retry request carries the first answer too. Its source excerpt is smaller, so the request still fits
+# a free per-minute window (Groq's free gpt-oss-120b: 8,000 tokens a minute, prompt and answer room together).
+LEAN_SOURCE = 6000
+
+
+def _lean(ws, data):
+    return dict(data, source_context=source_context(ws, limit=LEAN_SOURCE))
+
+
+def _bounded(answer, limit=40000):
+    text = json.dumps(answer, ensure_ascii=False)
+    return answer if len(text) <= limit else {'truncated': text[:limit]}
+
+
+def _ask(router, request, style, key):
+    """One acceptance call; a PlannerUnavailable or SkippedByOwner says in plain words why there is no answer."""
+    try:
+        out = router.call('acceptance', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False), system=SYSTEM,
+                          schema=SCHEMAS[style], max_tokens=ANSWER_TOKENS, key=key)
+    except KeyError as error:
+        raise PlannerUnavailable('no model is set up for planning or checking: add one under Thinking power') from error
+    except Exception as error:
+        raise PlannerUnavailable('no acceptance checks: ' + why_no_answer(error)) from error
+    if isinstance(out.data, dict) and out.data.get('skipped_by_owner'):
+        raise SkippedByOwner('you skipped the request, so nothing changed')
+    if not out.ok and out.error_kind == "config":
+        raise PlannerUnavailable(out.error or "the model service refused this request")
+    if not out.ok:
+        raise PlannerUnavailable(f"the model's answer was not usable: {(out.error or 'no JSON')[:200]}")
+    return out
 
 
 def status(ws) -> dict[str, Any]:
@@ -221,19 +275,22 @@ def status(ws) -> dict[str, Any]:
         if approved or waiting:
             out[mid] = {'approved': approved,
                         'proposal': {k: waiting.get(k) for k in ('id', 'checks', 'assumes', 'dry_run', 'revision', 'code',
-                                                                      'drafted_by', 'utc')}
+                                                                      'drafted_by', 'utc', 'dropped', 'not_checked', 'style')}
                         if waiting else None}
     return out
 
 
-def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, Any]:
+def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) -> dict[str, Any]:
+    style = style or STYLE
+    if style not in SCHEMAS:
+        raise WorkspaceError('Unknown way of asking for checks.')
     milestone = _milestone(ws, milestone_id)
     if milestone.get('status') not in ('open', 'doing'):
         raise WorkspaceError('Propose acceptance checks for an unfinished milestone.')
     if ws.settings().get('autonomy') == 'observe':
         from runesmith.app.workspace import OBSERVE_NO_CALLS
         raise WorkspaceError(OBSERVE_NO_CALLS)
-    data = packet(ws, milestone_id)
+    data = packet(ws, milestone_id, style)
     text = json.dumps(data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
     path = _record_path(ws, milestone_id)
@@ -243,24 +300,38 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None) -> dict[str, A
             return old                                  # an unchanged request reuses the waiting answer
     checkpoint()
     key = 'a' + uuid.uuid4().hex[:12]
-    try:
-        out = router.call('acceptance', prompt=text, system=SYSTEM, schema=SCHEMA, max_tokens=ANSWER_TOKENS, key='acceptance-' + key)
-    except KeyError as error:
-        raise PlannerUnavailable('no model is set up for planning or checking: add one under Thinking power') from error
-    except Exception as error:
-        raise PlannerUnavailable('no acceptance checks: ' + why_no_answer(error)) from error
-    if isinstance(out.data, dict) and out.data.get('skipped_by_owner'):
-        raise SkippedByOwner('you skipped the request, so nothing changed')
-    if not out.ok and out.error_kind == "config":
-        raise PlannerUnavailable(out.error or "the model service refused this request")
-    if not out.ok:
-        raise PlannerUnavailable(f"the model's answer was not usable: {(out.error or 'no JSON')[:200]}")
+    out = _ask(router, data, style, 'acceptance-' + key)
     checkpoint()
-    clean = validate(out.data)
-    clean['dry_run'] = dry_run(ws, clean['code'])
     drafted_by = out.receipt.get('answered_by') or out.receipt.get('model')
-    if findings(clean):
-        clean, drafted_by = _revise_once(ws, router, data, clean, key, drafted_by, checkpoint)
+    first_answer = out.data
+    try:
+        clean = _clean(out.data, style, data)
+    except WorkspaceError as error:
+        if style != 'examples':
+            raise
+        # A weak model's answer may break a rule of the examples format; it is told which, once.
+        request = dict(_lean(ws, data), revise=acceptance_examples.UNUSABLE.format(error=str(error)),
+                       your_first_answer=out.data)
+        try:
+            out = _ask(router, request, style, 'acceptance-' + key + '-retry')
+        except PlannerUnavailable as again:
+            raise PlannerUnavailable(f'the first answer broke a rule ({str(error)[:200]}), and asking again failed: {again}') from again
+        checkpoint()
+        try:
+            clean = _clean(out.data, style, data)
+        except WorkspaceError as again:
+            raise WorkspaceError(f'Both answers broke a rule of the examples format. First: {str(error)[:200]} '
+                                 f'Then: {str(again)[:200]}') from None
+        clean['revision'] = {'after': 'unusable', 'error': str(error)[:300], 'first_answer': _bounded(first_answer)}
+        drafted_by = out.receipt.get('answered_by') or out.receipt.get('model') or drafted_by
+        clean['dry_run'] = dry_run(ws, clean['code'])
+    else:
+        clean['dry_run'] = dry_run(ws, clean['code'])
+        if findings(clean):
+            clean, drafted_by = _revise_once(ws, router, data, clean, key, drafted_by, checkpoint,
+                                             style=style, first_answer=out.data)
+    if style == 'examples':
+        clean.setdefault('answer', _bounded(out.data))     # the model's own words, kept for review and re-scoring
     proposal = dict(clean, id=key, state='proposed', utc=_now(), milestone=milestone_id, input_sha256=digest,
                     drafted_by=drafted_by)
     record = _read_json(path, {'milestone': milestone_id, 'proposals': []})
@@ -282,27 +353,34 @@ def findings(proposal) -> list[str]:
     return found
 
 
-def _revise_once(ws, router, data, first, key, drafted_by, checkpoint):
+def _revise_once(ws, router, data, first, key, drafted_by, checkpoint, *, style='code', first_answer=None):
     """One more call, told what Runesmith found. The first proposal is kept (with its warnings) if this fails."""
     finding = first['dry_run']['verdict'] if first['dry_run']['verdict'] in FINDINGS else 'unstated_text'
-    request = dict(data, revise=REVISE.format(finding=' '.join(findings(first))),
-                   your_first_proposal={k: first[k] for k in ('checks', 'assumes', 'code')})
+    if style == 'examples':
+        request = dict(_lean(ws, data), revise=acceptance_examples.REVISE.format(finding=' '.join(findings(first))),
+                       your_first_proposal=first_answer)
+    else:
+        request = dict(data, revise=REVISE.format(finding=' '.join(findings(first))),
+                       your_first_proposal={k: first[k] for k in ('checks', 'assumes', 'code')})
     checkpoint()
     try:
         out = router.call('acceptance', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False), system=SYSTEM,
-                          schema=SCHEMA, max_tokens=ANSWER_TOKENS, key='acceptance-' + key + '-revise')
+                          schema=SCHEMAS[style], max_tokens=ANSWER_TOKENS, key='acceptance-' + key + '-revise')
     except Exception as error:
         return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by
     checkpoint()
     try:
         if not out.ok or not isinstance(out.data, dict) or out.data.get('skipped_by_owner'):
             raise WorkspaceError((out.error or 'no usable answer')[:200])
-        revised = validate(out.data)
+        revised = _clean(out.data, style, data)
     except WorkspaceError as error:
         return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by
     revised['dry_run'] = dry_run(ws, revised['code'])
     revised['revision'] = {'after': finding, 'first_code_sha256': first['code_sha256'],
                            'first_checks': first['checks']}
+    if style == 'examples':
+        revised['answer'] = _bounded(out.data)
+        revised['revision']['first_answer'] = _bounded(first_answer)
     return revised, out.receipt.get('answered_by') or out.receipt.get('model') or drafted_by
 
 
@@ -351,7 +429,8 @@ def public_criteria(ws, milestone_id, proposal) -> list[dict[str, str]]:
     """The milestone's public expectations after approval: the owner's own criteria, plus these sentences."""
     kept = [c for c in (expectations(ws, milestone_id) or {}).get('criteria', [])
             if not c['id'].startswith(('check.', 'assumes.'))]
-    ours = [{'id': 'check.' + c['test'], 'description': (c['says'] + (' It requires the exact text: ' + ', '.join(
+    ours = [{'id': 'check.' + c['test'], 'description': (c['says'] + (' Checked exactly: ' + c['exact'] if c.get('exact') else '')
+                                                           + (' It requires the exact text: ' + ', '.join(
                  f'“{text}”' for text in c['unstated']) + '.' if c.get('unstated') else ''))[:1200]}
             for c in proposal['checks']]
     if proposal.get('assumes'):

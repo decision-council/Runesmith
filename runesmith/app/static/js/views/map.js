@@ -324,11 +324,15 @@ function objectDetails(obj, env, data) {
   }
   if (obj.ladder?.length) out.push(h('div.divider'), h('div.label-text', 'Build ladder'), ladderEl(obj));
   if (obj.facts) {
-    const skip = new Set(['broken_examples', 'top_extensions', 'recursive', 'fingerprint']);
+    const skip = new Set(['broken_examples', 'orphan_examples', 'todo_examples', 'top_extensions', 'recursive', 'fingerprint']);
     out.push(h('div.divider'), h('div.label-text', 'Facts read from disk'),
       kv(Object.entries(obj.facts).filter(([k, v]) => !skip.has(k) && v !== null && typeof v !== 'object').map(([k, v]) => [humanize(k), typeof v === 'boolean' ? (v ? 'yes' : 'no') : v])));
     if (obj.facts.broken_examples?.length) out.push(h('div.label-text.mt-16', 'Broken links (examples)'),
       h('ul.small.mono', { style: { paddingLeft: '18px' } }, obj.facts.broken_examples.map((b) => h('li', `${b.document || b.page} → ${b.target}`))));
+    if (obj.facts.orphan_examples?.length) out.push(h('div.label-text.mt-16', 'Pages no other page links to'),
+      h('ul.small.mono', { style: { paddingLeft: '18px' } }, obj.facts.orphan_examples.map((p) => h('li', p))));
+    if (obj.facts.todo_examples?.length) out.push(h('div.label-text.mt-16', 'Notes still to do (TODO, FIXME)'),
+      h('ul.small', { style: { paddingLeft: '18px' } }, obj.facts.todo_examples.map((t) => h('li', h('span.mono', `${t.document}:${t.line}`), ' ', t.text))));
   }
   if (obj.probe) out.push(h('div.divider'), h('div.label-text', 'Last measured test run (throwaway copy)'),
     kv(Object.entries(obj.probe).map(([k, v]) => [humanize(k), v])));

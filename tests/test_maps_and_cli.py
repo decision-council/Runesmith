@@ -233,3 +233,28 @@ def test_a_flat_project_with_failing_tests_is_probed_and_its_failures_found(tmp_
     assert root["kind"] == "python_repository"
     rungs = {r["rung"]: r["status"] for r in root["ladder"]}
     assert rungs["tests_collect"] == "achieved" and rungs["tests_pass"] == "not_achieved"
+
+
+def test_the_index_is_named_as_it_is_on_disk(tmp_path):
+    # J4-F3: on a case-insensitive disk "INDEX.md" exists when index.md does; the map shows the real name.
+    (tmp_path / "index.md").write_text("# Recipes" + chr(10), encoding="utf-8")
+    (tmp_path / "rye.md").write_text("# Rye" + chr(10), encoding="utf-8")
+    doc = next(o for o in build_environment_map(tmp_path)["objects"] if o["root"])
+    assert doc["facts"]["index"] == "index.md"
+
+
+def test_pages_nothing_links_to_and_notes_still_to_do_are_found(tmp_path):
+    # J4: a handbook with a page no reader can reach by following links, and notes left to do.
+    (tmp_path / "recipes").mkdir()
+    (tmp_path / "index.md").write_text("# Handbook\n\n[Rye](recipes/rye.md)\n", encoding="utf-8")
+    (tmp_path / "recipes" / "rye.md").write_text(
+        "# Rye\n\nTODO: add the baking time.\n\n```\n# TODO inside a code example is not a note\n```\n\n[Back](../index.md)\n",
+        encoding="utf-8")
+    (tmp_path / "recipes" / "seeded-loaf.md").write_text("# Seeded loaf\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("Order flour.\nFIXME: the oven timer\n", encoding="utf-8")
+    objects = {o["name"]: o["facts"] for o in build_environment_map(tmp_path)["objects"]}
+    # recipes/ is an object of its own; rye.md is linked from the folder's index, so only the seeded loaf is an orphan.
+    assert objects["recipes"]["orphan_examples"] == ["seeded-loaf.md"]
+    assert sum(f["orphan_pages"] for f in objects.values()) == 1
+    notes = sorted((name, t["document"], t["line"]) for name, f in objects.items() for t in f["todo_examples"])
+    assert notes == [("recipes", "rye.md", 3), (tmp_path.name, "notes.txt", 2)]

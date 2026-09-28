@@ -6,7 +6,13 @@ const STATUS = { open: ['', 'open'], doing: ['rune', 'in progress'], done: ['goo
 // Exact text a check's code requires that its sentence does not say (found by Runesmith, not by the model).
 const exactText = (c) => c.unstated?.length
   ? h('div.tiny.warn', 'Also requires the exact text: ' + c.unstated.map((x) => `“${x}”`).join(', '))
-  : null;
+  : c.exact ? h('details.tiny', h('summary', 'What exactly is checked'), h('div.muted', c.exact)) : null;
+// Examples-style proposals: texts Runesmith removed because the milestone never states them, and what no check covers.
+const examplesNotes = (p) => [
+  p.dropped?.length ? h('div.small.mt-8', h('b', 'Runesmith loosened or removed wording your milestone does not state, so a correct build is not rejected for it:'),
+    h('ul.small', p.dropped.map((d) => h('li', d)))) : null,
+  p.not_checked?.length ? h('div.small.mt-8', h('b', 'Not checked automatically; judge these yourself when you try the result:'),
+    h('ul.small', p.not_checked.map((d) => h('li', d)))) : null];
 
 function editInterfaces(milestone, contract, reload) {
   // Freeze the reviewed revision even if a plan event refreshes behind this drawer.
@@ -169,7 +175,12 @@ export default async function render(root, ctx) {
     clear(planCard).append(h('div.card-head', h('h3', icon('route'), 'Plan'), plan ? h('span.badge', `v${plan.version} · ${plan.drafted_by || 'owner'} · ${ago(plan.utc)}`) : null,
       h('div.actions', h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, showAuthorContext)}, icon('eye'), 'Author context'), h('button.btn.sm', { onclick: async () => { const t = await askText({ title: 'Add a milestone', placeholder: 'e.g. A first page that lists tasks', confirm: 'Add' }); if (t) { await post('/api/plan/milestones', { title: t }); drawPlan(); } } }, icon('plus'), 'Milestone'), draftBtn)));
     if(planningBlocks.length)planCard.append(h('div.callout.warn',h('div',planningBlocks.join(' '),
-      h('button.btn.sm.mt-8',{onclick:()=>ctx.navigate('mission')},'Review planning controls'))));
+      h('div.row.wrap.mt-8',
+        data.autonomy==='observe' ? h('button.btn.sm.primary',{onclick:(e)=>withBusy(e.currentTarget,async()=>{
+          if(!(await confirmDialog({title:'Let Runesmith plan and draft?',confirm:'Let it help',icon:'wand',
+            text:'Runesmith will ask a model to plan and draft, and will propose changes for you to review. It still changes no file on its own unless you allow automatic apply. You can go back to just looking in Settings.'})))return;
+          await post('/api/settings',{autonomy:'propose'});toast('Runesmith may now plan and draft; you review every change.','good');drawPlan();})},icon('wand'),'Let Runesmith plan and draft') : null,
+        planningBlocks.length>(data.autonomy==='observe'?1:0) ? h('button.btn.sm',{onclick:()=>ctx.navigate('mission')},'Review planning controls') : null))));
     for(const held of data.held_plans||[])planCard.append(h('details.mt-8',
       h('summary.small',`Returned plan held — ${held.author||'author not recorded'} · ${held.utc}`),
       h('p.small',held.reason),h('p.small',held.answer?.summary||'No summary returned.'),
@@ -254,7 +265,8 @@ export default async function render(root, ctx) {
             : dry.verdict === 'fails_now'
               ? h('div.tiny.muted', `Tried on your project as it is today: ${dry.failures + dry.errors} of ${dry.ran} fail, as expected before the milestone is built.`)
               : dry.why ? h('div.tiny.muted', dry.why) : null;
-        const firstTry = { broken: 'could not run', passes_now: 'already passed on today’s project', unstated_text: 'required exact text their sentences did not say' }[p.revision?.after] || 'needed work';
+        const firstTry = { broken: 'could not run', passes_now: 'already passed on today’s project', unstated_text: 'required exact text their sentences did not say',
+          unusable: 'broke a rule of the examples format' }[p.revision?.after] || 'needed work';
         const revised = p.revision && h('div.tiny.muted', p.revision.error
           ? `The first checks ${firstTry}; asking for a revision did not work (${p.revision.error}).`
           : `Revised once: the first checks ${firstTry}.`);
@@ -262,8 +274,10 @@ export default async function render(root, ctx) {
         accBlock.append(...[h('b.small', replacing ? 'New checks proposed to replace yours: do these describe “done” better?' : 'Proposed acceptance checks: do these describe “done”?'),
           h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c)))),
           p.assumes?.length ? h('div.small.mt-8', h('b', 'They assume (your milestone does not say this):'), h('ul.small', p.assumes.map((a) => h('li', a)))) : null,
+          ...examplesNotes(p),
           trial, revised,
-          h('details', h('summary.tiny', `Show the code (proposed by ${p.drafted_by || 'a model'})`), h('pre.code', p.code)),
+          h('details', h('summary.tiny', p.style === 'examples' ? `Show the code (examples by ${p.drafted_by || 'a model'}, code written by Runesmith)`
+            : `Show the code (proposed by ${p.drafted_by || 'a model'})`), h('pre.code', p.code)),
           h('div.row.wrap.mt-8',
             h('button.btn.sm.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
               if (replacing) {

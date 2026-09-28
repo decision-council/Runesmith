@@ -309,6 +309,7 @@ _INLINE = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
 _REFERENCE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+\"[^\"]*\")?\s*$", re.M)
 _EXTERNAL = ("http://", "https://", "mailto:", "ftp://", "data:", "tel:", "file:")
 _LINE_SUFFIX = re.compile(r"^(.+?):\d+(?:[:-]\d+)?$")
+_TODO = re.compile(r"\b(TODO|FIXME|XXX)\b")
 
 
 def exists_exactly(path: Path, _listing: dict[str, set[str]] | None = None) -> bool:
@@ -339,22 +340,62 @@ def _internal_targets(text: str) -> list[str]:
     return [t for t in targets if not t.lower().startswith(_EXTERNAL) and not t.startswith("#")]
 
 
-def document_object(path: Path, *, recursive: bool = True) -> dict[str, Any]:
+def _index_name(path: Path) -> str | None:
+    present = {p.name for p in path.iterdir()} if path.is_dir() else set()
+    by_lower = {n.lower(): n for n in present}                   # the name as it is on disk, on any file system
+    return next((by_lower[n.lower()] for n in ("README.md", "INDEX.md", "index.md", "readme.md", "README.rst",
+                                               "README.txt", "README") if n.lower() in by_lower), None)
+
+
+def _linked_pages(scope: Path) -> set[str]:
+    """Every file that some Markdown page under ``scope`` links to (other than itself), as normalised paths."""
+    from urllib.parse import unquote
+    linked = set()
+    for doc in [f for f in _walk(scope) if f.suffix.lower() in (".md", ".markdown")][:MAX_DOCUMENTS]:
+        try:
+            text = doc.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for target in _internal_targets(text):
+            rel = unquote(target.split("#", 1)[0].split("?", 1)[0])
+            resolved = ((scope / rel.lstrip("/")) if rel.startswith("/") else (doc.parent / rel)) if rel else None
+            if resolved is not None and resolved.exists() and resolved.resolve() != doc.resolve():
+                linked.add(os.path.normcase(str(resolved.resolve())))
+    return linked
+
+
+def document_object(path: Path, *, recursive: bool = True, scope: Path | None = None,
+                    linked: set[str] | None = None) -> dict[str, Any]:
     """Static facts for a document collection: Markdown files, an index, and whether internal links resolve.
 
-    Nothing is executed or fetched. External links are not checked (that would contact the network).
+    Links are counted across ``scope`` (the whole mapped folder), so a page linked from another object's index is
+    not an orphan. Nothing is executed or fetched. External links are not checked (that would contact the network).
     """
     from urllib.parse import unquote
+    scope = scope or path
+    linked = _linked_pages(scope) if linked is None else linked
     candidates = _walk(path) if recursive else sorted(p for p in path.iterdir() if p.is_file() and not is_link(p))
     texts = [f for f in candidates if f.suffix.lower() in DOCUMENT_SUFFIXES]
     documents = [f for f in candidates if f.suffix.lower() in (".md", ".markdown")][:MAX_DOCUMENTS]
-    checked, broken = 0, []
+    checked, broken, todos = 0, [], []
     listing: dict[str, set[str]] = {}
+    for doc in texts[:MAX_DOCUMENTS]:
+        if doc.suffix.lower() in (".md", ".markdown"):
+            continue
+        try:
+            lines = doc.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        todos += [{"document": doc.relative_to(path).as_posix(), "line": n, "text": line.strip()[:100]}
+                  for n, line in enumerate(lines, 1) if _TODO.search(line)]
     for doc in documents:
         try:
             text = doc.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        prose = _FENCE.sub(lambda m: "\n" * m.group(0).count("\n"), text)     # a TODO in a code example is not a note
+        todos += [{"document": doc.relative_to(path).as_posix(), "line": n, "text": line.strip()[:100]}
+                  for n, line in enumerate(prose.splitlines(), 1) if _TODO.search(line)]
         for target in _internal_targets(text):
             rel = unquote(target.split("#", 1)[0].split("?", 1)[0])
             if not rel:
@@ -369,10 +410,17 @@ def document_object(path: Path, *, recursive: bool = True) -> dict[str, Any]:
                 broken.append({"document": doc.relative_to(path).as_posix(), "target": target,
                                **({"case": True} if resolved.exists() else {})})
     integrity = ((checked - len(broken)) / checked) if checked else None
-    index = next((n for n in ("README.md", "INDEX.md", "index.md", "readme.md", "README.rst", "README.txt", "README")
-                  if (path / n).exists()), None)
+    index = _index_name(path)
+    # Pages no other page links to: a reader following links never finds them. An index (this collection's or the
+    # whole folder's) is the way in, so it counts as linked; a lone page cannot be an orphan.
+    entries = {os.path.normcase(str((folder / name).resolve())) for folder in (path, scope)
+               if (name := _index_name(folder))}
+    orphans = [d.relative_to(path).as_posix() for d in documents
+               if len(documents) + len(linked) > 1 and os.path.normcase(str(d.resolve())) not in linked | entries]
     facts = {"documents": len(texts), "markdown_files": len(documents), "internal_links": checked,
              "broken_links": len(broken), "broken_examples": broken[:10], "index": index, "recursive": recursive,
+             "orphan_pages": len(orphans), "orphan_examples": orphans[:10],
+             "todo_notes": len(todos), "todo_examples": todos[:10],
              "truncated_scan": len(documents) >= MAX_DOCUMENTS}
     objectives = [dict(t, status="proposed", value=round(integrity, 4) if integrity is not None else None,
                        band=band(integrity, t), evidence="observed" if integrity is not None else "unknown")
@@ -547,7 +595,7 @@ def build_environment_map(workspace: Path, *, probe: bool = False, max_objects: 
             candidates.extend(nested or [p])
         if root_kind == "document_collection" or loose:
             candidates.insert(0, workspace)           # its own loose files are an object too
-    objects, unknowns = [], []
+    objects, unknowns, site_links = [], [], None
     for path in candidates[:max_objects]:
         name = path.name if path == workspace else path.relative_to(workspace).as_posix()
         if name in exclude or path.name in exclude:
@@ -572,7 +620,9 @@ def build_environment_map(workspace: Path, *, probe: bool = False, max_objects: 
                 unknowns.append(f"{name}: Node probing (npm test) is not implemented; tests_pass stays unknown")
         elif kind == "document_collection":
             # The workspace root's own documents only; its subdirectories are mapped as objects of their own.
-            entry.update(document_object(path, recursive=path != workspace))
+            if site_links is None:
+                site_links = _linked_pages(workspace)             # once per map: links count across the whole folder
+            entry.update(document_object(path, recursive=path != workspace, scope=workspace, linked=site_links))
             unknowns.append(f"{name}: external links are not checked (that would contact the network)")
         elif kind == "website":
             entry.update(website_object(path, recursive=path != workspace or root_kind == "website"))

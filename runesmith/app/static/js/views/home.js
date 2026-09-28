@@ -28,6 +28,16 @@ export default async function render(root, { app, navigate, refreshState }) {
   } else if (s.worker?.paused) {
     line = 'The work queue is paused. Review Activity before resuming; an enabled schedule or configured model does not override the pause.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('activity') }, icon('activity'), 'Review paused work');
+  } else if (s.settings.autonomy === 'observe') {
+    line = 'You chose to just look. Runesmith maps your folder and reports what it finds; it asks no model and changes nothing.';
+    cta = h('button.btn.primary.lg', { onclick: () => navigate('map') }, icon('map'), 'See what it found');
+    extra = h('button.btn.lg', { title: 'Plan and draft with a model; you review every change', onclick: (e) => withBusy(e.currentTarget, async () => {
+      if (!(await confirmDialog({ title: 'Let Runesmith help?', confirm: 'Let it help', icon: 'wand',
+        text: 'Runesmith will ask a model to plan and draft, and will propose changes for you to review. It still changes no file on its own unless you allow automatic apply.' }))) return;
+      await post('/api/settings', { autonomy: 'propose' });
+      toast('Runesmith may now plan and draft; you review every change.', 'good');
+      navigate('home');
+    }) }, icon('wand'), 'Let it help');
   } else if (!s.ready.any) {
     line = `${s.mapped_utc ? 'Runesmith has a saved map of your folder.' : 'Runesmith can map your folder.'} Add thinking power (a model on this computer, an API key, or a chat window), then review the modes and prerequisites for the work you want.`;
     cta = h('button.btn.primary.lg', { onclick: () => { navigate('inference'); setTimeout(() => bus.emit('ui:add-model', {}), 250); } }, icon('cpu'), 'Add thinking power');

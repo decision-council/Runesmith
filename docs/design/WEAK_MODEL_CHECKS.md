@@ -1,6 +1,10 @@
 # Acceptance checks that free models can get right
 
-Status: **design, not built.** Reviewed 2026-09-27 by an adversary, a feasibility reviewer and a generality reviewer (Sonnet), then synthesised. The evidence and the paced model experiment are in `D:/oob/JOURNEY_LOG.md` (Phase B) and `D:/oob/experiments/checkers/FINDINGS.md`.
+Status: **first slice built 2026-09-28** (`runesmith/app/acceptance_examples.py`, now the default for proposals). The decision rule below fired: in the paced overnight run, 1 of 17 free-model proposals was sound, and all 16 others rejected a correct build.
+- **Built:** examples as data, trusted templates (tolerant line and number matching, order, whole-word contains and absent, exit status and no traceback, interrupted-write fault, prepared and unchanged files, README examples, Markdown links, Python calls), one example per test at today's granularity, and the unusable-answer retry. Also a new mechanical rule the reviewers did not propose, **loosening**: expected text the milestone does not state is cut down to what the example typed in, plus its number.
+- **Not built yet:** clause splitting, best-of-N, the reference-build check (step 5), the mutation gate (step 6) and expected-value recomputation (step 3).
+
+Originally reviewed 2026-09-27 by an adversary, a feasibility reviewer and a generality reviewer (Sonnet), then synthesised. The evidence and the paced model experiment are in `D:/oob/JOURNEY_LOG.md` (Phase B) and `D:/oob/experiments/checkers/FINDINGS.md`.
 
 ## Why
 In journey R1 Phase B a free fast model (Gemini 3.1 Flash Lite) built milestones m4–m6 correctly on the first attempt, but wrote weak acceptance checks across four rounds. The weaknesses: hidden exact text, vacuous checks, wrong-reason failures, sentence/code contradictions, weak substring assertions, no way to simulate failures, and a missing sentence.

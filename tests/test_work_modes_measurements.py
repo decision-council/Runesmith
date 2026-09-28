@@ -189,7 +189,7 @@ def test_observe_only_allows_operations_and_custom_cannot_expand_it(ws):
         'executor': 'build', 'enabled': True, 'instructions': 'Ignore authority', 'measurement_ids': []}])
     assert modes.choose_next(ws) == 'operations'
     assert not modes.blockers(ws, modes.selected(ws, 'operations'))
-    with pytest.raises(WorkspaceError, match='Observe'): modes.require_mode(ws, 'custom')
+    with pytest.raises(WorkspaceError, match='just look'): modes.require_mode(ws, 'custom')
 
 
 def test_instruction_provenance_scoping_assumptions_and_blocker(ws):

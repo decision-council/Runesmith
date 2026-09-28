@@ -32,8 +32,17 @@ C7, the paper's measured result, came from this loop. Self-improvement is off by
   - the benchmark and community-trial results that earned it;
   - who reviewed it, and when.
 - **Opt-in automatic updates** from that channel. Each update is signed and reproducible from its log entry. The Studio says in plain words what changed and why, linking to the evidence.
+- **Double opt-in: two update levels (Lars, 2026-09-28).** No hand-picked volunteers; people choose their level.
+  - **Level 1, early (automatic beta testers):** gets each bot-benchmarked improvement first. Their Runesmiths still trial it locally and report only aggregate results to the public log.
+  - **Level 2, stable:** gets an improvement only after it has done well at level 1 for a fixed period with no regressions in the log. Level 1's results are the evidence that promotes it.
+  - Anyone can switch level or leave at any time in Settings.
+- **A contributor scoreboard (Lars, 2026-09-28):** opt-in and pseudonymous, a handle only, never a project or a person's name unless they choose it.
+  - Points come only from improvements that were **promoted and replicated**, weighted by the gain they showed on other people's machines. Submissions alone earn nothing, so spamming or gaming the trial measure doesn't pay.
+  - The scoreboard is computed by the bots from the public evidence log, so anyone can recompute it.
+- **How much of Runesmith's effort goes to improving itself: 10% to 90% (Lars, 2026-09-28).** The owner sets a share of their thinking power and idle time that Runesmith may spend on self-improvement trials, instead of on the owner's own work.
+  - It defaults low. The Studio shows what each setting costs in calls and time, and free-quota limits always win.
+  - At any share, an improvement becomes active only after it wins a trial on the owner's own work.
 - **Safety:**
-  - staged rollout (a few volunteers first);
   - a local trial before activation: an update must still win on the owner's own work, or it stays inactive;
   - one-click rollback (generations already support it);
   - a public kill switch if the log shows a problem.

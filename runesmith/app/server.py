@@ -407,7 +407,7 @@ def api_plan(s: Studio, q, body):
             'acceptance_checks':acceptance_status(ws),
             'acceptance_expectations':{m['id']:expectations(ws,m['id']) for m in (ws.plan() or {}).get('milestones',[])},
             'current_checks':current_file_reviews(ws), 'readiness':plan_readiness(ws.plan()),
-            'planning_blockers':planning_blockers(ws),
+            'planning_blockers':planning_blockers(ws), 'autonomy': ws.settings()['autonomy'],
             'held_plans':[{k:r.get(k) for k in ('id', 'utc', 'author', 'reason', 'answer')} for r in held_plans(ws)[:10]]}
 
 

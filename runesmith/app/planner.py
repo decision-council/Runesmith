@@ -132,7 +132,8 @@ def _workspace_summary(ws) -> dict[str, Any]:
         f = o.get("facts") or {}
         for key in ("source_files", "test_files", "markdown_files", "documents", "files", "broken_links", "top_extensions",
                     "package_name", "test_script", "pages", "stylesheets", "scripts", "broken_references",
-                    "pages_with_viewport", "pages_with_title"):
+                    "pages_with_viewport", "pages_with_title", "broken_examples", "orphan_pages", "orphan_examples",
+                    "todo_notes", "todo_examples"):
             if f.get(key) not in (None, [], ""):
                 row[key] = f[key]
         objects.append(row)

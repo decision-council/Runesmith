@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const dependencies=process.env.RUNESMITH_TEST_NODE_MODULES;
 const {chromium}=require(dependencies?path.join(dependencies,'playwright'):'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22').split(','));
+const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23').split(','));
 const artifacts=path.join(root,'training','.tmp','studio-use-loops-'+new Date().toISOString().replace(/[:.]/g,'-'));
 mkdirSync(artifacts,{recursive:true});
 const executable=[chromium.executablePath(),'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -53,7 +53,9 @@ const fixtureWork={counts:{},draft_counts:{waiting:1},proposals:[],drafts:[recov
 let ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30},fixFixture={offer:null};
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
+let fixtureAutonomy='propose';
 const planningBlocks=()=>[
+  ...(fixtureAutonomy==='observe'?['You chose to just look (observe), so Runesmith does not ask a model to plan.']:[]),
   ...(!mission.modes.some(m=>m.executor==='map_plan'&&m.enabled)?['Map & Plan is off. Existing plans may still drive Build.']:[]),
   ...(!mission.infer_purpose&&!ownerBrief?['Purpose inference is off. Add a brief, active owner goal or selected blueprint before planning.']:[]),
 ];
@@ -226,7 +228,7 @@ await context.route('**/*',async route=>{
     if(req.method()==='POST')ownerBrief=body.text;
     data={text:ownerBrief,blueprints:[],candidates:[],updated:null};
   } else if(p==='/api/plan')data={plan:fixturePlan,milestones:fixturePlan?.milestones||[],ready:true,
-    planning_blockers:planningBlocks(),held_plans:heldPlans,breakdowns:[],acceptance_expectations:fixtureExpectations,acceptance_checks:fixtureAcceptance,current_checks:[],
+    planning_blockers:planningBlocks(),autonomy:fixtureAutonomy,held_plans:heldPlans,breakdowns:[],acceptance_expectations:fixtureExpectations,acceptance_checks:fixtureAcceptance,current_checks:[],
     readiness:Object.fromEntries((fixturePlan?.milestones||[]).map(m=>[m.id,{ready:true,unmet:[]}]))};
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
   else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false};
@@ -1848,6 +1850,22 @@ try{
     const replaced=posts().filter(r=>r.path==='/api/plan/milestones/m1/acceptance/approve').at(-1);
     assert.deepEqual(replaced.body,{proposal:'p2',replace:true,reason:'A correct README failed the old example check.'});
     loops.push({id:'B20.04',case:'New checks next to approved ones replace them only with a reason; an empty reason sends nothing',result:'passed'});
+    // Examples-style proposals (WEAK_MODEL_CHECKS first slice): what is checked exactly, what Runesmith removed, what no check covers.
+    fixtureAcceptance={m1:{approved:null,proposal:{id:'p3',style:'examples',assumes:[],
+      checks:[{test:'test_01_counts',says:'Each month shows its number of books.',
+        exact:'After `python -m readinglog add --title A --author B --finished 2025-01-05`; running `python -m readinglog months`: a line with “2025-01” also shows the number 1.'}],
+      dropped:['Example 1: the output of `python -m readinglog months` shows “No books”'],
+      not_checked:['Whether the wording is friendly.'],
+      dry_run:{verdict:'fails_now',ran:1,failures:1,errors:0},revision:{after:'unusable',error:'Example 1, step 1 must start with python or node.'},
+      code:'import unittest',drafted_by:'Fixture free model'}}};
+    await page.evaluate(()=>window.mount('goals'));text=await block().innerText();
+    assert(text.includes('Runesmith loosened or removed wording your milestone does not state'),text);assert(text.includes('shows “No books”'));
+    assert(text.includes('Not checked automatically'));assert(text.includes('Whether the wording is friendly.'));
+    assert(text.includes('broke a rule of the examples format'));assert(text.includes('code written by Runesmith'));
+    assert(!/\bnull\b|undefined/.test(text),text);
+    await block().getByText('What exactly is checked',{exact:true}).click();
+    assert((await block().innerText()).includes('a line with “2025-01” also shows the number 1'));
+    loops.push({id:'B20.05',case:'An examples proposal shows what is checked exactly, what Runesmith removed and what is not checked',result:'passed'});
     fixtureAcceptance={};fixturePlan=null;
   }
   if(selected.has('B21')){
@@ -1924,6 +1942,38 @@ try{
     assert.deepEqual(posts.map(r=>[r.path,r.body]),[['/api/fix-tests',{allow_apply:true}],['/api/worker/run',{job:'build'}]]);
     loops.push({id:'B22.02',case:'Cancel sends nothing; confirming freezes the tests, starts one build and opens Goals & plan',result:'passed'});
     fixFixture={offer:null};
+  }
+  if(selected.has('B23')){
+    // Someone who chose to just look (journey J4): the Overview and Goals & plan speak to them, with a direct switch.
+    const start=requests.length;
+    fixtureAutonomy='observe';fixturePlan=null;
+    const base={workspace:{name:'Bakery handbook',path:'D:/fixture/handbook',empty:false},
+      settings:{onboarded:true,auto_work:false,kaizen:false,probe_tests:false,policy_chosen:true,interval_minutes:60,autonomy:'observe'},
+      ready:{any:false},worker:{paused:false,current:null,recovery:null},manual_waiting:0,mapped_utc:'2026-09-28T00:50:00Z',
+      proposals:{waiting:0,applied:0},drafts:{waiting:0,applied:0},objects:[],plan:{milestones:0},
+      goals:[],brief:'',round_utc:null,repairs:{accepted:0,judged:0},generations:1};
+    await page.setViewportSize({width:1440,height:1100});
+    await page.evaluate(async state=>{window.homeState=state;window.navigation=null;await window.mount('home');},base);
+    const hero=page.locator('.hero');
+    assert((await hero.innerText()).includes('You chose to just look'));
+    await hero.getByRole('button',{name:'See what it found',exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>window.navigation),['map']);
+    await page.evaluate(async state=>{window.homeState=state;window.navigation=null;await window.mount('home');},base);
+    await page.locator('.hero').getByRole('button',{name:'Let it help',exact:true}).click();
+    await page.getByRole('dialog').getByRole('button',{name:'Let it help',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('[role=dialog]'));
+    assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST').map(r=>[r.path,r.body]),[['/api/settings',{autonomy:'propose'}]]);
+    loops.push({id:'B23.01',case:'The Overview speaks to someone who chose to just look: see what it found, or let it help after a plain confirm',result:'passed'});
+    await page.evaluate(()=>window.mount('goals'));
+    const block=page.locator('.callout.warn').filter({hasText:'You chose to just look'});
+    await block.waitFor();
+    assert.equal(await block.getByRole('button',{name:'Review planning controls',exact:true}).count(),0);
+    await block.getByRole('button',{name:'Let Runesmith plan and draft',exact:true}).click();
+    await page.getByRole('dialog').getByRole('button',{name:'Let it help',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('[role=dialog]'));
+    assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST').map(r=>r.body).at(-1),{autonomy:'propose'});
+    loops.push({id:'B23.02',case:'The observe block on Goals & plan offers the switch itself instead of sending people to Modes',result:'passed'});
+    fixtureAutonomy='propose';
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));
