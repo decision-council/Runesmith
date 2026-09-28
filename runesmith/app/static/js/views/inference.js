@@ -278,7 +278,7 @@ function roleLane(role, data, reload) {
   const save = (list) => post('/api/inference/roles', { roles: { [role]: list } }).then(reload);
   const who = (data.role_labels[role] || role).split(':')[0];     // screen readers hear which role (journey J2-F2)
   lane.append(h('h4', icon(ROLE_ICON[role]), data.role_labels[role], h('span.spacer'),
-    role === 'plan' && !names.length && data.ready.plan ? h('span.badge', `uses ${data.ready.plan_source}`) :
+    role === 'plan' && !names.length && data.ready.plan ? h('span.badge', `uses the ${(data.role_labels[data.ready.plan_source] || data.ready.plan_source).split(':')[0]}’s model`) :
     role === 'acceptance' && !names.length && data.ready.acceptance ? h('span.badge', 'uses the Planner’s model') : names.length && !usable.size ? h('span.badge.warn', 'not ready') : names.length ? h('span.badge.good', 'ready') : h('span.badge', 'empty')));
   const box = h('div.pillbox');
   names.forEach((n, idx) => {

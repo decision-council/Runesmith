@@ -365,6 +365,18 @@ def test_the_library_generation_is_adopted_only_through_a_trial(tmp_path):
     assert ws.activate_generation(active)["ok"] and generations.active(ws.home) == active   # and back
 
 
+def test_the_owner_can_stop_a_trial_and_keep_what_runs(tmp_path):
+    # Journey J6-F5: stopping a trial meant switching generations; choosing the active one again now closes it.
+    ws = Workspace(tmp_path)
+    active = generations.active(ws.home)
+    [entry] = ws.library()
+    adopted = ws.adopt_from_library(entry["id"])
+    stopped = ws.activate_generation(active)
+    assert stopped["ok"] and stopped["trial_closed"] == adopted["id"] and generations.active(ws.home) == active
+    assert ws.generations_view()["trial"] is None
+    assert [t["decision"] for t in ws.generations_view()["closed_trials"]] == ["closed_by_owner"]
+
+
 # ----------------------------------------------------------- planner/worker --
 
 def test_the_planner_drafts_a_plan_and_first_files_through_any_model(tmp_path):
@@ -622,3 +634,18 @@ def test_a_map_from_an_earlier_version_is_reported_so_the_owner_can_map_again(st
     assert call(studio, "GET", "/api/map/environment")[1]["outdated"] is True
     # Journey J2: the Overview claimed "no code with tests here" from such a map; the state now says it is outdated.
     assert studio.ws.state()["map_outdated"] is True
+
+
+def test_a_fix_whose_files_changed_no_longer_waits(tmp_path):
+    # Journey J6-F4: two repairs each fixed the same file; after one was applied, the other still said "waiting for
+    # you", although Apply would refuse it.
+    ws = Workspace(tmp_path)
+    repo = make_repo(tmp_path)
+    first = fake_proposal(ws, repo, key="loop-test-0001")
+    second = fake_proposal(ws, repo, key="loop-test-0002")
+    assert ws.work()["counts"] == {"waiting": 2} and ws.state()["proposals"] == {"waiting": 2}
+    assert ws.apply_proposal(first)["ok"]
+    listed = {p["key"]: p for p in ws.work()["proposals"]}
+    assert listed[second]["outdated"] is True and listed[first]["outdated"] is False
+    assert ws.work()["counts"] == {"applied": 1, "outdated": 1} and ws.state()["proposals"] == {"applied": 1, "outdated": 1}
+    assert ws.apply_proposal(second)["ok"] is False                     # Apply agrees: the files changed

@@ -2177,6 +2177,22 @@ try{
       assert.equal(await early.getByRole('button',{name,exact:true}).count(),0,name);
     assert(!(await early.evaluate(e=>e.classList.contains('glow'))));
     assert(requests.slice(supersededStart).every(r=>r.method==='GET'));
+    // B26.03 (journey J6-F4): a fix whose files changed since it was made says so and offers no Apply
+    const oldProposals=fixtureWork.proposals;
+    const fix=(key,outdated)=>({key,repo:'D:/fixture/tally-tools',object:'tally-tools',failing_tests:['tests/test_stock.py::test_remaining'],
+      files:['src/tally/stock.py'],diff:'--- a/src/tally/stock.py\n+++ b/src/tally/stock.py\n',state:'waiting',inside:true,outdated});
+    fixtureWork.proposals=[fix('loop-fits',false),fix('loop-stale',true)];
+    await page.evaluate(async()=>{window.cleanup?.();document.querySelector('#page').replaceChildren();
+      const module=await import('/static/js/views/work.js');
+      window.cleanup=await module.default(document.querySelector('#page'),{sub:['proposals'],app:{state:{proposals:{waiting:1,outdated:1},drafts:{}}},navigate(){}});});
+    const fixCard=key=>page.locator('#page .card',{hasText:key}).first();
+    await fixCard('loop-stale').waitFor();
+    const staleText=await fixCard('loop-stale').innerText();
+    assert(staleText.includes('no longer fits')&&staleText.includes('the files changed after this fix was made'),staleText);
+    assert.equal(await fixCard('loop-stale').getByRole('button',{name:'Apply to my files',exact:true}).count(),0);
+    assert.equal(await fixCard('loop-fits').getByRole('button',{name:'Apply to my files',exact:true}).count(),1);
+    fixtureWork.proposals=oldProposals;
+    loops.push({id:'B26.03',case:'A fix whose files changed since it was made says it no longer fits and offers no Apply',result:'passed'});
     loops.push({id:'B26.02',case:'A draft whose milestone a later draft finished is marked superseded, says so plainly and offers no write or recheck',result:'passed'});
     fixtureWork.drafts=oldDrafts;
   }

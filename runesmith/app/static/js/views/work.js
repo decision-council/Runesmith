@@ -49,20 +49,22 @@ function drawProposals(body, w, reload, ctx) {
   }
   const order = { waiting: 0, applied: 1, undone: 2, rejected: 3 };
   for (const p of w.proposals.slice().sort((a, b) => order[a.state] - order[b.state])) {
-    const [cls, label] = STATE_BADGE[p.state] || ['', p.state];
+    const [cls, label] = p.outdated ? ['', 'no longer fits'] : STATE_BADGE[p.state] || ['', p.state];
     const actions = h('div.row.wrap');
-    if (p.state === 'waiting' || p.state === 'undone' || p.state === 'rejected') actions.append(
+    if (!p.outdated && (p.state === 'waiting' || p.state === 'undone' || p.state === 'rejected')) actions.append(
       h('button.btn.primary', { onclick: (e) => apply(e.currentTarget, p, reload) }, icon('check'), 'Apply to my files'));
-    if (p.state === 'waiting') actions.append(h('button.btn', { onclick: (e) => reject(e.currentTarget, p, reload) }, icon('x'), 'Reject'));
+    if (p.state === 'waiting' && !p.outdated) actions.append(h('button.btn', { onclick: (e) => reject(e.currentTarget, p, reload) }, icon('x'), 'Reject'));
     if (p.state === 'applied') actions.append(h('button.btn', { onclick: (e) => withBusy(e.currentTarget, async () => {
       const r = await post(`/api/proposals/${p.key}/undo`, {});
       r.ok ? toast('Undone: your files are back as they were.', 'good') : toast(`${r.detail}${r.conflicts ? ': ' + r.conflicts.join(', ') : ''}`, 'warn', 8000);
       reload(); }) }, icon('undo'), 'Undo'));
     actions.append(h('button.btn.ghost', { onclick: () => copyText(p.diff) }, icon('copy'), 'Copy patch'), h('button.btn.ghost', { onclick: () => openNotes('proposal', p.key, `fix ${p.key}`) }, icon('note'), 'Comment'));
-    const card = h('div.card.mt-16', { class: p.state === 'waiting' ? 'glow' : '' },
+    const card = h('div.card.mt-16', { class: p.state === 'waiting' && !p.outdated ? 'glow' : '' },
       h('div.card-head', h('div.grow', h('h3', icon('check'), `Fix for ${p.object}`), h('div.small.muted', `${plural(p.files.length, 'file')} · ${p.failing_tests.length} failing test(s) now pass · ${p.key}`)),
         h('span.badge.good', icon('shield'), 'judge-accepted'), h('span', { class: `badge ${cls}` }, label)),
       h('div.pillbox.mb-8', p.failing_tests.slice(0, 6).map((t) => h('span.badge.mono', t))),
+      // Journey J6-F4: the files changed after this fix was made (often by another fix), so Apply would refuse it.
+      p.outdated ? h('div.callout.mt-8', h('p.small', 'Nothing to do here: the files changed after this fix was made, often because another fix already covered them, so it no longer fits.')) : null,
       diffView(p.diff), p.reason ? h('p.small.muted.mt-8', `Rejected because: ${p.reason}`) : null,
       p.inside ? null : h('div.callout.warn.mt-8', icon('alert'), h('div', 'This fix belongs to a folder outside this workspace; apply it from there with the patch.')),
       h('div.mt-16', actions));

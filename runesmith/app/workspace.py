@@ -605,8 +605,24 @@ class Workspace:
         state = self.proposal_state()
         counts: Counter = Counter()
         for folder in (self.home / "experience").glob("*/verified_fix.json.gz"):
-            counts[state.get(folder.parent.name, {}).get("state", "waiting")] += 1
+            name = state.get(folder.parent.name, {}).get("state", "waiting")
+            counts["outdated" if name == "waiting" and self._fix_outdated(folder.parent.name) else name] += 1
         return dict(counts)
+
+    def _fix_outdated(self, key: str) -> bool:
+        """True when a fix's files changed after it was made, so Apply would refuse it (journey J6-F4: each repair
+        saw every bug and fixed all four files; after one was applied, the others still said "waiting for you")."""
+        try:
+            p = self._proposal(key)
+        except (OSError, ValueError, KeyError, WorkspaceError):
+            return False
+        repo = Path(p["task"]["repo"]).resolve()
+        for rel in p["fix"]:
+            target = repo / rel
+            current = target.read_bytes() if target.is_file() else None
+            if current is None or _lf(current) != (p["parent"].get(rel) or "").lstrip("\ufeff"):
+                return True
+        return False
 
     def self_map(self, *, refresh: bool = False) -> dict[str, Any]:
         cached = None if refresh else _read_json(self.home / "SELF_MAP.json", None)
@@ -752,7 +768,8 @@ class Workspace:
             s = state.get(p["key"], {})
             repo = Path(p["repo"])
             proposals.append(dict(p, object=self._object_label(repo), state=s.get("state", "waiting"),
-                                  state_utc=s.get("utc"), reason=s.get("reason"), inside=self._inside(repo)))
+                                  state_utc=s.get("utc"), reason=s.get("reason"), inside=self._inside(repo),
+                                  outdated=s.get("state", "waiting") == "waiting" and self._fix_outdated(p["key"])))
         proposals.sort(key=lambda p: p["key"], reverse=True)
         work = _read_json(self.home / "WORK.json", {"opportunities": [], "objects": {}, "utc": None})
         recent = []
@@ -791,7 +808,7 @@ class Workspace:
                 "build_escalation": build_escalation_status(self),
                 "pending_authors": pending_authors(self),
                 "source_baseline": baseline_status(self),
-                "counts": dict(Counter(p["state"] for p in proposals)),
+                "counts": dict(Counter("outdated" if p.get("outdated") else p["state"] for p in proposals)),
                 "draft_counts": draft_counts(drafts, superseded)}
 
     def _inside(self, path: Path) -> bool:
