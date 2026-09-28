@@ -346,3 +346,19 @@ def test_the_terminal_says_plainly_when_setup_is_missing(tmp_path, monkeypatch, 
     cli.main(["--home", str(home), "discover", str(project)])
     out = capsys.readouterr().out
     assert "the tests could not run" in out and "Why: pytest is not installed" in out and "error_without_failures" not in out
+
+
+def test_a_folder_of_report_exports_is_mapped_as_reports(tmp_path):
+    # Journey J5-F2: a bakery's weekly till exports (reports/week-35.csv ...) were a plain folder whose next step was
+    # "readme present"; the owner came to watch a number in them.
+    (tmp_path / "README.md").write_text("# Bakery\n", encoding="utf-8")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    for week in (9, 10, 35):
+        (reports / f"week-{week}.csv").write_text("date,product,baked,sold,revenue\n2026-09-01,rye,10,8,24\n",
+                                                  encoding="utf-8")
+    folder = next(o for o in build_environment_map(tmp_path)["objects"] if o["name"] == "reports")
+    assert folder["kind"] == "data_reports" and folder["facts"]["report_files"] == 3
+    assert folder["facts"]["newest_report"] == "week-35.csv"            # by name, as week-10 comes after week-9
+    assert folder["facts"]["columns"] == ["date", "product", "baked", "sold", "revenue"]
+    assert classify_object(tmp_path) == "document_collection"              # the README folder itself is unchanged

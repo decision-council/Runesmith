@@ -967,9 +967,11 @@ def api_genesis_complete(s: Studio, q, body):
         patch["policy_chosen"] = False          # a first onboarding: scheduling, test runs and Kaizen wait for the owner
     if name:
         patch["workspace_name"] = name[:80]
-    if body.get("use_type") in ("improve", "build", "docs", "explore"):
+    if body.get("use_type") in ("improve", "build", "docs", "explore", "numbers"):
         patch["use_type"] = body["use_type"]
-        if body["use_type"] == "explore":
+        # Watching numbers reads report files and asks no model, so, like just looking, it starts in observe
+        # (journey J5-F1: the bakery owner had to pick "Just explore").
+        if body["use_type"] in ("explore", "numbers"):
             patch["autonomy"] = "observe"
     settings = ws.update_settings(patch)
     if description:

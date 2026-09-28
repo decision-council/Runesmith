@@ -66,6 +66,12 @@ export default async function render(root, { app, navigate, refreshState }) {
   } else if (s.worker?.paused) {
     line = 'The work queue is paused. Review Activity before resuming; an enabled schedule or configured model does not override the pause.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('activity') }, icon('activity'), 'Review paused work');
+  } else if (s.settings.use_type === 'numbers' && !(s.numbers || []).length) {
+    // Someone who came to keep an eye on their numbers: the one next step is choosing a number (journey J5-F1).
+    const reports = (s.objects || []).filter((o) => o.kind === 'data_reports');
+    const where = reports.map((o) => o.root ? 'this folder' : o.name).join(', ');
+    line = `You want to keep an eye on your numbers. ${reports.length ? `Runesmith found report files in ${where}.` : 'Runesmith has found no report files yet: put your exports (CSV) in this folder.'} Choose one number to watch: which file, which column, and your target. Measuring asks no model.`;
+    cta = h('button.btn.primary.lg', { onclick: () => navigate('mission') }, icon('gauge'), 'Choose a number to watch');
   } else if (s.settings.autonomy === 'observe') {
     line = 'You chose to just look. Runesmith maps your folder and reports what it finds; it asks no model and changes nothing.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('map') }, icon('map'), 'See what it found');

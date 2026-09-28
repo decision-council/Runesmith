@@ -416,11 +416,12 @@ class Genesis {
     [...this.dots.children].forEach((d) => { d.className = 'done'; });
     const info = this.info;
     const guess = info.empty ? 'build' : (info.objects || []).some((o) => o.kind === 'python_repository' || o.kind === 'node_repository') ? 'improve'
+      : (info.objects || []).some((o) => o.kind === 'data_reports') ? 'numbers'
       : (info.objects || []).some((o) => o.kind === 'document_collection') ? 'docs' : 'build';
     let type = guess;
     const name = h('input.big', { placeholder: 'Name your creation', maxlength: 80, value: this.cinema ? '' : (info.onboarded ? info.name : ''), 'aria-label': 'Name' });
     const desc = h('textarea', { placeholder: 'What should it do? Who is it for? (optional: you can say more later)', maxlength: 4000, 'aria-label': 'Description' });
-    const types = h('div.types', [['build', 'Build something new', 'wand'], ['improve', 'Improve my code', 'hammer'], ['docs', 'Tend my documents', 'doc'], ['explore', 'Just explore', 'compass']]
+    const types = h('div.types', [['build', 'Build something new', 'wand'], ['improve', 'Improve my code', 'hammer'], ['docs', 'Tend my documents', 'doc'], ['numbers', 'Keep an eye on my numbers', 'gauge'], ['explore', 'Just explore', 'compass']]
       .map(([k, label, ic]) => h('button', { type: 'button', class: k === type ? 'on' : '', 'aria-pressed': String(k === type), dataset: { t: k }, onclick: (e) => { type = k; for (const b of types.children) { b.classList.toggle('on', b.dataset.t === k); b.setAttribute('aria-pressed', String(b.dataset.t === k)); } } }, icon(ic), label)));
     // Space skips ahead in the intro; pressed once too often it must not type leading spaces into the name (J3-F3).
     name.addEventListener('keydown', (e) => { if (e.key === ' ' && !name.value.trim()) { e.preventDefault(); name.value = ''; } });

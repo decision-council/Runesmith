@@ -1893,6 +1893,18 @@ try{
     await mount(base);assert.equal(await page.getByRole('region',{name:'Your numbers',exact:true}).count(),0);
     assert(!(await page.locator('#page').innerText()).replace(/[^a-z]+/g,' ').split(' ').includes('null'),'a stray null on the Overview');   // journey J6-B1
     loops.push({id:'B19.14',case:'The owner’s numbers show on the Overview in plain words, with targets; none defined, no card',result:'passed'});
+    // B19.15 (journey J5-F1/F2): someone who came to keep an eye on their numbers is told the one next step
+    const watchStart=requests.length;
+    await mount({...base,workspace:{...base.workspace,empty:false},mapped_utc:'2026-09-28T10:00:00Z',numbers:[],
+      settings:{...base.settings,onboarded:true,use_type:'numbers',autonomy:'observe'},
+      objects:[{name:'Bakery',kind:'document_collection',root:true,next_rung:null,bands:[],ladder:[]},
+               {name:'reports',kind:'data_reports',root:false,next_rung:null,bands:[],ladder:['achieved']}]});
+    const watchText=await hero().innerText();
+    assert(watchText.includes('You want to keep an eye on your numbers. Runesmith found report files in reports.')&&!watchText.includes('null'),watchText);
+    await hero().getByRole('button',{name:'Choose a number to watch',exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>window.navigation),['mission']);
+    assert(requests.slice(watchStart).every(r=>r.method==='GET'));
+    loops.push({id:'B19.15',case:'Keeping an eye on numbers: the Overview names the report files found and offers “Choose a number to watch”',result:'passed'});
     loops.push({id:'B19.13',case:'A mapped folder without code is told the test-runs switch has nothing to run yet; code, an outdated map or no map says nothing',result:'passed'});
   }
   if(selected.has('B20')){

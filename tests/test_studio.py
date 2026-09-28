@@ -675,3 +675,9 @@ def test_an_owners_milestone_keeps_what_it_should_do_and_when_it_is_done(studio)
     status, edited, _ = call(studio, "POST", f"/api/plan/milestones/{added['id']}", {"title": "Styles", "detail": "",
                                                                                     "done_when": "A project remembers its style."})
     assert status == 200 and edited["title"] == "Styles" and edited["done_when"] == "A project remembers its style."
+
+
+def test_keeping_an_eye_on_numbers_starts_by_just_looking(studio):
+    # Journey J5-F1: the bakery owner found no first-run choice for watching numbers and picked "Just explore".
+    status, body, _ = call(studio, "POST", "/api/genesis", {"name": "Bakery", "use_type": "numbers"})
+    assert status == 200 and body["settings"]["use_type"] == "numbers" and body["settings"]["autonomy"] == "observe"

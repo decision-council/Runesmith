@@ -14,6 +14,7 @@ an object's tests) is opt-in because it executes the object's code.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import os
@@ -121,6 +122,17 @@ def _python_tests(path: Path, names: set[str]) -> bool:
             or any((path / d).is_dir() and next((path / d).glob("test*.py"), None) is not None for d in ("tests", "test")))
 
 
+DATA_SUFFIXES = (".csv", ".tsv", ".xlsx", ".xls")
+
+
+def _reports_folder(path: Path, names: set[str]) -> bool:
+    """Mostly report files: exports from a till, a spreadsheet or a web shop. A bakery's weekly CSV exports used to be
+    a plain folder whose next step was "readme present" (journey J5-F2)."""
+    files = [n for n in names if not n.startswith(".") and (path / n).is_file()]
+    data = [n for n in files if n.lower().endswith(DATA_SUFFIXES)]
+    return bool(data) and len(data) * 2 >= len(files)
+
+
 def classify_object(path: Path) -> str:
     names = {p.name for p in path.iterdir()} if path.is_dir() else set()
     if names & PYTHON_MARKERS:
@@ -135,6 +147,8 @@ def classify_object(path: Path) -> str:
         return "python_repository"
     if path.is_dir() and any(n.lower().endswith((".html", ".htm")) for n in names):
         return "website"
+    if path.is_dir() and _reports_folder(path, names):
+        return "data_reports"
     if path.is_dir() and any(n.lower().endswith((".md", ".rst", ".txt")) for n in names):
         return "document_collection"
     return "unknown"
@@ -343,7 +357,7 @@ _TODO = re.compile(r"\b(TODO|FIXME|XXX)\b")
 # Raised whenever a map starts to record something new, so a map from an earlier version is known to be incomplete.
 # 2: pages nothing links to, notes still to do, the index's real name (journey J4).
 # 3: tests run with unittest when pytest is missing, and a probe that ran nothing is unknown (journey J2-B3).
-MAPPER_REVISION = 3
+MAPPER_REVISION = 4
 
 
 def exists_exactly(path: Path, _listing: dict[str, set[str]] | None = None) -> bool:
@@ -511,6 +525,32 @@ def folder_object(path: Path, *, recursive: bool = True) -> dict[str, Any]:
     return {"kind": "folder", "facts": facts, "probe": None, "objectives": [], "ladder": ladder, "next_rung": next_rung}
 
 
+def _natural(name: str) -> list:
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name)]
+
+
+def data_object(path: Path, *, recursive: bool = True) -> dict[str, Any]:
+    """Report files the owner can watch a number in: how many, the newest (by name, as week-10 after week-9), and
+    its columns, which a measurement names (journey J5-F2)."""
+    facts = folder_facts(path, recursive=recursive)
+    reports = sorted((f for f, _, _ in _visible_scan(path, recursive) if f.suffix.lower() in DATA_SUFFIXES),
+                     key=lambda f: _natural(f.relative_to(path).as_posix()))
+    newest = reports[-1] if reports else None
+    columns: list[str] = []
+    if newest is not None and newest.suffix.lower() in (".csv", ".tsv"):
+        try:
+            with open(newest, encoding="utf-8-sig", errors="replace", newline="") as handle:
+                first = handle.readline()
+            columns = [c.strip() for c in next(csv.reader([first], delimiter="\t" if newest.suffix.lower() == ".tsv" else ","), [])][:20]
+        except (OSError, csv.Error):
+            columns = []
+    facts.update(report_files=len(reports), columns=columns,
+                 newest_report=newest.relative_to(path).as_posix() if newest is not None else None)
+    ladder = [{"rung": "reports_present", "status": "achieved" if reports else "not_achieved"}]
+    return {"kind": "data_reports", "facts": facts, "probe": None, "objectives": [], "ladder": ladder,
+            "next_rung": None}
+
+
 def workspace_facts(workspace: Path, *, max_entries: int = 80) -> dict[str, Any]:
     """The workspace as a whole: its top-level entries and what it holds, so even an empty folder has a map."""
     entries = []
@@ -658,6 +698,8 @@ def build_environment_map(workspace: Path, *, probe: bool = False, max_objects: 
                 site_links = _linked_pages(workspace)             # once per map: links count across the whole folder
             entry.update(document_object(path, recursive=path != workspace, scope=workspace, linked=site_links))
             unknowns.append(f"{name}: external links are not checked (that would contact the network)")
+        elif kind == "data_reports":
+            entry.update(data_object(path, recursive=path != workspace))
         elif kind == "website":
             entry.update(website_object(path, recursive=path != workspace or root_kind == "website"))
             unknowns.append(f"{name}: external links and how the pages look are not checked")

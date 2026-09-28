@@ -50,7 +50,7 @@ PLAN_FALLBACK = ("plan", "kaizen", "repair")          # the planner borrows anot
 DEFAULT_SETTINGS: dict[str, Any] = {
     "onboarded": False,
     "workspace_name": "",
-    "use_type": "",                 # improve | build | docs | explore (chosen at onboarding; shapes the defaults)
+    "use_type": "",                 # improve | build | docs | explore | numbers (chosen at onboarding)
     "autonomy": "propose",          # observe: map and watch only; propose: also work and propose fixes
     # The next three are the owner's explicit first-run choices (Overview, Settings). Finishing the introduction turns
     # none of them on: scheduled rounds spend model calls, running tests executes the project's code, and Kaizen
@@ -80,7 +80,7 @@ SETTING_TYPES: dict[str, Any] = {
     "build_steps": bool, "build_apply": bool, "build_paths": list,
 }
 CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"},
-           "use_type": {"", "improve", "build", "docs", "explore"}}
+           "use_type": {"", "improve", "build", "docs", "explore", "numbers"}}
 RANGES = {"interval_minutes": (1, 7 * 24 * 60), "max_objects": (1, 500), "min_experience": (2, 10_000),
           "kaizen_every": (1, 10_000)}
 MILESTONE_STATES = ("open", "doing", "done", "dropped")
@@ -1522,7 +1522,7 @@ class Workspace:
             "workspace": {"name": settings["workspace_name"], "path": str(self.root), "home": str(self.home),
                           "empty": facts.get("empty"), "files": facts.get("files"), "entries": facts.get("entries_total")},
             "settings": settings, "ready": self.ready(),
-            "objects": [{"name": o["name"], "kind": o["kind"], "next_rung": o.get("next_rung"),
+            "objects": [{"name": o["name"], "kind": o["kind"], "next_rung": o.get("next_rung"), "root": bool(o.get("root")),
                          "bands": [ob.get("band") for ob in o.get("objectives", [])],
                          "ladder": [r["status"] for r in o.get("ladder", [])]}
                         for o in (env_map or {}).get("objects", [])],

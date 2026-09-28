@@ -46,7 +46,7 @@ JOB_WORDS = {"propose_acceptance": "Proposing acceptance checks", "plan": "Draft
              "measure": "Taking a measurement"}
 KIND_WORDS = {"python_repository": ("Python project", "Python projects"), "node_repository": ("Node project", "Node projects"),
               "document_collection": ("document collection", "document collections"), "website": ("website", "websites"),
-              "folder": ("folder", "folders"),
+              "folder": ("folder", "folders"), "data_reports": ("report folder", "report folders"),
               "excluded": ("excluded folder", "excluded folders")}
 # How a repair attempt ended, in the owner's words (the Work page uses the same wording).
 ATTEMPT_WORDS = {

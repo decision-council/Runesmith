@@ -120,6 +120,7 @@ export const KIND = {
   python_repository: { label: 'Python project', icon: 'code', color: '#4aa8ff' },
   node_repository: { label: 'Node project', icon: 'box', color: '#22c55e' },
   document_collection: { label: 'Documents', icon: 'doc', color: '#ffb547' },
+  data_reports: { label: 'Reports', icon: 'gauge', color: '#a78bfa' },
   website: { label: 'Website', icon: 'globe', color: '#22d3c5' },
   folder: { label: 'Folder', icon: 'folder', color: '#8a94ab' },
   excluded: { label: 'Excluded', icon: 'lock', color: '#6c7791' },
