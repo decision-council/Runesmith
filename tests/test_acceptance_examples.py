@@ -435,6 +435,17 @@ def test_a_file_a_step_hands_the_program_that_nothing_creates_is_named_under_its
     assert 'test_02_at_one runs the program on "position.motion.json", a file nothing creates' in said, said
 
 
+def test_a_short_key_of_the_example_s_own_data_is_checked_with_its_number():
+    # Journey J11-G12: "x 50" was dropped because "x" is short, so s1's checks passed a program that printed nothing.
+    data = '{"timeline": [{"time": 0, "elements": [{"id": "e1", "x": 0}]}, {"time": 2, "elements": [{"id": "e1", "x": 100}]}]}'
+    example = {"name": "at one", "says": "Halfway through, x is halfway.", "files": [{"name": "p.motion.json", "text": data}],
+               "steps": [{"run": ["node", "motion.mjs", "p.motion.json", "--at", "1"], "expect": {"shows": ["x 50", "a 1"]}}]}
+    shaped = validate_examples({"examples": [example]}, "node motion.mjs FILE --at SECONDS prints each property")
+    assert shaped["examples"][0]["steps"][0]["expect"] == {"lines": [{"has": "x", "number": 50}]}
+    assert any("a line with “x” shows the number 50" in d for d in shaped["dropped"])
+    assert any("shows “a 1”" in d and "checked instead" not in d for d in shaped["dropped"])     # "a": not the example's own
+
+
 def test_files_given_inside_a_step_are_created_for_the_example():
     # Journey J11-G11: for s1 Nemotron wrote position.motion.json inside the step that reads it, where it was ignored;
     # its revision made the file a step of its own, which was refused.

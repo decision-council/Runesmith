@@ -299,8 +299,15 @@ def _loosen(text, inputs):
     """
     typed = set(TOKEN.findall(inputs))
     found = list(TOKEN.finditer(text))
+
+    def own(word):
+        # Short words are kept only as a key the example's own data names ("x" of {"x": 0}); other short words
+        # ("a", "to") say nothing. Journey J11-G12: "x 50" was dropped, so s1's checks passed a program that
+        # printed nothing at all.
+        return len(word) >= 3 or f'"{word.lower()}"' in inputs
+
     # A whole word the example typed in, or the leading part of one (the month "2026-01" of the date "2026-01-05").
-    kept = [m for m in found if not NUMBER_TOKEN.fullmatch(m.group()) and len(m.group()) >= 3 and (
+    kept = [m for m in found if not NUMBER_TOKEN.fullmatch(m.group()) and own(m.group()) and (
         m.group().lower() in typed or any(u.startswith(m.group().lower() + sep) for u in typed for sep in '-./:'))]
     # Neighbouring words that were typed in together stay one phrase: "The Hobbit", not "The" and "Hobbit".
     subjects, start, end = [], None, None
