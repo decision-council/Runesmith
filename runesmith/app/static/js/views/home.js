@@ -194,7 +194,14 @@ export default async function render(root, { app, navigate, refreshState }) {
 
   // ---- fix the failing tests (J3): the owner's own tests, frozen, decide; builders change only the code
   const fixCard = h('section.card.mt-24', { 'aria-label': 'Fix the failing tests', hidden: true });
-  get('/api/fix-tests').then((f) => { if (!closed && f.offer) drawFix(fixCard, f.offer, navigate); }).catch(() => {});
+  const loadFix = () => get('/api/fix-tests').then((f) => {
+    if (closed) return;
+    fixCard.replaceChildren();
+    fixCard.hidden = !f.offer;
+    if (f.offer) drawFix(fixCard, f.offer, navigate);
+  }).catch(() => {});
+  loadFix();
+  offs.push(bus.on('round', loadFix));
 
   // ---- try what was built (G2): the owner runs the project's own program, on a practice copy unless they choose
   const tryCard = h('section.card.mt-24', { 'aria-label': 'Try what was built', hidden: true });

@@ -421,7 +421,9 @@ class Genesis {
     const name = h('input.big', { placeholder: 'Name your creation', maxlength: 80, value: this.cinema ? '' : (info.onboarded ? info.name : ''), 'aria-label': 'Name' });
     const desc = h('textarea', { placeholder: 'What should it do? Who is it for? (optional: you can say more later)', maxlength: 4000, 'aria-label': 'Description' });
     const types = h('div.types', [['build', 'Build something new', 'wand'], ['improve', 'Improve my code', 'hammer'], ['docs', 'Tend my documents', 'doc'], ['explore', 'Just explore', 'compass']]
-      .map(([k, label, ic]) => h('button', { type: 'button', class: k === type ? 'on' : '', dataset: { t: k }, onclick: (e) => { type = k; for (const b of types.children) b.classList.toggle('on', b.dataset.t === k); } }, icon(ic), label)));
+      .map(([k, label, ic]) => h('button', { type: 'button', class: k === type ? 'on' : '', 'aria-pressed': String(k === type), dataset: { t: k }, onclick: (e) => { type = k; for (const b of types.children) { b.classList.toggle('on', b.dataset.t === k); b.setAttribute('aria-pressed', String(b.dataset.t === k)); } } }, icon(ic), label)));
+    // Space skips ahead in the intro; pressed once too often it must not type leading spaces into the name (J3-F3).
+    name.addEventListener('keydown', (e) => { if (e.key === ' ' && !name.value.trim()) { e.preventDefault(); name.value = ''; } });
     const go = h('button.go', { type: 'submit' }, icon('flame'), 'Forge it');
     const form = h('form', h('div.sigil', { html: LOGO }), h('h2', 'What will you create?'), h('p.lead', 'Give it a name. Describe it if you like, or leave that for later.'), name, desc, types, go,
       this.cinema ? null : h('button.skip', { type: 'button', onclick: () => this.complete('', '', type, true) }, 'Skip for now'),

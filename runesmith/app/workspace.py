@@ -374,7 +374,8 @@ class Workspace:
                 "name": name, "kind": spec.get("kind"), "model": spec.get("model"), "base_url": spec.get("base_url"),
                 "fallback_models": list(spec.get('fallback_models') or []),
                 "preset": spec.get("preset"), "label": spec.get("label") or (preset or {}).get("label") or name,
-                "local": bool((preset or {}).get("local")) or "127.0.0.1" in base_url or "localhost" in base_url,
+                "local": spec.get("kind") != "milliner" and (bool((preset or {}).get("local")) or "127.0.0.1" in base_url
+                                                             or "localhost" in base_url),
                 "key": {"secret": secret, "saved": bool(secret and self.keys.has(secret)),
                         "env": spec.get("api_key_env") or spec.get("token_env") or _key_file_ref(spec),
                         "needed": (preset or {}).get("key", "optional")},

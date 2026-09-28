@@ -766,6 +766,7 @@ class Worker:
             return self._finish_round([], statuses, {}, "worker model unreachable")
         for name, detail in down.items():
             self.say(f"Skipping the Worker model '{name}' this round: {detail}. Its fallbacks take over.", "warn")
+        fix_offered = False
         served_path = ws.home / "served_opportunities.json"
         served: dict[str, str] = _read_json(served_path, {})
         fresh: list[dict[str, Any]] = []
@@ -774,8 +775,8 @@ class Worker:
             if flat or importlib.util.find_spec("pytest") is None:
                 # The repair organ (the measured path) needs a src/ folder and pytest. Anything else is measured with
                 # Python's own unittest and offered "Fix the failing tests", which works for any project (J3).
-                why = ("keeps its code at the top, not in a src/ folder" if flat
-                       else "needs pytest, which is not installed here")
+                why = (f"{obj['name']} keeps its code at the top, not in the src/ folder Runesmith's repair organ needs"
+                       if flat else "Runesmith's repair organ needs pytest, which is not installed here")
                 if not settings["probe_tests"]:
                     statuses[obj["name"]] = "not measured: running this project's tests is off"
                     self.say(f"Runesmith has not run {obj['name']}'s tests, so it cannot tell whether anything is "
@@ -787,8 +788,9 @@ class Worker:
                 failing = measured["failures"] + measured["errors"]
                 statuses[obj["name"]] = f"measured: {failing} of {measured['ran']} tests fail"
                 if failing:
-                    self.say(f"{failing} of {measured['ran']} tests fail in {obj['name']}. Runesmith's repair organ "
-                             f"{why}; use “Fix the failing tests” on the Overview, which works for any project.", "warn")
+                    fix_offered = True
+                    self.say(f"{failing} of {measured['ran']} tests fail in {obj['name']}. {why}: use “Fix the failing "
+                             "tests” on the Overview, which works for any project.", "warn")
                 elif measured["ran"]:
                     self.say(f"All {measured['ran']} tests pass in {obj['name']}.", "success")
                 else:
@@ -858,10 +860,11 @@ class Worker:
                 for opportunity in fresh[:consumed]:
                     served[opportunity["id"]] = _now()
                 _write_json(served_path, served)
-        else:
+        elif not fix_offered:
             self.say("Nothing new to work on this round.")
         write_report(ws.home)
-        return self._finish_round(fresh[:consumed] if fresh else [], statuses, summary, "worked" if fresh else "nothing new")
+        return self._finish_round(fresh[:consumed] if fresh else [], statuses, summary,
+                                  "worked" if fresh else "tests fail: fix offered" if fix_offered else "nothing new")
 
     def _report_step(self, step: dict[str, Any]) -> None:
         lane = step.get("lane")

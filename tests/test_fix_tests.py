@@ -119,4 +119,15 @@ def test_a_round_measures_a_project_the_repair_organ_cannot_serve_and_the_fix_is
     worker._job_round()
     shown = offer(ws)
     assert shown and shown["tests_green"] == 0.5 and shown["code_paths"] == ["shop"]
-    assert any("1 of 2 tests fail" in line["text"] for line in worker.snapshot()["lines"])
+    lines = [line["text"] for line in worker.snapshot()["lines"]]
+    assert any("1 of 2 tests fail" in text and "keeps its code at the top" in text for text in lines)
+    assert "Nothing new to work on this round." not in lines[-3:]                   # J3-F6: no contradiction
+    assert list(ws.ledger.events("studio.round"))[-1]["data"]["outcome"] == "tests fail: fix offered"
+
+
+def test_a_milliner_gateway_on_this_computer_is_not_called_a_local_model(tmp_path):
+    # J3-F4: the gateway's address is local, the models behind it are not.
+    ws = Workspace(tmp_path)
+    ws.save_instrument("gate", {"kind": "milliner", "model": "gemini:x", "base_url": "http://127.0.0.1:8765"},
+                       key_value="token-not-shown", roles=["plan"])
+    assert next(i for i in ws.inference()["instruments"] if i["name"] == "gate")["local"] is False

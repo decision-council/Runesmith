@@ -24,6 +24,12 @@
 - **A refused call moves on to the next model (F12).** With retries off, as in every Studio call, the router tried only a role's first model. So one free provider at capacity stopped the work although the role listed another.
   - A call the gateway refused at submission never became a job: nothing ran and nothing was charged. Such a call now moves straight on to the role's next model, each at most once.
   - A call that was admitted never falls through, so a lost or slow answer is still never paid for twice.
+- **Journey J3 passed**: an existing project with 5 failing tests was fixed by a free model and applied automatically in 5.5 s. The owner's own frozen tests decided, and the test files were untouched. Its smaller findings, fixed:
+  - The introduction's use-type choice tells screen readers which one is selected.
+  - Pressing Space (the intro's "skip ahead" key) once too often no longer types spaces into the name.
+  - A Milliner gateway on this computer is no longer badged "local", because its models are remote.
+  - The round's message names the right subject, and no longer ends with "nothing new" after saying that tests fail.
+  - The Overview shows the Fix card as soon as a round finds failing tests, without a reload.
 - **Fix the failing tests, for any layout (J3).** Runesmith's repair organ, the measured g0/C7 path, works on projects with a `src/` folder, and it stays unchanged. For any other layout, a round skipped the project and said nothing useful.
   - The Overview now offers **"Fix the failing tests"** whenever the map shows failing tests. It adds a milestone, "Make the failing tests pass", through the proven Build path.
   - Its acceptance is the project's **own tests, frozen as they are now**, embedded in one self-contained acceptance file. Rewriting the tests cannot pass it; only fixing the code can.
