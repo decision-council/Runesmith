@@ -73,7 +73,9 @@ TASK = (
     "- \"fault\": \"interrupted_write\" on a python run step makes every file write inside the folder stop halfway, "
     "as if the power failed. Use it when the milestone promises safety against interruption, then check the result "
     "with a later step.\n"
-    "- \"files\": [{\"name\", \"text\"}] creates files before the steps (for example a damaged data file). "
+    "- \"files\": [{\"name\", \"text\"}] creates files before the steps (for example a damaged data file). A file "
+    "a step hands the program must exist: create it with \"files\" or an earlier step, or use one the project "
+    "has (source_context lists them). "
     "\"unchanged\": [names of files this example creates with \"files\"] checks that they are exactly the same "
     "afterwards (to check that a program leaves its data alone, create that data file with \"files\"); \"exists\": [names]; "
     "\"contains\": [{\"name\", \"texts\"}] checks a file's text afterwards (never use \"files\" to say what "
@@ -567,6 +569,37 @@ def _lifted(row, steps, what, dropped):
     return row, moved
 
 
+# Files a person hands a program to read (journey J11-G10).
+INPUT_SUFFIXES = ('.json', '.jsonl', '.ndjson', '.csv', '.tsv', '.txt', '.yaml', '.yml', '.xml', '.toml', '.ini', '.md')
+
+
+def _missing_inputs(example, source_text) -> list[str]:
+    """Files a run step hands its program that nothing creates: not "files", not the project, not another step.
+
+    Journey J11-G10: a check ran "node motion.mjs position.motion.json --at 1" on a file no one made, so every correct
+    build failed with ENOENT, and the trial on today's project read that failure as "fails, as expected". Only the
+    first file name a step passes on its own counts (not one after an option such as --out, which the program may
+    write), and a step that is expected to fail may name a missing file on purpose.
+    """
+    named = ({f['name'] for f in example['files']} | set(example['exists']) | set(example['unchanged'])
+             | {c['name'] for c in example['contains']})
+    missing = []
+    for n, step in enumerate(example['steps']):
+        if 'run' not in step or (step.get('expect') or {}).get('exit') == 'error':
+            continue
+        words = step['run'][3:] if step['run'][1] == '-m' else step['run'][2:]
+        name = next((w for i, w in enumerate(words) if w.lower().endswith(INPUT_SUFFIXES) and ' ' not in w
+                     and not w.startswith('-') and not (i and words[i - 1].startswith('-'))), None)
+        if name is None:
+            continue
+        rel = name.replace('\\', '/').removeprefix('./')
+        others = ' '.join(' '.join(s.get('run', [])) + ' ' + s.get('input', '')
+                          for m, s in enumerate(example['steps']) if m != n)
+        if rel not in named and rel not in source_text and rel not in others and rel not in missing:
+            missing.append(rel)
+    return missing
+
+
 def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> dict[str, Any]:
     """The examples as stored, the checks file rendered from them, and what Runesmith dropped; or a WorkspaceError."""
     if not isinstance(data, dict) or not isinstance(data.get('examples'), list):
@@ -638,7 +671,10 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
                 raise WorkspaceError(f'{what}, step {n}: check what an interrupted run leaves behind with a later step.')
             dropped.append(f'{what}: what {_show(step)} shows while it is interrupted (a later check looks at what it left behind)')
         dropped += [f'{what}: {d}' for d in _ground(example, milestone_text, source_text)]
-        checks.append({'test': example['test'], 'says': says, 'exact': exact(example)})
+        check = {'test': example['test'], 'says': says, 'exact': exact(example)}
+        if source_text and (missing := _missing_inputs(example, source_text)):
+            check['missing_input'] = missing
+        checks.append(check)
         examples.append(example)
     not_checked = _notes(data.get('not_checked'))
     code = render(examples)

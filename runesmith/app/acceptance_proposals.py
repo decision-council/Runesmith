@@ -244,7 +244,9 @@ def _clean(answer, style, data) -> dict[str, Any]:
         json.dumps(data.get('source_context'), ensure_ascii=False) + '\n' + str(data.get('documents') or ''))
     checked = validate({'checks': [{'test': c['test'], 'says': c['says']} for c in shaped['checks']],
                         'assumes': [], 'code': shaped['code']})
-    checks = [{'test': c['test'], 'says': c['says'], 'exact': e['exact']} for c, e in zip(checked['checks'], shaped['checks'])]
+    checks = [{'test': c['test'], 'says': c['says'], 'exact': e['exact'],
+               **({'missing_input': e['missing_input']} if e.get('missing_input') else {})}
+              for c, e in zip(checked['checks'], shaped['checks'])]
     return dict(shaped, checks=checks, code_sha256=checked['code_sha256'])
 
 
@@ -386,6 +388,11 @@ def findings(proposal) -> list[str]:
     """What Runesmith itself found wrong with a proposal: its trial result, and texts its sentences do not say."""
     found = [FINDINGS[proposal['dry_run']['verdict']]] if proposal['dry_run']['verdict'] in FINDINGS else []
     for check in proposal['checks']:
+        if check.get('missing_input'):
+            found.append(f"{check['test']} runs the program on " + ', '.join(json.dumps(n, ensure_ascii=False)
+                         for n in check['missing_input']) + ', a file nothing creates and the project does not have, '
+                         'so it fails even on a correct build: create it with "files" (with the content the '
+                         'example needs), or use a file the project has.')
         if check.get('unstated'):
             found.append(f"{check['test']} requires the exact text " + ', '.join(json.dumps(t, ensure_ascii=False)
                          for t in check['unstated']) + ', which its sentence does not say: put it in the sentence, '
@@ -395,7 +402,8 @@ def findings(proposal) -> list[str]:
 
 def _revise_once(ws, router, data, first, key, drafted_by, checkpoint, *, style='code', first_answer=None):
     """One more call, told what Runesmith found. The first proposal is kept (with its warnings) if this fails."""
-    finding = first['dry_run']['verdict'] if first['dry_run']['verdict'] in FINDINGS else 'unstated_text'
+    finding = (first['dry_run']['verdict'] if first['dry_run']['verdict'] in FINDINGS else 'missing_input'
+               if any(c.get('missing_input') for c in first['checks']) else 'unstated_text')
     if style == 'examples':
         request = dict(_lean(ws, data), revise=acceptance_examples.REVISE.format(finding=' '.join(findings(first))),
                        your_first_proposal=first_answer)
@@ -495,7 +503,10 @@ def public_criteria(ws, milestone_id, proposal) -> list[dict[str, str]]:
             if not c['id'].startswith(('check.', 'assumes.'))]
     ours = [{'id': 'check.' + c['test'], 'description': (c['says'] + (' Checked exactly: ' + c['exact'] if c.get('exact') else '')
                                                            + (' It requires the exact text: ' + ', '.join(
-                 f'“{text}”' for text in c['unstated']) + '.' if c.get('unstated') else ''))[:1200]}
+                 f'“{text}”' for text in c['unstated']) + '.' if c.get('unstated') else '')
+                                                           + (' It runs the program on ' + ', '.join(
+                 f'“{name}”' for name in c['missing_input']) + ', which the project does not have yet.'
+                                                              if c.get('missing_input') else ''))[:1200]}
             for c in proposal['checks']]
     if proposal.get('assumes'):
         ours.append({'id': 'assumes.1', 'description': ('Also assumed: ' + '; '.join(proposal['assumes']))[:1200]})

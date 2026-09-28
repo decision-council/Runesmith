@@ -22,6 +22,10 @@ const STATUS ={ open: ['', 'open'], doing: ['rune', 'in progress'], done: ['good
 const exactText = (c) => c.unstated?.length
   ? h('div.tiny.warn', 'Also requires the exact text: ' + c.unstated.map((x) => `“${x}”`).join(', '))
   : c.exact ? h('details.tiny', h('summary', 'What exactly is checked'), h('div.muted', c.exact)) : null;
+// A check that hands the program a file nothing creates fails even on a correct build (journey J11-G10).
+const missingNote = (c) => c.missing_input?.length
+  ? h('div.tiny.warn', 'Uses ' + c.missing_input.map((x) => `“${x}”`).join(', ') + ', a file nothing creates, so it fails even on a correct build unless the build adds that file.')
+  : null;
 // A check that already passed on today's project, while others failed (journey J1-G2).
 const todayNote = (c) => c.passes_today
   ? h('div.tiny.warn', 'Already passes on your project today, so it may not test what this milestone adds.') : null;
@@ -292,7 +296,7 @@ export default async function render(root, ctx) {
             : dry.verdict === 'fails_now'
               ? h('div.tiny.muted', `Tried on your project as it is today: ${dry.failures + dry.errors} of ${dry.ran} fail, as expected before the milestone is built.`)
               : dry.why ? h('div.tiny.muted', dry.why) : null;
-        const firstTry = { broken: 'could not run', passes_now: 'already passed on today’s project', unstated_text: 'required exact text their sentences did not say',
+        const firstTry = { broken: 'could not run', passes_now: 'already passed on today’s project', unstated_text: 'required exact text their sentences did not say', missing_input: 'used a file nothing creates',
           unusable: 'broke a rule of the examples format' }[p.revision?.after] || 'needed work';
         // For a broken examples answer the saved error is the first answer's, and the revision worked (journey J11-F4).
         const fixed = p.revision?.after === 'unusable';
@@ -300,8 +304,9 @@ export default async function render(root, ctx) {
           ? `The first checks ${firstTry}; asking for a revision did not work (${p.revision.error}).`
           : `Revised once: the first checks ${firstTry}${fixed && p.revision.error ? ` (${p.revision.error})` : ''}.`);
         const unstated = p.checks.some((c) => c.unstated?.length);
+        const missing = p.checks.some((c) => c.missing_input?.length);
         accBlock.append(...[h('b.small', replacing ? 'New checks proposed to replace yours: do these describe “done” better?' : 'Proposed acceptance checks: do these describe “done”?'),
-          h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c), todayNote(c)))),
+          h('ul.small', p.checks.map((c) => h('li', c.says, exactText(c), todayNote(c), missingNote(c)))),
           p.assumes?.length ? h('div.small.mt-8', h('b', 'They assume (your milestone does not say this):'), h('ul.small', p.assumes.map((a) => h('li', a)))) : null,
           ...examplesNotes(p),
           trial, revised,
@@ -318,7 +323,7 @@ export default async function render(root, ctx) {
                 toast('Your checks were replaced. The old ones are kept.', 'good'); drawPlan(); return;
               }
               if (!(await confirmDialog({ title: `Use these checks for “${m.title}”?`,
-                text: (dry.verdict === 'passes_now' ? 'Note: they already pass on your project today. ' : '') + (unstated ? 'Some checks require exact text their sentences do not say (shown under them); whoever builds the milestone is told it too. ' : '') + (p.assumes?.length ? 'They also assume what is listed under the checks. ' : '') + 'They decide when this milestone is done. Work is applied automatically only when they pass, and only if you allow automatic apply. Their sentences become the milestone’s public expectations, so whoever builds it knows what “done” means; the code stays private. You can replace them later, with a reason.',
+                text: (dry.verdict === 'passes_now' ? 'Note: they already pass on your project today. ' : '') + (unstated ? 'Some checks require exact text their sentences do not say (shown under them); whoever builds the milestone is told it too. ' : '') + (missing ? 'Some checks use a file nothing creates (shown under them), so they fail until a build adds it. ' : '') + (p.assumes?.length ? 'They also assume what is listed under the checks. ' : '') + 'They decide when this milestone is done. Work is applied automatically only when they pass, and only if you allow automatic apply. Their sentences become the milestone’s public expectations, so whoever builds it knows what “done” means; the code stays private. You can replace them later, with a reason.',
                 confirm: 'Use these checks', icon: 'check' }))) return;
               await post(`/api/plan/milestones/${m.id}/acceptance/approve`, { proposal: p.id });
               toast('Acceptance checks saved for this milestone.', 'good'); drawPlan(); }) }, icon('check'), replacing ? 'Replace my checks' : 'Use these checks'),

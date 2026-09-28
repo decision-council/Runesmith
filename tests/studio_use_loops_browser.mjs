@@ -1931,7 +1931,7 @@ try{
     // Acceptance checks a non-programmer approves (G1, G1.1-G1.3, G3 from out-of-box journey R1).
     const start=requests.length;
     fixturePlan={version:1,summary:'Reading log',milestones:[{id:'m1',title:'Books per month',status:'open',detail:'python -m readinglog months',done_when:'Counts per month'}]};
-    const checks=[{test:'test_counts',says:'Each month shows its number of books.'},
+    const checks=[{test:'test_counts',says:'Each month shows its number of books.',missing_input:['books.csv']},
       {test:'test_bad_date',says:'A date that does not exist is refused.',unstated:['2026-02-30'],passes_today:true}];
     const block=()=>page.locator('[aria-label="Acceptance checks for Books per month"]');
     const posts=()=>requests.slice(start).filter(r=>r.method==='POST');
@@ -1942,11 +1942,13 @@ try{
     assert(text.includes('Proposed acceptance checks'),text);assert(text.includes('They assume'));assert(text.includes('The list file is chosen with --file.'));
     assert(text.includes('Also requires the exact text: “2026-02-30”'));assert(text.includes('2 of 2 fail, as expected'));
     assert(text.includes('Already passes on your project today, so it may not test what this milestone adds.'));   // J1-G2
+    assert(text.includes('Uses “books.csv”, a file nothing creates, so it fails even on a correct build unless the build adds that file.'),text);   // J11-G10
     assert(!/\bnull\b|undefined/.test(text),text);
-    loops.push({id:'B20.01',case:'A proposal shows its sentences, assumptions, unstated exact text and trial result, with no stray null',result:'passed'});
+    loops.push({id:'B20.01',case:'A proposal shows its sentences, assumptions, unstated exact text, a file nothing creates and trial result, with no stray null',result:'passed'});
     await block().getByRole('button',{name:'Use these checks',exact:true}).click();
     const confirm=page.getByRole('dialog');
     assert((await confirm.innerText()).includes('Some checks require exact text'));
+    assert((await confirm.innerText()).includes('Some checks use a file nothing creates'));
     await confirm.getByRole('button',{name:'Use these checks',exact:true}).click();await confirm.waitFor({state:'hidden'});
     await page.waitForFunction(()=>true);
     const approve=posts().filter(r=>r.path==='/api/plan/milestones/m1/acceptance/approve').at(-1);

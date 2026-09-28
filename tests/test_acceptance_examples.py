@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from runesmith.app.acceptance_examples import validate_examples
-from runesmith.app.acceptance_proposals import acceptance_file, approve, propose, status, validate
+from runesmith.app.acceptance_proposals import acceptance_file, approve, findings, propose, status, validate
 from runesmith.app.building import _run_checks
 from runesmith.app.workspace import Workspace, WorkspaceError
 
@@ -407,6 +407,43 @@ def test_milliner_gets_the_lenient_examples_schema_as_text_not_as_a_forced_schem
     instrument.complete(prompt="p", system="s", schema=plain, max_tokens=100, key="k2")
     assert sent[-1]["json_schema"] == plain and sent[-1]["prompt"] == "p"          # other schemas: unchanged
     assert "json_mode" not in sent[-1]
+
+
+def test_a_file_a_step_hands_the_program_that_nothing_creates_is_named_under_its_check():
+    # Journey J11-G10: "node motion.mjs position.motion.json --at 1" ran on a file no one made; every correct build
+    # failed with ENOENT, and prerequisite s1 used two of its three tries on it.
+    source = json.dumps({"inventory": ["motion.mjs", "sample.motion.json"]}) + ' if (command === "save")'
+    milestone = "Make --at optional: node motion.mjs sample.motion.json checks the project."
+
+    def motion(*words, **expect):
+        return {"run": ["node", "motion.mjs", *words], "expect": expect or {"exit": "ok"}}
+    answer = {"examples": [
+        {"name": "checked", "says": "Without --at the project is checked.", "steps": [motion("sample.motion.json")]},
+        {"name": "at one", "says": "With --at each property is printed.",
+         "steps": [motion("position.motion.json", "--at", "1")]},
+        {"name": "made here", "says": "A project the example makes is read.",
+         "files": [{"name": "made.motion.json", "text": "{}"}], "steps": [motion("./made.motion.json", "--at", "1")]},
+        {"name": "saved then read", "says": "A saved project opens.",
+         "steps": [motion("save", "saved.motion.json"), motion("saved.motion.json", "--at", "0")]},
+        {"name": "missing on purpose", "says": "A missing file is refused with a message.",
+         "steps": [motion("nowhere.motion.json", exit="error", message=True)]},
+        {"name": "written", "says": "The frame is written.", "steps": [motion("--at", "0", "--out", "frame.json")]}]}
+    checks = validate_examples(answer, milestone, source_text=source)["checks"]
+    assert [c.get("missing_input") for c in checks] == [None, ["position.motion.json"], None, None, None, None]
+    assert "missing_input" not in validate_examples(answer, milestone)["checks"][1]          # no project: not judged
+    said = " ".join(findings({"dry_run": {"verdict": "fails_now"}, "checks": checks}))
+    assert 'test_02_at_one runs the program on "position.motion.json", a file nothing creates' in said, said
+
+
+def test_a_check_on_a_file_nothing_creates_is_revised_once_and_the_owner_sees_why(tmp_path):
+    backup = {"name": "listed from a backup", "says": "Entries are listed from a backup file.",
+              "steps": [add("Tea", "2026-01-05"), {"run": T + ["list", "backup.json"], "expect": {"shows": ["Tea"]}}]}
+    first = {"examples": EXAMPLES["examples"] + [backup]}
+    ws = workspace(tmp_path, [first, EXAMPLES])
+    proposal = propose(ws, ws.router(), "m1")
+    assert proposal["revision"]["after"] == "missing_input"
+    assert not any(c.get("missing_input") for c in proposal["checks"])
+    assert proposal["revision"]["first_checks"][-1]["missing_input"] == ["backup.json"]
 
 
 def test_a_command_neither_the_milestone_nor_the_program_mentions_is_refused_with_its_name():
