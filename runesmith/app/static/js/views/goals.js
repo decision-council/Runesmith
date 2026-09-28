@@ -349,7 +349,9 @@ export default async function render(root, ctx) {
       list.append(item);
     }
     planCard.append(list);
-    for (const b of (data.breakdowns || []).filter(b=>b.state==='proposed')) {
+    // A breakdown for a milestone that is already done or dropped has nothing left to break down (journey J2-F25).
+    const unfinished = new Set((data.plan?.milestones || []).filter((m) => ['open','doing'].includes(m.status)).map((m) => m.id));
+    for (const b of (data.breakdowns || []).filter(b=>b.state==='proposed' && unfinished.has(b.milestone))) {
       planCard.append(h('div.card.flat.mt-16',h('h3','Proposed breakdown'),
         h('p.tiny.muted', `${b.milestone} · ${b.drafted_by || 'unknown author'} · awaiting adoption`),
         h('p.small', b.diagnosis), h('p.small.muted', b.coverage),

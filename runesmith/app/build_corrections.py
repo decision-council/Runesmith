@@ -69,8 +69,9 @@ def correction_candidates(ws):
         if not answers:continue
         # A correction whose answer never arrived blocks the next one until the owner sets it aside (journey J2-F18).
         late=next((row.get('id') for row in history if row.get('state') in ('started','uncertain')),None)
-        # An answer for an earlier source can never be corrected; its card was noise under a later milestone (J2-F21).
-        if current_snapshot and attempt.get('snapshot_digest')!=current_snapshot and not late:continue
+        # An answer for an earlier source can never be corrected, late correction or not; its card was noise under a
+        # later milestone (J2-F21).
+        if current_snapshot and attempt.get('snapshot_digest')!=current_snapshot:continue
         rows.append({'attempt':path.stem,'milestone_contract':attempt.get('contract'),
                      'path':attempt['feedback']['path'],'error':attempt.get('error'),
                      'snapshot_current':attempt.get('snapshot_digest')==current_snapshot,

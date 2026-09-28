@@ -50,6 +50,7 @@ const fixtureWork={counts:{},draft_counts:{waiting:1},proposals:[],drafts:[recov
   build_memory:{total:0,items:[]},pending_authors:[],build_corrections:[],
   build_escalation:{eligible:false,milestone:'m1',attempts:1,used:false,
     allowance:{known:true,can_draft:true,used:1,remaining:2,limit:3,blockers:[]}}};
+let fixtureBreakdowns=[];
 let briefCandidates=[],ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30},fixFixture={offer:null};
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
@@ -229,7 +230,7 @@ await context.route('**/*',async route=>{
     if(req.method()==='POST')ownerBrief=body.text;
     data={text:ownerBrief,blueprints:[],candidates:briefCandidates,updated:null};
   } else if(p==='/api/plan')data={plan:fixturePlan,milestones:fixturePlan?.milestones||[],ready:true,
-    planning_blockers:planningBlocks(),autonomy:fixtureAutonomy,held_plans:heldPlans,breakdowns:[],acceptance_expectations:fixtureExpectations,acceptance_checks:fixtureAcceptance,current_checks:[],
+    planning_blockers:planningBlocks(),autonomy:fixtureAutonomy,held_plans:heldPlans,breakdowns:fixtureBreakdowns,acceptance_expectations:fixtureExpectations,acceptance_checks:fixtureAcceptance,current_checks:[],
     readiness:Object.fromEntries((fixturePlan?.milestones||[]).map(m=>[m.id,{ready:true,unmet:[]}]))};
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
   else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false,autonomy:'propose',
@@ -1991,6 +1992,18 @@ try{
     const granted=requests.slice(grantStart).filter(r=>r.path==='/api/settings'&&r.method==='POST');
     assert.equal(granted.length,1);assert.deepEqual(granted[0].body.build_paths,['.']);assert.equal(granted[0].body.build_apply,true);
     loops.push({id:'B20.07',case:'The automatic-apply dialog names where Runesmith may write ("." is the whole folder) and an empty grant is not offered',result:'passed'});
+
+    // B20.08 (journey J2-F25): a proposed breakdown for a milestone that is already done is not offered for adoption
+    fixturePlan.milestones.push({id:'m0',title:'Search books',status:'done',detail:'',done_when:'Search works'});
+    const step={title:'A smaller step',detail:'Detail',done_when:'Done',suggested_paths:['readinglog/x.py']};
+    fixtureBreakdowns=[{id:'bdone',milestone:'m0',state:'proposed',diagnosis:'Diagnosis for a finished milestone',coverage:'',steps:[step]},
+      {id:'bopen',milestone:'m1',state:'proposed',diagnosis:'Diagnosis for the open milestone',coverage:'',steps:[step]}];
+    await page.evaluate(()=>window.mount('goals'));
+    await page.getByText('Diagnosis for the open milestone',{exact:true}).waitFor();
+    assert.equal(await page.getByText('Diagnosis for a finished milestone',{exact:true}).count(),0);
+    assert.equal(await page.getByRole('button',{name:'Adopt prerequisites',exact:true}).count(),1);
+    fixtureBreakdowns=[];
+    loops.push({id:'B20.08',case:'A proposed breakdown for a finished milestone is not offered for adoption',result:'passed'});
     fixtureAcceptance={};fixturePlan=null;
   }
   if(selected.has('B21')){

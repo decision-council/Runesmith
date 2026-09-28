@@ -499,7 +499,8 @@ def build_escalation_status(ws):
         receipt=_read_json(ws.home/'build-escalations'/(row['id']+'.json'),{})
         if row['state']=='failed' and (receipt.get('feedback') or {}).get('answer_receipt'):
             if not kept or str(receipt.get('utc') or '')>kept['utc']:
-                kept={'id':row['id'],'utc':str(receipt.get('utc') or ''),'error':str(receipt.get('error') or '')[:300]}
+                kept={'id':row['id'],'utc':str(receipt.get('utc') or ''),'error':str(receipt.get('error') or '')[:300],
+                      'last_recheck':receipt.get('last_recheck')}
     if not allowance['remaining'] and not reuse:blockers.append('Ordinary author allowance exhausted. Review saved candidates or an explicitly available continuation.')
     view=dict(allowance,known=True,reuse_draft=reuse,blockers=blockers,can_draft=not blockers)
     if lineage_error:
@@ -568,7 +569,11 @@ def readmit_escalation_answer(ws,key,*,checkpoint=lambda:None):
                    and d.get('snapshot_digest')==context['snapshot_digest']),None)
     if not revision:raise WorkspaceError('The answer has no matching frozen candidate to revise.')
     from runesmith.app.planner import admit_revision_answer
-    files=admit_revision_answer(ws,context,saved['answer'].get('files'),revision)
+    try:
+        files=admit_revision_answer(ws,context,saved['answer'].get('files'),revision)
+    except Exception as error:     # the owner sees when it was checked again and why it still does not fit (J2-F24)
+        _write_json(path,dict(receipt,last_recheck={'utc':_now(),'error':str(error)[:300]}))
+        raise
     draft=ws.save_draft(title=str(saved['answer'].get('title') or milestone['title']),
                         why=str(saved['answer'].get('why') or ''),files=files,
                         drafted_by=saved.get('author'),milestone=milestone['id'])

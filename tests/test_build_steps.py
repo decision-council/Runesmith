@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 
 from runesmith.app.building import (build_step, recheck_draft, status, verify_draft, build_escalation_status,
-                                    escalate_build, review_current_files, current_file_reviews)
+                                    escalate_build, review_current_files, current_file_reviews,
+                                    readmit_escalation_answer)
 from runesmith.app.planner import draft_files
 from runesmith.app.planner import PlannerUnavailable
 from runesmith.app.workspace import Workspace
@@ -440,9 +441,13 @@ def test_a_kept_answer_an_older_runesmith_refused_can_be_checked_again_without_a
     scripted(ws,[eight],roles=('plan',))
     with pytest.raises(Exception,match='1-6 exact edits'):
         escalate_build(ws,ws.router())
-    monkeypatch.setattr(planner,'MAX_EDITS',12)                         # the updated one
     kept=build_escalation_status(ws)['kept_answer']
-    assert kept and '1-6 exact edits' in kept['error']
+    assert kept and '1-6 exact edits' in kept['error'] and kept['last_recheck'] is None
+    with pytest.raises(Exception,match='1-6 exact edits'):             # checked again, still refused
+        readmit_escalation_answer(ws,kept['id'])
+    kept=build_escalation_status(ws)['kept_answer']                    # J2-F24: when, and why it still does not fit
+    assert kept['last_recheck']['utc'] and '1-6 exact edits' in kept['last_recheck']['error']
+    monkeypatch.setattr(planner,'MAX_EDITS',12)                         # the updated one
     before=sum(row['calls'] for row in ws.call_stats().values())
     worker=Worker(ws,EventBus())
     done=worker._execute({'id':'j1','kind':'readmit','params':{'escalation':kept['id']},'by':'owner'},schedule_next=False)

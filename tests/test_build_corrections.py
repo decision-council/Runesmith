@@ -68,6 +68,10 @@ def test_correction_refuses_stale_source_before_call(tmp_path):
     ws,attempt_id=rejected_answer(tmp_path)
     (tmp_path/'tool.py').write_text('value = 9\n')
     assert correction_candidates(ws)==[]        # J2-F21: an answer for an earlier source gets no card
+    _write_json(ws.home/'build-corrections'/'c0late.json',{'id':'c0late','attempt':attempt_id,'state':'uncertain',
+                                                           'utc':'2026-09-26T00:00:02Z'})
+    assert correction_candidates(ws)==[]        # not even with a late correction: it could never be used
+    (ws.home/'build-corrections'/'c0late.json').unlink()
     scripted(ws,[{'title':'Unused','why':'unused','files':[
         {'path':'test_tool.py','purpose':'unused','content':'expected=2\n'},
     ]}],roles=('plan',))

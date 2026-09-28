@@ -223,6 +223,7 @@ function drawDrafts(body, w, reload, ctx) {
     body.append(h('div.callout.mt-8', icon('refresh'), h('div.grow',
       h('b', `The one more try at ${w.build_escalation.milestone} was refused, and its answer is kept`),
       h('div.small', String(k.error || '').replace(/^[A-Za-z]+(Unavailable|Error): /, '')),
+      k.last_recheck ? h('div.small', `Checked again ${ago(k.last_recheck.utc)}: ${String(k.last_recheck.error || '').replace(/^[A-Za-z]+(Unavailable|Error): /, '')} Checking again gives the same answer until Runesmith is updated.`) : null,
       h('div.tiny.muted', 'After an update, Runesmith may accept what it refused before. Checking it again asks no model: the kept answer goes through the same checks, and nothing is written unless they pass.')),
       h('button.btn.sm', {onclick:(event)=>withBusy(event.currentTarget,async()=>{
         await post('/api/worker/run',{job:'readmit',params:{escalation:k.id}});
