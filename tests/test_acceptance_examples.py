@@ -406,3 +406,38 @@ def test_milliner_gets_the_lenient_examples_schema_as_text_not_as_a_forced_schem
     instrument.complete(prompt="p", system="s", schema=plain, max_tokens=100, key="k2")
     assert sent[-1]["json_schema"] == plain and sent[-1]["prompt"] == "p"          # other schemas: unchanged
     assert "json_mode" not in sent[-1]
+
+
+def test_a_command_neither_the_milestone_nor_the_program_mentions_is_refused_with_its_name():
+    # Checker experiment 2026-09-28: Flash Lite ran "python -m tally count" where the program's command is "months";
+    # every correct build failed its checks. The revision is told the word.
+    source = 'if argv[0] == "add": ... if argv[0] == "list": ... if argv[0] == "months":'
+    invented = {"examples": [{"name": "counts", "says": "Each month is counted.",
+                              "steps": [add("Tea", "2026-01-05"), {"run": T + ["count"], "expect": {"shows": ["2026-01"]}}]}]}
+    with pytest.raises(WorkspaceError, match="runs “count”, a command neither the milestone nor the program mentions"):
+        validate_examples(invented, "A README that shows each command.", source_text=source)
+    real = {"examples": [{"name": "months", "says": "Each month is counted.",
+                          "steps": [add("Tea", "2026-01-05"), {"run": T + ["months"], "expect": {"shows": ["2026-01"]}}]}]}
+    assert validate_examples(real, "A README that shows each command.", source_text=source)["examples"]
+    new = {"examples": [{"name": "search", "says": "A word finds the entry.",
+                         "steps": [add("Tea", "2026-01-05"), {"run": T + ["search", "Tea"], "expect": {"shows": ["Tea"]}}]}]}
+    assert validate_examples(new, "Add python -m tally search WORD.", source_text=source)["examples"]   # the milestone names it
+    assert validate_examples(invented, "A README that shows each command.")["examples"]                  # no source: not judged
+    on_purpose = {"examples": [{"name": "unknown", "says": "A command the program does not know is refused.",
+                                "steps": [{"run": T + ["count"], "expect": {"exit": "error", "message": True}}]}]}
+    assert validate_examples(on_purpose, "A README that shows each command.", source_text=source)["examples"]
+
+
+@pytest.mark.parametrize("given,meant", [(0, "ok"), ("0", "ok"), ("success", "ok"), ("Succeeds", "ok"), (2, "error"),
+                                         ("1", "error"), ("failure", "error"), ("non-zero", "error"), ("any", "any")])
+def test_common_words_for_the_exit_are_understood(given, meant):
+    # Checker experiment 2026-09-28: a whole answer was refused twice over its word for the exit.
+    answer = {"examples": [{"name": "listed", "says": "An entry is listed.",
+                            "steps": [add("Tea", "2026-01-05"), {"run": T + ["list"], "expect": {"exit": given, "shows": ["Tea"]}}]}]}
+    assert validate_examples(answer, MILESTONE)["examples"][0]["steps"][1]["expect"]["exit"] == meant
+
+
+def test_an_exit_that_is_no_known_word_is_still_refused():
+    answer = {"examples": [{"name": "x", "says": "x", "steps": [{"run": T + ["list"], "expect": {"exit": "maybe"}}]}]}
+    with pytest.raises(WorkspaceError, match='"exit" is ok, error or any'):
+        validate_examples(answer, MILESTONE)

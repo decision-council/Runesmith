@@ -128,6 +128,36 @@ def _notes(value, limit=400):
     return notes
 
 
+EXIT_WORDS = {'ok': 'ok', 'success': 'ok', 'succeeds': 'ok', 'pass': 'ok', 'passes': 'ok', 'zero': 'ok', '0': 'ok',
+              'error': 'error', 'fail': 'error', 'fails': 'error', 'failure': 'error', 'nonzero': 'error',
+              'non-zero': 'error', 'non_zero': 'error', 'any': 'any'}
+
+
+def _exit_word(value):
+    """ok, error or any, from the words a model uses for them (checker experiment 2026-09-28: a whole answer was
+    refused twice over this). A number means its exit code: 0 is ok, anything else an error."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int):
+        return 'ok' if value == 0 else 'error'
+    if isinstance(value, str):
+        word = value.strip().lower()
+        return EXIT_WORDS.get(word, 'error' if word.isdigit() else value)
+    return value
+
+
+def _command_word(step) -> str | None:
+    """The subcommand a run step names right after the program ("count" in python -m readinglog count), if any."""
+    words = step.get('run') or []
+    rest = words[3:] if len(words) > 2 and words[1] == '-m' else words[2:]
+    first = rest[0] if rest else ''
+    return first if re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', first) else None
+
+
+def _mentioned(word: str, text: str) -> bool:
+    return re.search(r'(?<![A-Za-z0-9_])' + re.escape(word.lower()) + r'(?![A-Za-z0-9_])', text.lower()) is not None
+
+
 def _relative(name, what):
     name = _plain(name, what, 200).replace('\\', '/')
     parts = name.split('/')
@@ -168,6 +198,7 @@ def _expect(value, kind, what):
     if not isinstance(value, dict):
         raise WorkspaceError(f'{what}: "expect" must be an object.')
     out = {}
+    value = dict(value, exit=_exit_word(value.get('exit')))
     if value.get('exit') not in (None, 'ok', 'error', 'any'):
         raise WorkspaceError(f'{what}: "exit" is ok, error or any.')
     if value.get('exit'):
@@ -489,6 +520,14 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
                                          or example['pages_reachable']):
             raise WorkspaceError(f'{what} needs steps, or a check on files ("exists", "contains", "links_resolve" '
                                  'or "pages_reachable").')
+        for n, step in enumerate(example['steps'], 1):
+            word = _command_word(step)
+            refused_on_purpose = (step.get('expect') or {}).get('exit') == 'error'   # "an unknown command is refused"
+            if word and source_text and not refused_on_purpose and not _mentioned(word, milestone_text + ' ' + source_text):
+                # Checker experiment 2026-09-28: Flash Lite ran "python -m readinglog count" for the "months" command,
+                # so its checks failed every correct build. The one revision is told the word.
+                raise WorkspaceError(f'{what}, step {n}: runs “{word}”, a command neither the milestone nor the program '
+                                     'mentions. Use a command they name.')
         for n, step in enumerate(example['steps'], 1):
             if not step.pop('unchecked_expect', False):
                 continue
