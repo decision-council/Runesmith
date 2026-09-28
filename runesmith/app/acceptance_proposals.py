@@ -198,12 +198,33 @@ def validate(data: Any) -> dict[str, Any]:
             'code_sha256': hashlib.sha256(code.encode('utf-8')).hexdigest()}
 
 
+def _other_checks(ws, milestone_id, limit=6000) -> list[dict[str, Any]]:
+    """The checks the owner approved for the other milestones. In a new project there is no code to learn a file
+    format from, so each Checker invented its own: m1's check refused a project file "{}" and m3's required the same
+    file to be accepted (journey J11-G5)."""
+    rows, used = [], 0
+    for other in (ws.plan() or {}).get('milestones', []):
+        if other.get('id') == milestone_id:
+            continue
+        said = [c['description'] for c in (expectations(ws, other['id']) or {}).get('criteria', [])
+                if str(c.get('id', '')).startswith('check.')]
+        if not said:
+            continue
+        row = {'milestone': other.get('title'), 'status': other.get('status'), 'checks': said}
+        used += len(json.dumps(row, ensure_ascii=False))
+        if used > limit:
+            break
+        rows.append(row)
+    return rows
+
+
 def packet(ws, milestone_id, style='code') -> dict[str, Any]:
     milestone = _milestone(ws, milestone_id)
     return {'task': acceptance_examples.TASK if style == 'examples' else TASK,
             'milestone': {k: milestone.get(k) for k in ('id', 'title', 'detail', 'done_when', 'track')},
             'brief': ws.brief().get('text', ''),
             'public_acceptance': expectations(ws, milestone_id),
+            'other_milestones_checks': _other_checks(ws, milestone_id),
             'source_context': source_context(ws, limit=16000),
             # The documents the owner chose to share with models (Goals & plan). Code goes in source_context; documents
             # never do, so without this a Checker could not see a single page of a handbook it is asked to check.

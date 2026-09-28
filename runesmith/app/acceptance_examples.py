@@ -67,6 +67,9 @@ TASK = (
     "- Require only what the milestone states. Never invent a wording, heading or layout: every text you expect "
     "must come from the milestone's own words or from this example's own input (a title you added, a date you "
     "used). Runesmith drops any other text.\n"
+    "- \"other_milestones_checks\" lists the checks the owner already approved for other milestones of this "
+    "project. Stay consistent with them: use the same file format, file names and commands, and never require "
+    "what one of them forbids (if one says a file is refused, do not require the same file to be accepted).\n"
     "- \"fault\": \"interrupted_write\" on a python run step makes every file write inside the folder stop halfway, "
     "as if the power failed. Use it when the milestone promises safety against interruption, then check the result "
     "with a later step.\n"
@@ -425,9 +428,10 @@ def exact(example) -> str:
     # that saw only its first 60 characters had to guess the rest (journey J11-G1).
     parts = [f'starting with `{f["name"]}` containing “{f["text"][:FILE_SHOWN]}{"…" if len(f["text"]) > FILE_SHOWN else ""}”'
              for f in example.get('files', [])]
-    preparation = [s for s in example['steps'] if 'run' in s and not s.get('expect') and not s.get('fault')]
+    preparation = []                        # steps that prepare the next one, in order
     for step in example['steps']:
-        if step in preparation:
+        if 'run' in step and not step.get('expect') and not step.get('fault'):
+            preparation.append(step)
             continue
         if preparation:
             ran = ', '.join(_show(s) for s in preparation[:2]) + (f' and {len(preparation) - 2} more' if len(preparation) > 2 else '')
@@ -463,6 +467,9 @@ def exact(example) -> str:
         if expect.get('order'):
             found.append(_quote(expect['order']) + ' appear in that order')
         parts.append(said + (': ' + '; '.join(found) if found else ''))
+    # Steps at the end with no expectation of their own still run and must finish normally; they were left out, so
+    # the owner was shown less than was checked (journey J11-B2).
+    parts += [f'running {_show(s)}: it finishes normally' for s in preparation]
     parts += [f'`{n}` is left exactly as it was' for n in example.get('unchanged', [])]
     parts += [f'`{n}` exists' for n in example.get('exists', [])]
     parts += [f'`{r["name"]}` contains ' + _quote(r['texts']) for r in example.get('contains', [])]

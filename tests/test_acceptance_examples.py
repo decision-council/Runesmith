@@ -501,3 +501,38 @@ def test_an_expectation_written_as_its_own_step_joins_the_step_before_it():
     alone = {"examples": [dict(answer["examples"][0], steps=[{"expect": {"exit": "error"}}])]}
     with pytest.raises(WorkspaceError, match='needs exactly one of'):              # nothing before it to join
         validate_examples(alone, NODE_MILESTONE)
+
+
+
+def test_a_last_step_without_expectations_is_shown_in_what_is_checked():
+    # Journey J11-B2: m4's only step ran `node motion.mjs project.motion.json --at 0` and had to finish normally, but
+    # "What exactly is checked" left the command out and showed only the starting file.
+    answer = {"examples": [{"name": "runs", "says": "The inspector runs on a project.",
+                            "files": [{"name": "p.motion.json", "text": "{}"}],
+                            "steps": [{"run": ["node", "motion.mjs", "p.motion.json", "--at", "0"]}]}]}
+    shaped = validate_examples(answer, NODE_MILESTONE)
+    assert "running `node motion.mjs p.motion.json --at 0`: it finishes normally" in shaped["checks"][0]["exact"]
+    # and a preparing step after a checked one is told after it, once, not folded into an "after" before it
+    run = lambda at: {"run": ["node", "motion.mjs", "p.motion.json", "--at", at]}
+    answer["examples"][0]["steps"] = [run("0"), dict(run("1"), expect={"exit": "ok"}), run("2")]
+    told = validate_examples(answer, NODE_MILESTONE)["checks"][0]["exact"]
+    assert told.index("after `node motion.mjs p.motion.json --at 0`") < told.index("running `node motion.mjs p.motion.json --at 1`")
+    assert told.count("--at 2") == 1 and told.index("--at 1") < told.index("--at 2")
+
+
+def test_the_checker_sees_the_checks_approved_for_other_milestones(tmp_path):
+    # Journey J11-G5: m1's approved check refused a project file "{}"; m3's Checker, seeing only its own milestone in an
+    # empty folder, required the same "{}" to be accepted. No build could pass both.
+    from runesmith.app.acceptance_contracts import publish_expectations
+    from runesmith.app.acceptance_proposals import packet
+    ws = Workspace(tmp_path)
+    ws.save_plan({"summary": "Motion", "milestones": [
+        {"title": "Project file", "detail": "The project file format.", "done_when": "It is read."},
+        {"title": "Inspector", "detail": "node motion.mjs FILE --at SECONDS", "done_when": "It prints the state."}]})
+    assert packet(ws, "m2", "examples")["other_milestones_checks"] == []
+    refused = "A file missing required data is refused. Checked exactly: Starting with `broken.motion.json` containing “{}”."
+    publish_expectations(ws, "m1", [{"id": "check.test_02_invalid", "description": refused}], "approved by the owner")
+    assert packet(ws, "m2", "examples")["other_milestones_checks"] == [
+        {"milestone": "Project file", "status": "open", "checks": [refused]}]
+    assert packet(ws, "m1", "examples")["other_milestones_checks"] == []            # never its own
+    assert "other_milestones_checks" in packet(ws, "m2", "examples")["task"]
