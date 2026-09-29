@@ -120,7 +120,9 @@ def admit_packet(ws, packet, data, author, *, receipt=None, admission_guard=None
     return draft
 
 
-def pending_authors(ws):
+def pending_authors(ws, milestone=None):
+    """Late answers still expected. With `milestone`, only those that hold that milestone back: its own, and any
+    whose milestone is unknown (journey J11-B6: one milestone's late answer no longer stalls the others)."""
     rows=[]
     admitted={d.get('author_request_key') for d in ws.drafts() if d.get('contract')}
     for path in (ws.home/'inference-requests').glob('*.json'):
@@ -138,7 +140,11 @@ def pending_authors(ws):
             continue
         if _read_json(ws.home/'author-admissions'/(key+'.json'),{}).get('state')=='rejected':
             continue
-        rows.append({'id':record['id'],'key':key,'state':record['state'],
+        packet=_read_json(ws.home/'build-author-packets'/(key+'.json'),{}).get('packet')
+        owner=packet.get('milestone') if isinstance(packet,dict) and isinstance(packet.get('milestone'),str) else None
+        if milestone is not None and owner not in (milestone,None):
+            continue
+        rows.append({'id':record['id'],'key':key,'state':record['state'],'milestone':owner,
             'job_id':record.get('job_id'),'instrument':record['instrument'],
             'can_resume':bool(record.get('job_id') and record['state']!='binding_mismatch'),'new_inference_calls':0})
     return rows

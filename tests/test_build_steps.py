@@ -505,3 +505,93 @@ def test_a_try_no_model_answered_uses_up_nothing(tmp_path, spent):
         assert states == ['transport_failed'] * 3
         state = build_escalation_status(ws)
         assert not state['eligible'] and state['allowance']['remaining'] == 3        # all three tries are still there
+
+
+def two_milestones(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.save_plan({'summary':'Two independent parts', 'milestones':[{'title':'Answer', 'done_when':'answer() returns 42'},
+                                                                   {'title':'Greeting', 'done_when':'greet() says hello'}]})
+    enable(ws)
+    ws.update_settings({'build_paths':['app.py','greet.py','tests']})
+    return ws
+
+
+GREETING = {'title':'Greeting', 'why':'the second milestone', 'files':[{'path':'greet.py','content':'def greet():\n    return "hello"\n'}]}
+
+
+def test_a_milestone_whose_tries_are_used_up_no_longer_holds_back_an_independent_one(tmp_path):
+    # Journey J11-B6: s1's used-up tries left five independent ready milestones idle for 1 h 39 min, because every
+    # round picked the first ready milestone again and reported "allowance exhausted".
+    ws = two_milestones(tmp_path)
+    scripted(ws, [{'title':'bad', 'files':[]}]*3 + [GREETING], roles=('plan',))
+    router = ws.router()
+    for _ in range(3):
+        with pytest.raises(Exception): build_step(ws, router)
+    result = build_step(ws, router)
+    assert ws._draft(result['draft'])['milestone'] == 'm2' and 'exhausted' not in result['summary'], result
+    assert len(list((ws.home/'build-attempts').glob('*.json'))) == 4          # exactly one call, for m2
+
+
+def test_when_every_ready_milestone_needs_the_owner_the_round_names_each_and_makes_no_call(tmp_path):
+    ws = two_milestones(tmp_path)
+    scripted(ws, [{'title':'bad', 'files':[]}]*6, roles=('plan',))
+    router = ws.router()
+    for _ in range(6):
+        with pytest.raises(Exception): build_step(ws, router)
+    result = build_step(ws, router)
+    assert result['all_blocked'] and result['milestones_blocked'] == ['m1', 'm2'], result
+    assert result['summary'].startswith('All 2 ready milestones need you or a late answer.')
+    assert '“Answer”: its three tries are used up' in result['summary'] and '“Greeting”: its three tries are used up' in result['summary']
+    assert result['replan_needed'] and result['milestone'] == 'm1'           # the smaller-steps proposal, as before
+    assert len(list((ws.home/'build-attempts').glob('*.json'))) == 6
+    assert build_escalation_status(ws)['milestone'] == 'm1'
+
+
+def test_the_one_more_try_belongs_to_the_milestone_whose_tries_are_used_up(tmp_path):
+    ws = two_milestones(tmp_path)
+    ws.update_milestone('m2', {'status': 'doing'})       # m2 first in the builder's order (the Studio's status control)
+    scripted(ws, [{'title':'bad', 'files':[]}]*3, roles=('plan',))
+    for _ in range(3):
+        with pytest.raises(Exception): build_step(ws, ws.router())
+    state = build_escalation_status(ws)
+    assert state['milestone'] == 'm2' and state['eligible'], state
+    ws.update_milestone('m2', {'status': 'open'})        # m1 first again; m2's tries are still used up
+    assert build_escalation_status(ws)['milestone'] == 'm2'
+
+
+def test_the_owner_can_build_a_chosen_milestone(tmp_path):
+    ws = two_milestones(tmp_path)
+    scripted(ws, [GREETING], roles=('plan',))
+    result = build_step(ws, ws.router(), milestone_id='m2')
+    assert ws._draft(result['draft'])['milestone'] == 'm2'
+    assert 'cannot be built now' in build_step(ws, ws.router(), milestone_id='m9')['summary']
+
+
+def test_every_milestone_s_late_answer_is_fetched_and_one_that_arrived_is_checked(tmp_path, monkeypatch):
+    # Review of J11-B6: with two late answers outstanding, each round fetched only the first; a second that had
+    # arrived was never fetched, and both milestones waited for good. Fetching is no model call.
+    from runesmith.app import author_recovery, building as built
+    ws = two_milestones(tmp_path)
+    arrived = ws.save_draft(title='Greeting', why='a late answer', files=[{'path':'greet.py','content':'def greet():\n    return "hello"\n'}],
+                            drafted_by='late', milestone='m2')
+    rows = [{'id':'r1','key':'draft-m1-1','state':'pending','milestone':'m1','can_resume':True},
+            {'id':'r2','key':'draft-m2-1','state':'pending','milestone':'m2','can_resume':True}]
+    fetched = []
+
+    def pending(ws, milestone=None):
+        return [row for row in rows if milestone is None or row['milestone'] in (milestone, None)]
+
+    def resume(ws, request_id, checkpoint=None):
+        fetched.append(request_id)
+        if request_id == 'r2':
+            rows[:] = [row for row in rows if row['id'] != 'r2']
+            return {'summary':'fetched', 'draft':arrived['id']}
+        return {'summary':'The late answer has not arrived yet; Runesmith waits for it and does not ask twice.'}
+    monkeypatch.setattr(author_recovery, 'pending_authors', pending)
+    monkeypatch.setattr(author_recovery, 'resume_author', resume)
+    monkeypatch.setattr(built, '_check_and_record', lambda ws, draft, milestone, contract, checkpoint: {'checked':draft['id'], 'milestone':milestone['id']})
+    assert build_step(ws, ws.router()) == {'checked':arrived['id'], 'milestone':'m2'}
+    assert fetched == ['r1', 'r2']                                # both fetched in one round, no model asked
+    fetched.clear()
+    rows[:] = [dict(rows[0], milestone=None)]                     # an answer whose milestone is unknown holds all
+    assert 'has not arrived yet' in build_step(ws, ws.router())['summary'] and fetched == ['r1']

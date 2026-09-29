@@ -11,6 +11,7 @@ import copy
 import calendar
 import hashlib
 import json
+import re
 import time
 import uuid
 
@@ -54,6 +55,103 @@ def _corrections(ws, attempt_id):
                   key=lambda row:row.get('utc',''))
 
 
+READMITS = 'build-readmits'
+
+
+def _readmits(ws, attempt_id):
+    rows = [_read_json(path, {}) for path in (ws.home / READMITS).glob('*.json')]
+    return sorted((row for row in rows if row.get('attempt') == attempt_id), key=lambda row: row.get('utc', ''))
+
+
+def readmit_kept_answer(ws, attempt_id: str, *, checkpoint=lambda: None):
+    """Check a refused answer again with no model call; a newer Runesmith may accept it.
+
+    Journey J11: every edit of an answer carried a "purpose" label, so it was refused as an invalid edit schema
+    (fixed in G13); J2: a correction gave one edit once for each place its text occurs (J2-G3). Asking a model again
+    costs a try, a correction and minutes of free quota; replaying the kept answer costs none of them. The newest kept
+    answer is used: the last refused correction's, else the original. The files must be as they were when it was
+    written, and it goes through the same admission as a correction's answer. Tries and corrections are not counted.
+    """
+    if not isinstance(attempt_id, str) or not re.fullmatch(r'[0-9a-f]{32}', attempt_id):
+        raise WorkspaceError('Choose a refused answer.')
+    attempt = _read_json(ws.home / 'build-attempts' / (attempt_id + '.json'), {})
+    if attempt.get('state') != 'failed' or not (attempt.get('feedback') or {}).get('path'):
+        raise WorkspaceError('Choose a refused answer with a recorded reason.')
+    history = _corrections(ws, attempt_id)
+    if any(row.get('state') in ('started', 'uncertain') for row in history):
+        raise PlannerUnavailable('A correction’s answer is still expected. Set it aside under Work & proposals → Drafts '
+                                 'before checking the kept answer again.')
+    answers = _answers(ws, attempt)
+    if not answers:
+        raise WorkspaceError('The refused answer is no longer kept.')
+    answer_path, original = answers[0]
+    original_files = [row for row in ((original.get('answer') or {}).get('files') or []) if isinstance(row, dict)]
+    allowed = {ws._safe_rel(str(row.get('path') or '')) for row in original_files}
+    if not allowed or any(not path for path in allowed):
+        raise WorkspaceError('The kept answer has no safe paths.')
+    plan = ws.plan() or {}
+    milestone = next((row for row in plan.get('milestones', []) if milestone_contract(ws, row) == attempt.get('contract')), None)
+    if not milestone:
+        raise WorkspaceError('The milestone changed since that answer; it belongs to the old wording.')
+    snapshot = collect_snapshot(ws)
+    if snapshot['digest'] != attempt.get('snapshot_digest'):
+        raise WorkspaceError('The files changed since that answer, so it cannot be checked again.')
+    # Replayed exactly as it was admitted the first time (review of "Check it again", 2026-09-29): once a correction
+    # became a draft, the next one was built on that draft, so a replay is no longer offered; the newest kept
+    # answer is replayed, never an older one; a correction built on the original files keeps their other paths and
+    # must cover every path the original answer could not place, as a first correction must.
+    if any(row.get('state') == 'candidate' for row in history):
+        raise WorkspaceError('A correction of this answer already became a draft; check that draft instead.')
+    if any(row.get('state') == 'candidate' for row in _readmits(ws, attempt_id)):
+        raise WorkspaceError('The kept answer was already checked again and became a draft; check that draft instead.')
+    correction = history[-1] if history else None
+    if correction is not None and not (correction.get('state') == 'refused' and isinstance(correction.get('answer'), dict)):
+        raise WorkspaceError('The last correction left no answer to check again.')
+    if correction:
+        operations = [row for row in (correction['answer'].get('files') or []) if isinstance(row, dict)]
+        named = [ws._safe_rel(str(row.get('path') or '')) for row in operations]
+        replaced = set(named)
+        if len(named) != len(replaced):
+            raise WorkspaceError('The kept correction names a file twice, so it cannot be checked again.')
+        if not replaced or not replaced <= allowed:
+            raise WorkspaceError('The kept correction names other files than the answer it corrects.')
+        admitted = set((attempt.get('feedback') or {}).get('admitted_paths') or []) & allowed
+        if not (allowed - admitted) <= replaced:
+            raise WorkspaceError('The kept correction leaves out a file the answer needs, so it cannot be checked again.')
+        operations += [copy.deepcopy(row) for row in original_files if row.get('path') in admitted and row.get('path') not in replaced]
+        title = correction['answer'].get('title') or (original.get('answer') or {}).get('title')
+        why = correction['answer'].get('why') or (original.get('answer') or {}).get('why')
+        by = (correction.get('instrument') or {}).get('answered_by') or (correction.get('instrument') or {}).get('model')
+    else:
+        operations = copy.deepcopy(original_files)
+        title, why = (original.get('answer') or {}).get('title'), (original.get('answer') or {}).get('why')
+        by = original.get('author')
+    context = source_context(ws, snapshot=snapshot)
+    freeze_snapshot(ws, snapshot)
+    key = 'r' + uuid.uuid4().hex[:12]
+    receipt_path = ws.home / READMITS / (key + '.json')
+    receipt = {'id': key, 'attempt': attempt_id, 'state': 'started', 'utc': _now(),
+               'answer': correction['id'] if correction else answer_path.relative_to(ws.home).as_posix(),
+               'source': 'correction' if correction else 'original'}
+    _write_json(receipt_path, receipt)
+    checkpoint()
+    try:
+        files = admit_revision_answer(ws, context, operations, None, allowed_paths=allowed)
+    except PlannerUnavailable as error:
+        _write_json(receipt_path, dict(receipt, state='refused', error=str(error)[:300], finished=_now()))
+        raise PlannerUnavailable(f'Checked again with no model call; it still does not fit: {error}') from error
+    draft = ws.save_draft(title=str(title or milestone['title']), why=str(why or ''), files=files,
+                          drafted_by=by, milestone=milestone['id'])
+    ws._save_draft_state(draft, 'waiting', contract=attempt['contract'], context_digest=context['digest'],
+                         public_acceptance_digest=expectation_digest(ws, milestone['id']),
+                         snapshot_digest=snapshot['digest'], shown_files=sorted(context['files']),
+                         correction_of=attempt_id, readmitted=key)
+    _write_json(receipt_path, dict(receipt, state='candidate', draft=draft['id'], finished=_now()))
+    ws.ledger.append('build.answer_readmitted', {'id': key, 'attempt': attempt_id, 'draft': draft['id'],
+                                                 'source': receipt['source'], 'author': by})
+    return ws._draft(draft['id'])
+
+
 def correction_candidates(ws):
     current_snapshot = None
     try:
@@ -72,7 +170,14 @@ def correction_candidates(ws):
         # An answer for an earlier source can never be corrected, late correction or not; its card was noise under a
         # later milestone (J2-F21).
         if current_snapshot and attempt.get('snapshot_digest')!=current_snapshot:continue
+        rechecks=_readmits(ws,path.stem)
+        last=rechecks[-1] if rechecks else None
         rows.append({'attempt':path.stem,'milestone_contract':attempt.get('contract'),
+                     # Checked again with no model call ("Check it again"): offered until one became a draft.
+                     'can_check_again':not late and not any(r.get('state')=='candidate' for r in rechecks)
+                                       and not any(r.get('state')=='candidate' for r in history),
+                     'last_recheck':{'utc':last.get('finished') or last.get('utc'),'error':last.get('error')}
+                                    if last and last.get('state')=='refused' else None,
                      'path':attempt['feedback']['path'],'error':attempt.get('error'),
                      'snapshot_current':attempt.get('snapshot_digest')==current_snapshot,
                      'corrections':len(history),'remaining':max(0,MAX_CORRECTIONS-len(history)),
@@ -136,7 +241,11 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
     freeze_snapshot(ws,snapshot)
 
     previous_draft=None
-    for record in reversed(history):
+    # A kept answer checked again with no model call ("Check it again") is part of the chain too: a correction after
+    # it builds on its draft, as it would on a correction's (review of Check it again, 2026-09-29).
+    chain=sorted(history+[row for row in _readmits(ws,attempt_id) if row.get('state')=='candidate'],
+                 key=lambda row:row.get('finished') or row.get('utc',''))
+    for record in reversed(chain):
         if record.get('draft'):
             try:previous_draft=ws._draft(record['draft'])
             except KeyError:pass

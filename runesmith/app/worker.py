@@ -41,7 +41,7 @@ from runesmith.app.worker_journal import Record, MAX_JOBS, validate_job, validat
 # What a job does, in the owner's words, for the live log (journey J1-F3: "Propose_acceptance skipped").
 JOB_WORDS = {"propose_acceptance": "Proposing acceptance checks", "plan": "Drafting a plan", "goalposts": "Proposing goalposts",
              "draft": "Drafting files", "build": "Building the next step", "revise": "Revising a draft",
-             "correct": "Correcting a draft", "escalate": "Giving the step one more try", "readmit": "Checking a kept answer again", "supplement": "Asking for missing files",
+             "correct": "Correcting a draft", "escalate": "Giving the step one more try", "readmit": "Checking a kept answer again", "readmit_answer": "Checking a kept answer again", "supplement": "Asking for missing files",
              "breakdown": "Proposing smaller steps", "map": "Mapping the folder", "round": "The round",
              "measure": "Taking a measurement"}
 KIND_WORDS = {"python_repository": ("Python project", "Python projects"), "node_repository": ("Node project", "Node projects"),
@@ -353,7 +353,7 @@ class Worker:
         """Queue one job. ``by`` records who asked: the owner, or the schedule continuing its own work."""
         if by not in ("owner", "schedule"):
             raise ValueError(f"unknown requester {by!r}")
-        if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "readmit", "breakdown", "propose_acceptance", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
+        if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "readmit", "readmit_answer", "breakdown", "propose_acceptance", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
             raise ValueError(f"unknown job {kind!r}")
         from runesmith.app.build_jobs import BuildJob, PARAMETERS
         if kind in PARAMETERS:
@@ -468,6 +468,16 @@ class Worker:
 
     # --------------------------------------------------------------------- loop --
 
+    def scheduled_job(self) -> tuple[str, dict[str, Any]] | None:
+        """What a scheduled round runs now: the next configured mode (None when none is ready), a build step when
+        building is on, or a round. "Run now" asks the same (journey J11-F11: it always ran a repair round, which
+        never builds, and told the owner to draft a plan that already had ten milestones)."""
+        from runesmith.app.work_modes import configuration, choose_next
+        if configuration(self.ws)['configured']:
+            mid = choose_next(self.ws)
+            return None if mid is None else ('mode', {'mode': mid})
+        return ('build' if self.ws.settings()['build_steps'] else 'round'), {}
+
     def _run(self) -> None:
         while True:
             with self._cv:
@@ -477,16 +487,12 @@ class Worker:
                         break
                     due = None if self.paused else self._due()
                     if due is not None and due <= 0 and not self._jobs:
-                        from runesmith.app.work_modes import configuration, choose_next
                         try:
-                            if configuration(self.ws)['configured']:
-                                mid = choose_next(self.ws)
-                                if mid is None:
-                                    self._cv.wait(timeout=30.0)
-                                    continue
-                                kind, params = 'mode', {'mode': mid}
-                            else:
-                                kind, params = ('build' if self.ws.settings()['build_steps'] else 'round'), {}
+                            choice = self.scheduled_job()
+                            if choice is None:
+                                self._cv.wait(timeout=30.0)
+                                continue
+                            kind, params = choice
                         except WorkspaceError as error:
                             self._set('blocked', str(error))
                             self._cv.wait(timeout=30.0)
@@ -726,11 +732,13 @@ class Worker:
         revised = ' Revised once after Runesmith tried and read them.' if proposal.get('revision') and not proposal['revision'].get('error') else ''
         return {'summary': f"Proposed {len(proposal['checks'])} acceptance checks for {milestone}.{revised}{trial} Read and approve them under Goals & plan; nothing is used until you do."}
 
-    def _job_build(self, draft_id: str | None = None, author_only: bool = False) -> dict[str, Any]:
+    def _job_build(self, draft_id: str | None = None, author_only: bool = False,
+                   milestone_id: str | None = None) -> dict[str, Any]:
         return self._run_build_job('build',
             'Rechecking saved files; no model call or apply' if draft_id is not None else
             ('Drafting one bounded milestone step; no checks or apply' if author_only else
-             'Drafting and checking one bounded milestone step'), draft_id=draft_id, author_only=author_only)
+             'Drafting and checking one bounded milestone step'), draft_id=draft_id, author_only=author_only,
+            milestone_id=milestone_id)
 
     def _run_build_job(self, kind, detail, **params):
         from runesmith.app.build_jobs import BuildJob, execute_build_job
@@ -766,6 +774,9 @@ class Worker:
 
     def _job_readmit(self, escalation: str) -> dict[str, Any]:
         return self._run_build_job('readmit', 'Checking a kept answer again; no model call', escalation=escalation)
+
+    def _job_readmit_answer(self, attempt: str) -> dict[str, Any]:
+        return self._run_build_job('readmit_answer', 'Checking a kept answer again; no model call', attempt=attempt)
 
     def _job_correct(self, attempt: str) -> dict[str, Any]:
         return self._run_build_job('correct', 'Correcting one retained rejected answer under its original scope', attempt=attempt)

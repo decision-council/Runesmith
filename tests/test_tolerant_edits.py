@@ -72,3 +72,10 @@ def test_the_same_edit_given_a_different_number_of_times_is_still_refused(tmp_pa
         admitted(tmp_path, text, [same, dict(same)])
     with pytest.raises(PlannerUnavailable, match="exactly once"):
         admitted(tmp_path, text, [same])
+
+
+def test_an_edit_labelled_with_its_purpose_is_applied(tmp_path):
+    # Journey J11-G13: every edit of the SVG milestone's answer carried a "purpose"; the answer was refused as an
+    # invalid edit schema.
+    labelled = {"old_text": "def main(argv=None):", "new_text": "def main(argv=None):  # entry point", "purpose": "label it"}
+    assert _apply_one_edit(SOURCE, labelled, "cli.py").startswith('def main(argv=None):  # entry point')

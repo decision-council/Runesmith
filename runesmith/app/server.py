@@ -320,7 +320,12 @@ def api_dashboards_change(s: Studio, q, body):
 @route("POST", r"/api/worker/run")
 def api_worker_run(s: Studio, q, body):
     job = body.get("job", "round")
-    allowed = {"map":{"probe"}, "draft":{"milestone"}, "build":{"draft_id","author_only"}, "escalate":set(),
+    if job == "next":                  # "Run now": what a scheduled round would run now (J11-F11)
+        choice = s.worker.scheduled_job()
+        if choice is None:
+            raise WorkspaceError('No work mode can run now; see Modes & measurements for why.')
+        return s.worker.enqueue(choice[0], **choice[1])
+    allowed = {"map":{"probe"}, "draft":{"milestone"}, "build":{"draft_id","author_only","milestone_id"}, "escalate":set(),
                "supplement":{"draft_id","reason","instrument","author_only"},
                "revise":{"draft_id","quote_id","instrument","operation_id","reason"},
                "review_current":{"milestone"},
@@ -329,7 +334,7 @@ def api_worker_run(s: Studio, q, body):
                "source_baseline":{"reason"},
                "allocate_check":{"draft_id","quote_id","reason"},
                "reconcile_check":{"draft_id","quote_id","reason"},
-               "correct":{"attempt"}, "readmit":{"escalation"}, "breakdown":{"milestone"}, "propose_acceptance":{"milestone"}}.get(job, set())
+               "correct":{"attempt"}, "readmit":{"escalation"}, "readmit_answer":{"attempt"}, "breakdown":{"milestone"}, "propose_acceptance":{"milestone"}}.get(job, set())
     params = {k: v for k, v in (body.get("params") or {}).items() if k in allowed}
     return s.worker.enqueue(job, **params)
 

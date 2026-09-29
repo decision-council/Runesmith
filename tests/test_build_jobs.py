@@ -184,7 +184,7 @@ def test_studio_api_preserves_author_only_and_checks_its_type(tmp_path):
     ws = setup(tmp_path); worker = Worker(ws, EventBus()); studio = SimpleNamespace(worker=worker)
     job = api_worker_run(studio, {}, {'job':'build','params':{'author_only':True}})
     assert job['params'] == {'author_only':True}
-    assert dict(BuildJob('build', job['params']).params) == {'draft_id':None,'author_only':True}
+    assert dict(BuildJob('build', job['params']).params) == {'draft_id':None,'author_only':True,'milestone_id':None}
     with pytest.raises(WorkspaceError):
         api_worker_run(studio, {}, {'job':'build','params':{'author_only':'false'}})
     assert len(worker._jobs) == 1
@@ -343,3 +343,15 @@ def test_synchronous_runner_does_not_abandon_waiting_manual_request(tmp_path, mo
     with pytest.raises(WorkspaceError, match='manual model request'):
         run_synchronous_build_job(ws.root, BuildJob('build', {}), home=ws.home)
     assert not (ws.home / 'STUDIO_CURRENT.json').exists()
+
+
+def test_a_build_job_can_name_its_milestone_but_not_with_a_saved_candidate():
+    assert dict(BuildJob('build', {'milestone_id': 'b1b3993ded24a-s1'}).params)['milestone_id'] == 'b1b3993ded24a-s1'
+    with pytest.raises(WorkspaceError, match='not both'):
+        BuildJob('build', {'milestone_id': 'm1', 'draft_id': 'd1'})
+
+
+def test_checking_a_kept_answer_again_is_a_job_that_names_the_attempt():
+    assert dict(BuildJob('readmit_answer', {'attempt': 'a' * 32}).params) == {'attempt': 'a' * 32}
+    with pytest.raises(WorkspaceError):
+        BuildJob('readmit_answer', {})

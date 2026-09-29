@@ -469,6 +469,18 @@ def test_files_given_inside_a_step_are_created_for_the_example():
         validate_examples({"examples": [later]}, MILESTONE)
 
 
+def test_the_owner_s_reasons_for_turning_down_checks_reach_the_next_checker(tmp_path):
+    # Journey J11-G14: asked again after "x goes from 0 to 100 over 2 seconds, so at 1 second it is 50, not 1", the
+    # Checker was never told why the owner had turned its checks down.
+    from runesmith.app.acceptance_proposals import discard, packet
+    ws = workspace(tmp_path, [EXAMPLES])
+    first = propose(ws, ws.router(), "m1")
+    assert packet(ws, "m1", "examples")["owner_said_about_earlier_checks"] == []
+    discard(ws, "m1", first["id"], reason="x goes from 0 to 100 over 2 seconds, so at 1 second it is 50, not 1")
+    assert packet(ws, "m1", "examples")["owner_said_about_earlier_checks"] == [
+        "x goes from 0 to 100 over 2 seconds, so at 1 second it is 50, not 1"]
+
+
 def test_a_check_on_a_file_nothing_creates_is_revised_once_and_the_owner_sees_why(tmp_path):
     backup = {"name": "listed from a backup", "says": "Entries are listed from a backup file.",
               "steps": [add("Tea", "2026-01-05"), {"run": T + ["list", "backup.json"], "expect": {"shows": ["Tea"]}}]}

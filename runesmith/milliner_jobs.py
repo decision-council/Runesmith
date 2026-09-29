@@ -30,8 +30,12 @@ def read_request(directory, request_id):
     return record
 
 
-# The outcomes Milliner gives a route that turned the job away before generating anything.
-REFUSED = {'rate_limited', 'overloaded', 'busy', 'unavailable', 'daily_exhausted', 'capacity', 'circuit_open'}
+# The outcomes Milliner gives a route that turned the job away before generating anything. "bad_request" is how a
+# route says the request can never fit it, for example Groq's 8,000 tokens a minute against a build prompt and its
+# answer room: refused in 0.0 s, never sent. The next model may take it (journey J11-B7: the Planner's other models
+# were never asked).
+REFUSED = {'rate_limited', 'overloaded', 'busy', 'unavailable', 'daily_exhausted', 'capacity', 'circuit_open',
+           'bad_request'}
 
 
 def no_route_accepted(payload):

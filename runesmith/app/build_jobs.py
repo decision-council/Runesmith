@@ -18,11 +18,12 @@ from runesmith.app.workspace import WorkspaceError
 
 # Parameter names are also used by queue admission. None means an optional ID.
 PARAMETERS = {
-    'build': {'draft_id': None, 'author_only': False},
+    'build': {'draft_id': None, 'author_only': False, 'milestone_id': None},
     'supplement': {'draft_id': str, 'reason': str, 'instrument': str, 'author_only': False},
     'revise': {'draft_id': str, 'quote_id': str, 'instrument': str, 'operation_id': str, 'reason': str},
     'correct': {'attempt': str},
     'readmit': {'escalation': str},
+    'readmit_answer': {'attempt': str},
     'escalate': {},
     'review_current': {'milestone': str},
     'resume_check': {'draft_id': str, 'reason': str},
@@ -73,6 +74,8 @@ class BuildJob:
             clean[name] = value
         if self.kind == 'build' and clean['author_only'] and clean['draft_id'] is not None:
             raise WorkspaceError('Choose author-only acquisition or a saved-candidate check, not both.')
+        if self.kind == 'build' and clean['milestone_id'] is not None and clean['draft_id'] is not None:
+            raise WorkspaceError('Choose a milestone to build or a saved candidate to check, not both.')
         object.__setattr__(self, 'params', MappingProxyType(clean))
 
 
@@ -111,6 +114,8 @@ def execute_build_job(ws, job: BuildJob, *, checkpoint=lambda: None, on_call=Non
         if p['draft_id'] is not None:
             return building.recheck_draft(ws, p['draft_id'], checkpoint=guarded)
         options = {'author_only': True} if p['author_only'] else {}
+        if p['milestone_id'] is not None:
+            options['milestone_id'] = p['milestone_id']
         return building.build_step(ws, ws.router(on_call=call_recorder, backoff_s=() if p['author_only'] else (5, 20)),
                                    checkpoint=guarded, **options)
     if job.kind == 'supplement':
@@ -128,6 +133,8 @@ def execute_build_job(ws, job: BuildJob, *, checkpoint=lambda: None, on_call=Non
     if job.kind == 'correct':
         return building.correct_refusal(ws, ws.router(on_call=call_recorder, backoff_s=(5, 20)),
                                         p['attempt'], checkpoint=guarded)
+    if job.kind == 'readmit_answer':
+        return building.readmit_refused_answer(ws, p['attempt'], checkpoint=guarded)
     if job.kind == 'readmit':
         return building.readmit_escalation_answer(ws, p['escalation'], checkpoint=guarded)
     if job.kind == 'escalate':

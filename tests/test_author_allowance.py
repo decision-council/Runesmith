@@ -258,3 +258,23 @@ def test_unreadable_receipt_directory_is_not_an_empty_allowance(tmp_path, monkey
     result = building.build_step(ws, None, author_only=True)
     assert result['allowance_blocked'] and 'unreadable' in result['summary']
     assert not building.build_escalation_status(ws)['allowance']['known']
+
+
+def test_an_unresolved_call_blocks_its_own_milestone_not_the_others(tmp_path):
+    # Journey J11-B6: an in-flight call for one milestone refused every milestone's allowance.
+    import hashlib, json as _json
+    from runesmith.app.author_allowance import ordinary_allowance
+    from runesmith.app.workspace import Workspace, WorkspaceError
+    ws = Workspace(tmp_path)
+    digest = lambda text: hashlib.sha256(text.encode()).hexdigest()
+    mine, other, source = digest('contract-a'), digest('contract-b'), digest('source')
+    folder = ws.home / 'build-attempts'; folder.mkdir(parents=True, exist_ok=True)
+    (folder / 'x.json').write_text(_json.dumps({'contract': mine, 'scope': digest('scope-a'), 'snapshot_digest': source,
+                                                'state': 'uncertain'}), encoding='utf-8')
+    assert ordinary_allowance(ws, other, source)['remaining'] == 3
+    import pytest as _pytest
+    with _pytest.raises(WorkspaceError, match='Unresolved author allowance receipt'):
+        ordinary_allowance(ws, mine, source)
+    (folder / 'y.json').write_text('{damaged', encoding='utf-8')
+    with _pytest.raises(WorkspaceError, match='Damaged author allowance receipt'):
+        ordinary_allowance(ws, other, source)

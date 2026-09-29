@@ -98,3 +98,32 @@ def test_a_job_every_route_refused_moves_on_to_the_next_instrument(tmp_path):
     with pytest.raises(TransportCensored):                  # one route generated: saved for review, never paid twice
         call(router(tmp_path / 'spent', every_route_refused(c, spent=40), answering(d), events))
     assert d == [] and [e['instrument'] for e in events] == ['a']
+
+
+def too_large_everywhere(calls):
+    """Journey J11-B7: Groq's 8,000 tokens a minute cannot hold a build prompt with its answer room; every Groq route
+    refused it with bad_request in 0.0 s, before generating anything."""
+    def gateway(method, url, headers, body, timeout):
+        calls.append(method)
+        if method == 'POST':
+            return 202, {'job_id': 'mj_large', 'state': 'queued', 'agent': 'test'}
+        return 200, {'job_id': 'mj_large', 'agent': 'test', 'state': 'failed',
+                     'error': 'every route failed - groq3:gpt-oss-120b bad_request; groq:gpt-oss-120b bad_request',
+                     'meta': {'attempts': [{'provider': 'groq3', 'outcome': 'bad_request', 'tokens_in': 0, 'tokens_out': 0},
+                                           {'provider': 'groq', 'outcome': 'bad_request', 'tokens_in': 0, 'tokens_out': 0}]}}
+    return gateway
+
+
+def test_a_request_no_route_could_take_moves_on_to_the_next_instrument(tmp_path):
+    a, b, events = [], [], []
+    outcome = call(router(tmp_path, too_large_everywhere(a), answering(b), events))
+    assert outcome.ok and outcome.data == ANSWER and [e['instrument'] for e in events] == ['a', 'b']
+
+
+def test_a_request_every_model_turned_away_is_no_answer_even_when_it_reads_like_an_output_failure(tmp_path):
+    # Review of J11-B7: "bad_request" is classified like an output failure, so when the last model refused it too the
+    # router returned an output failure and the caller used up a try, although nothing ran.
+    a, b, events = [], [], []
+    with pytest.raises(TransportCensored) as caught:
+        call(router(tmp_path, too_large_everywhere(a), too_large_everywhere(b), events))
+    assert caught.value.receipt.get('no_route_accepted') and [e['instrument'] for e in events] == ['a', 'b']

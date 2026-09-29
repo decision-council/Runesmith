@@ -42,7 +42,7 @@ def _float(value):
     return number
 
 
-def _records(ws, folder):
+def _records(ws, folder, contract=None):
     directory = ws.home / folder
     try:
         directory.lstat()
@@ -71,7 +71,10 @@ def _records(ws, folder):
             continue                    # no model answered: nothing used up, nothing to reconcile (J2-B9)
         states = {'answered', 'failed', 'recovered'} if folder == 'build-escalations' else {'answered', 'failed'}
         if row.get('state') not in states:
-            raise WorkspaceError(f'Unresolved author allowance receipt {folder}/{path.name}; reconcile it before another call.')
+            # An unresolved call blocks its own milestone's allowance, not every milestone's (journey J11-B6). It is
+            # still listed, so the scope checks below see it; damaged receipts above still block everything.
+            if contract is None or row.get('contract') == contract:
+                raise WorkspaceError(f'Unresolved author allowance receipt {folder}/{path.name}; reconcile it before another call.')
         result.append((path.name, row))
     return result
 
@@ -83,7 +86,7 @@ def ordinary_allowance(ws, contract, snapshot):
     scope = _digest({'kind': 'ordinary-author-v2', 'contract': contract, 'snapshot_digest': snapshot})
     boundary = (contract, snapshot)
     bindings = {scope: boundary}; attempts = []
-    records = _records(ws, 'build-attempts')
+    records = _records(ws, 'build-attempts', contract=contract)
     for name, row in records:
         source = row.get('snapshot_digest')
         if not _hash(source):
@@ -100,7 +103,7 @@ def ordinary_allowance(ws, contract, snapshot):
     if any(row['scope'] in aliases and row['contract'] != contract for _, row in records):
         raise WorkspaceError('Conflicting ordinary allowance scope evidence; reconcile it first.')
     escalations = []
-    for name, row in _records(ws, 'build-escalations'):
+    for name, row in _records(ws, 'build-escalations', contract=contract):
         pair = (row['contract'], row.get('snapshot_digest')) if _hash(row.get('snapshot_digest')) else bindings.get(row['scope'])
         if pair and (pair[0] != row['contract'] or (row['scope'] in bindings and bindings[row['scope']] != pair)):
             raise WorkspaceError('Conflicting alternate-author source evidence; reconcile it first.')

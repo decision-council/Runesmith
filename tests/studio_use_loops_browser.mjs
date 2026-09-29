@@ -2322,6 +2322,25 @@ try{
     assert.deepEqual(aside.map(r=>[r.path,r.body.reason]),[['/api/build/corrections/c0123456789ab/set-aside','waited an hour and nothing arrived']]);
     fixtureWork.build_corrections=oldCorrections;
     loops.push({id:'B26.04',case:'A correction whose answer never arrived offers “Set it aside” with a reason, not a call that must fail',result:'passed'});
+    // B26.06 (journey J11): a refused answer can be checked again with no model call, even with no corrections left
+    fixtureWork.build_corrections=[{attempt:'a2',path:'motion.mjs',error:'PlannerUnavailable: Exact edit refused for motion.mjs: invalid edit schema',
+      remaining:0,corrections:2,eligible:false,late_correction:null,can_check_again:true,
+      last_recheck:{utc:new Date(Date.now()-120000).toISOString().replace(/\.\d+Z$/,'Z'),error:'PlannerUnavailable: Exact edit refused for motion.mjs: old_text did not match exactly once'}}];
+    await page.evaluate(async()=>{window.cleanup?.();document.querySelector('#page').replaceChildren();
+      const module=await import('/static/js/views/work.js');
+      window.cleanup=await module.default(document.querySelector('#page'),{sub:['drafts'],app:{state:{proposals:{waiting:0},drafts:{}}},navigate(){}});});
+    const refusedCard=page.locator('#page .callout',{hasText:'motion.mjs'}).first();
+    await refusedCard.waitFor();
+    const refusedText=await refusedCard.innerText();
+    assert(refusedText.includes('no model is asked and nothing is used up')&&refusedText.includes('Checked again 2 min')&&refusedText.includes('old_text did not match exactly once'),refusedText);
+    assert(!refusedText.includes('PlannerUnavailable')&&!/\bnull\b|undefined/.test(refusedText),refusedText);
+    assert(await refusedCard.getByRole('button',{name:'Correct retained answer',exact:true}).isDisabled());
+    const recheckStart=requests.length;
+    await refusedCard.getByRole('button',{name:'Check it again',exact:true}).click();
+    await page.waitForTimeout(200);
+    assert.deepEqual(requests.slice(recheckStart).filter(r=>r.method==='POST').map(r=>r.body),[{job:'readmit_answer',params:{attempt:'a2'}}]);
+    fixtureWork.build_corrections=oldCorrections;
+    loops.push({id:'B26.06',case:'A refused answer offers “Check it again” with no model call, even with no corrections left, and says when it was last checked',result:'passed'});
     // B26.05 (journey J2-G1): the one more try's refused answer is kept and can be checked again, with no model call
     const oldEscalation=fixtureWork.build_escalation;
     fixtureWork.build_escalation=Object.assign(structuredClone(oldEscalation),{eligible:false,used:true,milestone:'m8',

@@ -524,6 +524,11 @@ class Router:
             outcome = self._attempt(role, names, attempt, prompt=prompt, system=system, schema=schema,
                                     max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort)
             attempt = outcome.attempts
+            if not outcome.ok and (outcome.receipt.get('not_admitted') or outcome.receipt.get('no_route_accepted')):
+                # Every model turned the request away before generating: nothing ran, so this is no answer, never an
+                # output failure, whatever the refusal says (review of J11-B7: a bad_request from the last model used
+                # up a try).
+                raise TransportCensored(outcome.error or 'every model turned the request away', receipt=outcome.receipt)
             if outcome.ok or outcome.error_kind in ("output", "config"):
                 return outcome                          # "config": a refusal that no retry can change (LS1)
             if outcome.receipt.get('no_retry'):

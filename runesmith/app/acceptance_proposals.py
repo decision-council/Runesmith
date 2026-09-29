@@ -218,6 +218,18 @@ def _other_checks(ws, milestone_id, limit=6000) -> list[dict[str, Any]]:
     return rows
 
 
+def _owner_reasons(ws, milestone_id, limit=3) -> list[str]:
+    """What the owner said when turning down or replacing earlier checks for this milestone, newest first. Asked
+    again, the Checker was never told (journey J11-G14: "x goes from 0 to 100 over 2 seconds, so at 1 second it is
+    50, not 1")."""
+    said = []
+    for row in reversed(_read_json(_record_path(ws, milestone_id), {'proposals': []}).get('proposals') or []):
+        reason = row.get('reason') if row.get('state') == 'discarded' else row.get('replace_reason')
+        if isinstance(reason, str) and reason.strip() and reason.strip()[:600] not in said:
+            said.append(reason.strip()[:600])
+    return said[:limit]
+
+
 def packet(ws, milestone_id, style='code') -> dict[str, Any]:
     milestone = _milestone(ws, milestone_id)
     return {'task': acceptance_examples.TASK if style == 'examples' else TASK,
@@ -225,6 +237,7 @@ def packet(ws, milestone_id, style='code') -> dict[str, Any]:
             'brief': ws.brief().get('text', ''),
             'public_acceptance': expectations(ws, milestone_id),
             'other_milestones_checks': _other_checks(ws, milestone_id),
+            'owner_said_about_earlier_checks': _owner_reasons(ws, milestone_id),
             'source_context': source_context(ws, limit=16000),
             # The documents the owner chose to share with models (Goals & plan). Code goes in source_context; documents
             # never do, so without this a Checker could not see a single page of a handbook it is asked to check.

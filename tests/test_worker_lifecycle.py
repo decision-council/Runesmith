@@ -240,3 +240,18 @@ def test_no_scheduled_breakdown_for_a_milestone_that_already_has_smaller_steps(t
     plan["milestones"].insert(0, {"id": "s1", "title": "A smaller step", "status": "done", "parent_id": goal})
     _write_json(ws.home / "PLAN.json", plan)
     assert worker._breakdown_waiting(goal)
+
+
+def test_run_now_does_what_the_schedule_does(tmp_path):
+    # Journey J11-F11: "Run now" always queued a repair round, which never builds, and told the owner to draft a
+    # plan that already had ten milestones.
+    from types import SimpleNamespace
+    from runesmith.app.server import api_worker_run
+    ws = workspace(tmp_path)
+    worker = Worker(ws, EventBus())
+    ws.update_settings({'build_steps': False})
+    assert worker.scheduled_job() == ('round', {})
+    ws.update_settings({'build_steps': True})
+    assert worker.scheduled_job() == ('build', {})
+    job = api_worker_run(SimpleNamespace(worker=worker), {}, {'job': 'next'})
+    assert job['kind'] == 'build'

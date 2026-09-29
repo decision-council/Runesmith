@@ -230,13 +230,20 @@ function drawDrafts(body, w, reload, ctx) {
         toast('Checking the kept answer again. No model is asked.','good',6000);
       })},icon('refresh'),'Check it again')));
   }
-  for (const c of (w.build_corrections || []).filter(c => c.remaining > 0)) {
+  for (const c of (w.build_corrections || []).filter(c => c.remaining > 0 || c.can_check_again)) {
     body.append(h('div.callout.warn.mt-8', icon('wrench'), h('div.grow',
       h('b', `An answer for ${c.path} could not be used`),
       h('div.small', String(c.error || 'It did not fit the files as they are.').replace(/^[A-Za-z]+(Unavailable|Error): /, '')),
       // A correction whose answer never arrived blocks the next one; the owner can set it aside (journey J2-F18).
       h('div.tiny.muted', c.late_correction ? 'The last correction’s answer did not arrive in time. Runesmith kept the request and does not pay for it twice, so it asks again only after you set that one aside.'
-        : `The model can be asked to correct it, told exactly why it was refused (${c.remaining} of 2 corrections left). It cannot touch other files, and your checks still decide.`)),
+        : `The model can be asked to correct it, told exactly why it was refused (${c.remaining} of 2 corrections left). It cannot touch other files, and your checks still decide.`),
+      // A newer Runesmith may accept the kept answer: checking it again asks no model and uses nothing up.
+      c.can_check_again ? h('div.tiny.muted', 'Or check the kept answer again first: no model is asked and nothing is used up.') : null,
+      c.last_recheck ? h('div.tiny.muted', `Checked again ${ago(c.last_recheck.utc)}: ${String(c.last_recheck.error || '').replace(/^[A-Za-z]+(Unavailable|Error): /, '')}`) : null),
+      c.can_check_again ? h('button.btn.sm', {onclick:(e)=>withBusy(e.currentTarget,async()=>{
+        await post('/api/worker/run',{job:'readmit_answer',params:{attempt:c.attempt}});
+        toast('Checking the kept answer again. No model is asked.','good',6000);
+      })},icon('refresh'),'Check it again') : null,
       c.late_correction ? h('button.btn.sm', {onclick:(e)=>withBusy(e.currentTarget,async()=>{
         const reason=await askText({title:'Set the late correction aside?',text:'If its answer arrives later, it is not used, and it counts as one of the two corrections. Say why, for the record.',
           placeholder:'e.g. waited an hour and nothing arrived',confirm:'Set it aside',multiline:true});

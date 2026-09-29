@@ -228,3 +228,20 @@ def test_an_unattended_round_fetches_a_late_answer_and_checks_it_without_a_new_c
     assert not checked.get('advanced') and not (ws.root/'app.py').exists()   # self-checks alone never apply
     assert json.loads(attempt.read_text())['state']=='answered' and not pending_authors(ws)
     assert [m for m,_ in gateway.requests].count('POST')==1
+
+
+def test_a_late_answer_holds_back_only_its_own_milestone(tmp_path,monkeypatch):
+    # Journey J11-B6: one milestone's late answer stopped every milestone's build until it arrived.
+    from runesmith.instruments import ScriptedInstrument
+    ws,gateway,inst,row,attempt=interrupted_build(tmp_path,monkeypatch)
+    assert row['milestone']=='m1' and pending_authors(ws,milestone='m1') and not pending_authors(ws,milestone='m2')
+    plan=ws.plan();plan['milestones'].append({'title':'Greeting','done_when':'greet() says hello'});ws.save_plan(plan)
+    ws.update_settings({'build_paths':['app.py','greet.py','tests']})
+    greeting={'title':'Greeting','why':'the second milestone','files':[{'path':'greet.py','content':'def greet():\n    return "hello"\n'}]}
+    router=Router({'s':ScriptedInstrument('s',[greeting])},{'plan':['s']},backoff_s=())
+    result=building.build_step(ws,router)                       # m1's answer has not arrived: fetched, then m2 built
+    assert ws._draft(result['draft'])['milestone']=='m2', result
+    assert [m for m,_ in gateway.requests].count('POST')==1      # m1's request was never sent twice
+    assert json.loads(attempt.read_text())['state']=='uncertain' and pending_authors(ws,milestone='m1')
+    only_m1=building.build_step(ws,Router({},{}),milestone_id='m1')
+    assert 'has not arrived yet' in only_m1['summary']           # its own milestone still waits for it

@@ -130,3 +130,113 @@ def test_a_correction_no_route_accepted_spends_nothing_and_blocks_nothing(tmp_pa
         scripted(ws, [{'title': 'Corrected', 'why': 'exact current source', 'files': [
             {'path': 'test_tool.py', 'purpose': 'valid replacement', 'content': 'expected = 2\n'}]}], roles=('plan',))
         assert correct_rejected_answer(ws, ws.router(), attempt_id)['id']           # the next correction is allowed
+
+
+def test_a_refused_answer_is_checked_again_with_no_model_call(tmp_path):
+    # Journey J11: every edit carried a "purpose" and the answer was refused as an invalid edit schema (fixed in G13).
+    # The kept answer is checked again without asking any model; no try and no correction is used.
+    from runesmith.app.build_corrections import readmit_kept_answer
+    ws,attempt_id=rejected_answer(tmp_path)
+    answer_path=ws.home/'draft-answers'/'answer.json'
+    saved=json.loads(answer_path.read_text(encoding='utf-8'))
+    saved['answer']['files'][1]['edits']=[{'old_text':'expected = 2','new_text':'expected = 2\nchecked = True','purpose':'say it is checked'}]
+    _write_json(answer_path,saved)
+    assert correction_candidates(ws)[0]['can_check_again']
+    draft=readmit_kept_answer(ws,attempt_id)
+    files={row['path']:row for row in draft['files']}
+    assert files['tool.py']['content']=='value = 2\n' and files['test_tool.py']['content']=='expected = 2\nchecked = True\n'
+    candidate=correction_candidates(ws)[0]
+    assert candidate['corrections']==0 and candidate['remaining']==2 and not candidate['can_check_again']
+    assert not list((ws.home/'build-corrections').glob('*.json'))            # no correction receipt: nothing used
+
+
+def test_a_kept_answer_that_still_does_not_fit_says_so_and_uses_nothing(tmp_path):
+    from runesmith.app.build_corrections import readmit_kept_answer
+    ws,attempt_id=rejected_answer(tmp_path)
+    with pytest.raises(PlannerUnavailable,match='Checked again with no model call; it still does not fit'):
+        readmit_kept_answer(ws,attempt_id)
+    candidate=correction_candidates(ws)[0]
+    assert candidate['can_check_again'] and candidate['remaining']==2
+    assert 'did not match' in candidate['last_recheck']['error']
+
+
+def test_a_kept_answer_is_not_checked_again_after_its_files_changed(tmp_path):
+    from runesmith.app.build_corrections import readmit_kept_answer
+    ws,attempt_id=rejected_answer(tmp_path)
+    (tmp_path/'tool.py').write_text('value = 3\n')
+    with pytest.raises(WorkspaceError,match='files changed'):
+        readmit_kept_answer(ws,attempt_id)
+
+
+def refused_correction(ws, attempt_id, files, *, state='refused', draft=None):
+    key = 'c' + str(len(list((ws.home/'build-corrections').glob('*.json')))).zfill(12)
+    row = {'id':key,'attempt':attempt_id,'state':state,'utc':'2026-09-29T00:01:00Z','number':1,
+           'answer':{'title':'Correction','why':'kept','files':files}}
+    if draft: row['draft'] = draft
+    _write_json(ws.home/'build-corrections'/(key+'.json'),row)
+    return key
+
+
+def test_a_refused_correction_is_replayed_with_the_files_it_left_alone(tmp_path):
+    from runesmith.app.build_corrections import readmit_kept_answer
+    ws,attempt_id=rejected_answer(tmp_path)
+    refused_correction(ws,attempt_id,[{'path':'test_tool.py','edits':[{'old_text':'expected = 2','new_text':'expected = 2\nchecked = True','purpose':'label'}]}])
+    draft=readmit_kept_answer(ws,attempt_id)
+    files={row['path']:row['content'] for row in draft['files']}
+    assert files=={'tool.py':'value = 2\n','test_tool.py':'expected = 2\nchecked = True\n'}
+
+
+def test_a_refused_correction_that_leaves_out_a_needed_file_is_not_replayed(tmp_path):
+    from runesmith.app.build_corrections import readmit_kept_answer
+    ws,attempt_id=rejected_answer(tmp_path)
+    refused_correction(ws,attempt_id,[{'path':'tool.py','edits':[{'old_text':'value = 1','new_text':'value = 3'}]}])
+    with pytest.raises(WorkspaceError,match='leaves out a file'):
+        readmit_kept_answer(ws,attempt_id)
+
+
+def test_once_a_correction_became_a_draft_the_kept_answer_is_not_offered_again(tmp_path):
+    from runesmith.app.build_corrections import readmit_kept_answer
+    ws,attempt_id=rejected_answer(tmp_path)
+    refused_correction(ws,attempt_id,[{'path':'test_tool.py','content':'expected = 2\n'}],state='candidate',draft='d-earlier')
+    assert not correction_candidates(ws)[0]['can_check_again']
+    with pytest.raises(WorkspaceError,match='already became a draft'):
+        readmit_kept_answer(ws,attempt_id)
+
+
+def test_a_kept_correction_that_names_a_file_twice_is_not_replayed(tmp_path):
+    from runesmith.app.build_corrections import readmit_kept_answer
+    ws,attempt_id=rejected_answer(tmp_path)
+    twice=[{'path':'test_tool.py','content':'expected = 2\nfirst = True\n'},{'path':'test_tool.py','content':'expected = 2\nsecond = True\n'}]
+    refused_correction(ws,attempt_id,twice)
+    with pytest.raises(WorkspaceError,match='names a file twice'):
+        readmit_kept_answer(ws,attempt_id)
+
+
+def test_a_kept_answer_becomes_a_draft_once_and_a_later_correction_builds_on_it(tmp_path):
+    from runesmith.app.build_corrections import readmit_kept_answer
+    ws,attempt_id=rejected_answer(tmp_path)
+    answer_path=ws.home/'draft-answers'/'answer.json'
+    saved=json.loads(answer_path.read_text(encoding='utf-8'))
+    saved['answer']['files'][1]['edits']=[{'old_text':'expected = 2','new_text':'expected = 2\nchecked = True','purpose':'label'}]
+    _write_json(answer_path,saved)
+    first=readmit_kept_answer(ws,attempt_id)
+    with pytest.raises(WorkspaceError,match='already checked again'):
+        readmit_kept_answer(ws,attempt_id)                             # no second free draft from the same answer
+    scripted(ws,[{'title':'Correct','why':'build on the replayed draft','files':[
+        {'path':'test_tool.py','edits':[{'old_text':'checked = True','new_text':'checked = False'}]}]}],roles=('plan',))
+    draft=correct_rejected_answer(ws,ws.router(),attempt_id)          # its old text exists only in the replayed draft
+    files={row['path']:row['content'] for row in draft['files']}
+    assert files['test_tool.py']=='expected = 2\nchecked = False\n' and files['tool.py']=='value = 2\n', (first['id'], files)
+
+
+def test_a_replayed_correction_credits_who_answered_it(tmp_path):
+    from runesmith.app.build_corrections import readmit_kept_answer
+    ws,attempt_id=rejected_answer(tmp_path)
+    key=refused_correction(ws,attempt_id,[{'path':'test_tool.py','content':'expected = 2\n'}])
+    receipt=ws.home/'build-corrections'/(key+'.json')
+    row=json.loads(receipt.read_text(encoding='utf-8'))
+    row['instrument']={'model':'manual','answered_by':'the model the owner asked'}
+    row['answer']['title']=''
+    _write_json(receipt,row)
+    draft=readmit_kept_answer(ws,attempt_id)
+    assert draft['drafted_by']=='the model the owner asked' and draft['title']=='First answer'

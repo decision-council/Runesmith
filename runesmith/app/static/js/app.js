@@ -6,7 +6,7 @@ import { LOGO } from './icons.js';
 // What a job is called in plain words (the worker's JOB_WORDS), for toasts (journey J2-F9).
 const JOB_WORDS = { propose_acceptance: 'Proposing acceptance checks', plan: 'Drafting a plan', goalposts: 'Proposing goalposts',
   draft: 'Drafting files', build: 'Building the next step', revise: 'Revising a draft', correct: 'Correcting a draft',
-  escalate: 'Giving the step one more try', readmit: 'Checking a kept answer again', supplement: 'Asking for missing files', breakdown: 'Proposing smaller steps',
+  escalate: 'Giving the step one more try', readmit: 'Checking a kept answer again', readmit_answer: 'Checking a kept answer again', supplement: 'Asking for missing files', breakdown: 'Proposing smaller steps',
   map: 'Mapping the folder', round: 'The round', measure: 'Taking a measurement' };
 
 const NAV = [
@@ -124,8 +124,10 @@ function renderShell(root) {
 
 async function runNow(btn) {
   await withBusy(btn, async () => {
-    const job = await post('/api/worker/run', { job: 'round' });
-    toast(job.kind === 'round' ? 'A round is queued: map, find work, work, report.' : 'Queued.', 'good');
+    // What a scheduled round would run now: a build step when building is on (journey J11-F11).
+    const job = await post('/api/worker/run', { job: 'next' });
+    toast({ round: 'A round is queued: map, find work, work, report.', build: 'A build step is queued: the next milestone that can move.',
+      mode: 'The next work mode is queued.' }[job.kind] || 'Queued.', 'good');
   });
 }
 async function togglePause(btn) {

@@ -130,9 +130,14 @@ def plan_readiness(plan):
             for m in milestones}
 
 
+def ready_milestones(plan):
+    """Every milestone that can be worked on now, in the builder's order: in progress first, then open."""
+    return [m for state in ('doing','open') for m in (plan or {}).get('milestones',[])
+            if m.get('status')==state and milestone_ready(plan,m)]
+
+
 def next_milestone(plan):
-    return next((m for state in ('doing','open') for m in (plan or {}).get('milestones',[])
-                 if m.get('status')==state and milestone_ready(plan,m)),None)
+    return next(iter(ready_milestones(plan)),None)
 
 
 def _workspace_summary(ws) -> dict[str, Any]:
@@ -473,6 +478,10 @@ def _apply_one_edit(text: str, edit, rel: str) -> str:
     The repair organ's own exact edits are unchanged.
     """
     from runesmith.organs.repair import apply_edits
+    # Only the old and new text make an edit. A free model labelled each edit with its "purpose", and the whole
+    # answer was refused as an invalid edit schema (journey J11-G13, the SVG milestone's first try).
+    if isinstance(edit, dict):
+        edit = {key: edit[key] for key in ('old_text', 'new_text') if key in edit}
     try:
         return apply_edits({rel: text}, [dict(edit, path=rel)], {rel})[rel]
     except ValueError as error:
@@ -653,12 +662,13 @@ def admit_revision_answer(ws,context,raw_files,revision=None,*,allowed_paths=Non
 def draft_files(ws, router, milestone_id: str | None = None, *, revision=None, attempt_id=None, admission_guard=None,
                 revision_operation=None) -> dict[str, Any]:
     from runesmith.app.author_recovery import pending_authors, prepare_packet, admit_packet
-    if pending_authors(ws):
-        raise PlannerUnavailable('A saved remote author request is unresolved; recover it before another call.')
     from runesmith.app.acceptance_contracts import expectation_digest
     plan = ws.plan() or {}
     milestones = plan.get("milestones") or []
     milestone = next((m for m in milestones if m["id"] == milestone_id), None) if milestone_id else next_milestone(plan)
+    # Only this milestone's own late answer holds it back; another milestone's does not (journey J11-B6).
+    if pending_authors(ws, milestone=milestone['id'] if milestone else None):
+        raise PlannerUnavailable('A saved remote author request is unresolved; recover it before another call.')
     if milestone is None or not milestone_ready(plan,milestone):
         raise PlannerUnavailable("there is no ready open milestone to draft for; prerequisites must be done first")
     from runesmith.app.snapshots import collect_snapshot, freeze_snapshot

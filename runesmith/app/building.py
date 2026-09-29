@@ -16,7 +16,7 @@ import tempfile
 import time
 import uuid
 
-from runesmith.app.planner import draft_files, draft_plan, milestone_contract, source_context, next_milestone, milestone_ready
+from runesmith.app.planner import draft_files, draft_plan, milestone_contract, source_context, next_milestone, milestone_ready, ready_milestones
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 from runesmith.app.snapshots import (SnapshotUnsupported, collect_snapshot, digest_files,
                                      load_snapshot, path_kind)
@@ -368,53 +368,108 @@ def _ordinary_revision_lineage(ws, drafts, snapshot):
         _lineage(ws,revision)
 
 
-def build_step(ws, router, *, checkpoint=lambda: None, author_only=False):
-    """One author attempt and bounded checks. No unattended repeated blind retries."""
+def build_step(ws, router, *, checkpoint=lambda: None, author_only=False, milestone_id=None):
+    """One author attempt and bounded checks. No unattended repeated blind retries.
+
+    The first ready milestone that can move is built. One that needs the owner or a late answer (its tries used up,
+    files applied and awaiting review, an inconclusive check, a draft waiting for checks) no longer holds back the
+    others: in journey J11-B6, one step's used-up tries left five independent milestones idle for 1 h 39 min. Still at
+    most one author call per step. `milestone_id` builds that milestone only (the owner's choice).
+    """
     if type(author_only) is not bool:
         raise WorkspaceError('Author-only selection must be boolean.')
+    if milestone_id is not None and (not isinstance(milestone_id, str) or not milestone_id):
+        raise WorkspaceError('Choose a milestone by its id.')
     if ws.settings()['autonomy'] == 'observe':
         return {'summary':'Observe mode: no build or model call.'}
     from runesmith.app.author_recovery import pending_authors, resume_author
-    saved = pending_authors(ws)
-    if saved:
-        # Journey J2-F12: an answer that arrived after the wait stopped every later round until the owner came back.
-        # Fetching it is no new model call, so the round fetches it and checks it through the normal gates.
-        ready = next((row for row in saved if row['can_resume']), None)
-        if author_only or ready is None:
-            return {'summary':'A late answer is still expected, so building waits for it and asks no model meanwhile.'}
+    saved = pending_authors(ws, milestone=milestone_id)
+    fetched = {}                        # milestone id -> what fetching its late answer said this round
+    unknown = [row for row in saved if row.get('milestone') is None]
+    resumable = [row for row in (unknown or saved) if row['can_resume']]
+    # Journey J2-F12: an answer that arrived after the wait stopped every later round until the owner came back.
+    # Fetching it is no new model call, so the round fetches it and checks it through the normal gates. Every
+    # milestone's own late answer is fetched, not only the first one's: with two outstanding, a second that had
+    # arrived was never fetched and both milestones waited for good (review of J11-B6). One whose milestone is
+    # unknown is fetched alone and holds everything, as before.
+    for ready in ([] if author_only else resumable[:1] if unknown else resumable):
         recovered = resume_author(ws, ready['id'], checkpoint=checkpoint)
-        if not recovered.get('draft') or recovered.get('already_used'):
+        if recovered.get('already_used') or (not recovered.get('draft') and ready.get('milestone') is None):
             return recovered
-        draft = ws._draft(recovered['draft'])
-        milestone = next((m for m in (ws.plan() or {}).get('milestones', []) if m['id'] == draft.get('milestone')), None)
-        if not milestone or not milestone_ready(ws.plan(), milestone):
-            return recovered
-        return _check_and_record(ws, draft, milestone, milestone_contract(ws, milestone), checkpoint=checkpoint)
+        if recovered.get('draft'):
+            draft = ws._draft(recovered['draft'])
+            milestone = next((m for m in (ws.plan() or {}).get('milestones', []) if m['id'] == draft.get('milestone')), None)
+            if not milestone or not milestone_ready(ws.plan(), milestone):
+                return recovered
+            return _check_and_record(ws, draft, milestone, milestone_contract(ws, milestone), checkpoint=checkpoint)
+        # Not arrived yet, or its job failed: that milestone rests this round, another may move (J11-B6).
+        fetched[ready['milestone']] = recovered
+    if fetched:
+        saved = pending_authors(ws, milestone=milestone_id)
+    expected = {row.get('milestone') for row in saved} | set(fetched)   # milestones a late answer holds back
+    waiting = {'summary':'A late answer is still expected, so building waits for it and asks no model meanwhile.'}
+    if None in expected:
+        return waiting                  # an answer whose milestone is unknown holds everything, as before
     checkpoint()
     if not ws.plan():
+        if saved:
+            return waiting
         if author_only:
             raise WorkspaceError('Save a plan before requesting an author-only build.')
         plan = draft_plan(ws, router, checkpoint=checkpoint, automatic=True)
         return {'summary':f"Drafted plan v{plan['version']}; no files applied."}
-    milestone = next_milestone(ws.plan())
-    if not milestone:
-        return {'summary':'No unfinished milestones. Review goals before starting another plan.'}
+    plan = ws.plan()
+    if milestone_id is not None:
+        chosen = next((m for m in plan.get('milestones', []) if m['id'] == milestone_id), None)
+        if not chosen or not milestone_ready(plan, chosen):
+            return {'summary':'That milestone cannot be built now: it is finished, dropped, or waits for another.',
+                    'milestone':milestone_id}
+        candidates = [chosen]
+    else:
+        candidates = ready_milestones(plan)
+    if not candidates:
+        return waiting if saved else {'summary':'No unfinished milestones. Review goals before starting another plan.'}
+    context = source_context(ws)        # the folder's source, not a milestone's: the same for every candidate
+    blocked = []
+    for milestone in candidates:
+        if milestone['id'] in expected:
+            blocked.append((milestone, fetched.get(milestone['id']) or dict(waiting, milestone=milestone['id']),
+                            'a late answer is still expected'))
+            continue
+        result, reason = _build_milestone(ws, router, milestone, context, checkpoint=checkpoint, author_only=author_only)
+        if reason is None:
+            return result
+        blocked.append((milestone, result, reason))
+    if len(blocked) == 1:
+        return blocked[0][1]
+    names = '; '.join(f"“{m.get('title') or m['id']}”: {reason}" for m, _, reason in blocked)
+    result = {'summary':f'All {len(blocked)} ready milestones need you or a late answer. {names}.',
+              'all_blocked':True, 'milestones_blocked':[m['id'] for m, _, _ in blocked]}
+    used_up = next((r for _, r, _ in blocked if r.get('replan_needed')), None)
+    if used_up:                         # a smaller-steps proposal for the first one whose tries are used up, as before
+        result.update(replan_needed=True, milestone=used_up['milestone'])
+    return result
+
+
+def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only):
+    """(result, None) after building or checking this milestone, or (result, reason) when it needs the owner."""
     contract = milestone_contract(ws, milestone)
     previous = [d for d in ws.drafts() if d.get('contract') == contract]
     if any(d.get('state') == 'applied' for d in previous):
-        return {'summary':'Files applied; milestone awaits acceptance or owner review.'}
-    context = source_context(ws)
+        return {'summary':'Files applied; milestone awaits acceptance or owner review.', 'milestone':milestone['id']}, \
+            'files applied, awaiting acceptance or your review'
     inconclusive=next((d for d in previous if d.get('state') in ('waiting','needs_revision')
         and d.get('snapshot_digest')==context['snapshot_digest']
         and d.get('public_acceptance_digest')==expectation_digest(ws,milestone['id'])
         and verification_inconclusive(d.get('verification'))),None)
     if inconclusive:
         return {'summary':'Saved candidate has an inconclusive check. Explicitly recheck it without inference; no new author call or automatic check retry.',
-                'draft':inconclusive['id'],'milestone':milestone['id'],'verification_required':True}
+                'draft':inconclusive['id'],'milestone':milestone['id'],'verification_required':True}, \
+            'an inconclusive check to recheck'
     try:
         allowance = ordinary_allowance(ws, contract, context['snapshot_digest'])
     except WorkspaceError as error:
-        return {'summary':str(error), 'allowance_blocked':True, 'milestone':milestone['id']}
+        return {'summary':str(error), 'allowance_blocked':True, 'milestone':milestone['id']}, str(error)[:120]
     scope = allowance['scope']
     pending = next((d for d in previous if d.get('state') == 'waiting' and d.get('snapshot_digest') == context['snapshot_digest']
                   and d.get('context_digest') == context['digest']
@@ -422,12 +477,12 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False):
     if not pending:
         try:_ordinary_revision_lineage(ws,previous,context['snapshot_digest'])
         except (WorkspaceError,ValueError,KeyError,TypeError,OSError) as error:
-            return {'summary':str(error),'allowance_blocked':True,'milestone':milestone['id']}
+            return {'summary':str(error),'allowance_blocked':True,'milestone':milestone['id']}, str(error)[:120]
     if pending is not None and (unchanged := _unchanged_verdict(ws, pending, milestone, contract, context, checkpoint)):
-        return unchanged
+        return unchanged, (None if unchanged.get('advanced') else 'a draft waits for you')
     if not pending and not allowance['remaining']:
         return {'summary':'Ordinary author allowance exhausted on this source and milestone. Review retained evidence; changing feedback does not grant more calls.',
-                'replan_needed':True,'milestone':milestone['id']}
+                'replan_needed':True,'milestone':milestone['id']}, 'its three tries are used up'
     attempt_path = ws.home/'build-attempts'/(uuid.uuid4().hex+'.json')
     attempt = {'scope':scope,'contract':contract,'context_digest':context['digest'],
                'snapshot_digest':context['snapshot_digest'],'state':'started','utc':_now()}
@@ -453,9 +508,8 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False):
     if author_only:
         checkpoint()
         return {'draft':draft['id'], 'milestone':milestone['id'], 'author_only':True,
-                'summary':f"Draft {draft['id']} retained for review. No checks, apply or follow-on work; existing checks, if any, are unchanged."}
-    return _check_and_record(ws, draft, milestone, contract, checkpoint=checkpoint)
-
+                'summary':f"Draft {draft['id']} retained for review. No checks, apply or follow-on work; existing checks, if any, are unchanged."}, None
+    return _check_and_record(ws, draft, milestone, contract, checkpoint=checkpoint), None
 
 def build_escalation_status(ws):
     """Describe the one-shot alternate-author escape after a bounded miss.
@@ -464,9 +518,16 @@ def build_escalation_status(ws):
     separately receipted call after that budget is exhausted, under the same
     source snapshot, milestone contract, paths and acceptance gates.
     """
-    plan=ws.plan() or {};milestone=next_milestone(plan)
-    if not milestone:return None
-    contract=milestone_contract(ws,milestone);context=source_context(ws)
+    plan=ws.plan() or {};ready=ready_milestones(plan)
+    if not ready:return None
+    context=source_context(ws)
+
+    def used_up(candidate):
+        try:return not ordinary_allowance(ws,milestone_contract(ws,candidate),context['snapshot_digest'])['remaining']
+        except WorkspaceError:return False
+    # The one more try belongs to the ready milestone whose tries are used up, not simply the first (J11-B6).
+    milestone=next((m for m in ready if used_up(m)),ready[0])
+    contract=milestone_contract(ws,milestone)
     try:
         allowance=ordinary_allowance(ws,contract,context['snapshot_digest'])
     except WorkspaceError as error:
@@ -488,7 +549,7 @@ def build_escalation_status(ws):
     if any(d.get('state') in ('waiting','needs_revision') and verification_inconclusive(d.get('verification')) for d in matching):
         blockers.append('A saved candidate has an inconclusive check. Recheck it explicitly without inference.')
     from runesmith.app.author_recovery import pending_authors
-    if pending_authors(ws):blockers.append('Recover or reconcile the saved author request before another call.')
+    if pending_authors(ws,milestone=milestone['id']):blockers.append('Recover or reconcile the saved author request before another call.')
     lineage_error=None
     if not reuse:
         try:_ordinary_revision_lineage(ws,drafts,context['snapshot_digest'])
@@ -658,6 +719,20 @@ def correct_refusal(ws, router, attempt_id, *, checkpoint=lambda: None):
                     if row.get('id')==draft.get('milestone')),None)
     if not milestone or not milestone_ready(ws.plan(),milestone):
         return {'summary':'Correction milestone is no longer ready; candidate retained, no checks run.',
+                'draft':draft['id']}
+    return _check_and_record(ws,draft,milestone,milestone_contract(ws,milestone),checkpoint=checkpoint)
+
+
+def readmit_refused_answer(ws, attempt_id, *, checkpoint=lambda: None):
+    """Check a refused answer again with no model call, then the ordinary verification/apply gates."""
+    if ws.settings()['autonomy'] == 'observe':
+        return {'summary':'Observe mode: no answer admission or executable checks.'}
+    from runesmith.app.build_corrections import readmit_kept_answer
+    draft=readmit_kept_answer(ws,attempt_id,checkpoint=checkpoint)
+    milestone=next((row for row in (ws.plan() or {}).get('milestones',[])
+                    if row.get('id')==draft.get('milestone')),None)
+    if not milestone or not milestone_ready(ws.plan(),milestone):
+        return {'summary':'The kept answer fits now, but its milestone is no longer ready; the draft is kept, no checks run.',
                 'draft':draft['id']}
     return _check_and_record(ws,draft,milestone,milestone_contract(ws,milestone),checkpoint=checkpoint)
 

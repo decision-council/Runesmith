@@ -67,6 +67,8 @@ TASK = (
     "- Require only what the milestone states. Never invent a wording, heading or layout: every text you expect "
     "must come from the milestone's own words or from this example's own input (a title you added, a date you "
     "used). Runesmith drops any other text.\n"
+    "- \"owner_said_about_earlier_checks\" is what the owner said when turning down earlier checks for this "
+    "milestone. Do not repeat those mistakes.\n"
     "- \"other_milestones_checks\" lists the checks the owner already approved for other milestones of this "
     "project. Stay consistent with them: use the same file format, file names and commands, and never require "
     "what one of them forbids (if one says a file is refused, do not require the same file to be accepted).\n"
