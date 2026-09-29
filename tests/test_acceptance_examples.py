@@ -884,3 +884,20 @@ def test_the_number_after_a_name_is_not_read_inside_a_longer_name():
     after = scope["number_after"]
     assert not after("stroke-dashoffset", 57.5, '<path data-stroke-dashoffset="57.5" stroke-dashoffset="115"/>')
     assert after("stroke-dashoffset", 57.5, '<path style="stroke-dashoffset: 5.75e1px"/>')
+
+
+def test_a_rescued_number_follows_its_own_name_in_the_milestone():
+    # Verifier of batch L: 115 was stated for the dasharray, and "m2" / "#1b2130" gave digits nobody stated.
+    milestone = ('For milestone m2: node motion.mjs FILE --at 1 --svg out.svg writes out.svg with fill #1b2130; the '
+                 'stroke-dasharray is 115 and the stroke-dashoffset moves; at --at 1 its stroke-dashoffset is 57.5.')
+    base = {"name": "e", "says": "At 1 s.", "files": [{"name": "r.motion.json", "text": "{}"}],
+            "steps": [{"run": ["node", "motion.mjs", "r.motion.json", "--at", "1", "--svg", "out.svg"]}]}
+    def rescued(text):
+        shaped = validate_examples({"examples": [dict(base, contains=[{"name": "out.svg", "texts": [text]}])]}, milestone)
+        return shaped["examples"][0].get("file_lines") or []
+    assert rescued('stroke-dashoffset="57.5"') == [{"name": "out.svg", "has": "stroke-dashoffset", "number": 57.5}]
+    assert rescued('stroke-dashoffset="115"') == [] and rescued('fill="2130"') == []
+    from runesmith.app.acceptance_examples import HARNESS
+    scope = {}
+    exec("import re\n" + HARNESS[HARNESS.index("def number_after"):HARNESS.index("def number_on_line")], scope)
+    assert scope["number_after"]("width:", 200, "width:200")

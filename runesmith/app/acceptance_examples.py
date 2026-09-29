@@ -356,7 +356,15 @@ def _ground(example, milestone_text, source_text):
         return ' ' + ' '.join(re.findall(r'[a-z0-9]+', value.lower())) + ' '
 
     known_words = plain(known)
-    stated_numbers = {float(n) for n in re.findall(r'-?\d+(?:\.\d+)?', known)}
+    def stated_after(name, number) -> bool:
+        """Whether the milestone or the example's input states this number after this name, in the same sentence,
+        as a number of its own (verifier of batch L: a flat set of every number, the digits of "m2" and "#1b2130"
+        included, rescued a number stated for another name)."""
+        for match in re.finditer(r'(?<![\w-])' + re.escape(name.lower()) + r'(?![\w-])', known):
+            sentence = re.split(r'\.(?=\s|$)', known[match.end():match.end() + 160], maxsplit=1)[0]
+            if any(float(n) == number for n in re.findall(r'(?<![\w#.-])-?\d+(?:\.\d+)?(?!\w|\.\d)', sentence)):
+                return True
+        return False
 
     def grounded(text, extra=''):
         if text.lower() in known or bool(extra and text.lower() in extra):
@@ -430,7 +438,7 @@ def _ground(example, milestone_text, source_text):
             if grounded(text, source_text.lower()):            # a file may hold text the project already has
                 texts.append(text)
             elif ((pair := ATTRIBUTE_NUMBER.fullmatch(text)) and grounded(pair.group(1))
-                  and float(pair.group(2)) in stated_numbers):     # the number too (review of J11-G21)
+                  and stated_after(pair.group(1), float(pair.group(2)))):     # the number too (review of J11-G21)
                 # 'stroke-dashoffset="57.5"' guesses the layout; the number after the name is what the milestone
                 # states (journey J11-G21: dropped, the self-drawing rune's checks never looked at its offset).
                 example.setdefault('file_lines', []).append(
@@ -636,7 +644,7 @@ def _lifted(row, steps, what, dropped):
         # What the output shows belongs to a step: only when exactly one step runs a program is it clear which
         # (review of J11-B10: a document step ignores it, and with several steps the last is only a guess).
         acting = [n for n, s in enumerate(steps) if isinstance(s, dict) and any(s.get(k) for k in ('run', 'call', 'doc'))]
-        runs = [n for n in acting if steps[n].get('run')]
+        runs = [n for n in acting if steps[n].get('run') or steps[n].get('call')]      # a call reads its output too
         if top and len(acting) == 1 and runs:
             steps = list(steps)
             last = dict(steps[runs[0]])
@@ -933,7 +941,8 @@ def number_after(has, number, text):
     for match in re.finditer(pattern, text, re.IGNORECASE):
         rest = text[match.end():].split("\n", 1)[0]
         first = re.search(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", rest)
-        if first and not re.match(r"[\w-]", rest[:1]) and float(first.group()) == float(number):
+        joined = has[-1:].isalnum() and re.match(r"[\w-]", rest[:1])     # "stroke" inside "stroke-width"
+        if first and not joined and float(first.group()) == float(number):
             return True
     return False
 
