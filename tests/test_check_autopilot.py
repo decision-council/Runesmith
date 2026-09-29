@@ -1,0 +1,256 @@
+"""The check autopilot (asked for by the owner of journey J11, 2026-09-29): Runesmith approves proposed acceptance
+checks itself only when every gate passes, turns down the rest with the reason, and leaves what it cannot judge."""
+import json
+
+import pytest
+
+from runesmith.app import acceptance_autopilot as autopilot
+from runesmith.app.acceptance_proposals import acceptance_file, approve, propose, status
+from runesmith.app.worker import EventBus, Worker
+from test_acceptance_examples import EXAMPLES, workspace
+
+
+
+def proposal(**overrides):
+    base = {"id": "p1", "style": "examples", "drafted_by": "kilo3:nvidia/nemotron-3-super-120b-a12b:free",
+            "dry_run": {"verdict": "fails_now", "ran": 2, "failures": 2, "errors": 0},
+            "checks": [{"test": "test_01_x", "says": "x is 50 at 1 s"}],
+            "examples": [{"test": "test_01_x", "files": [{"name": "x.motion.json", "text": "{}"}],
+                          "steps": [{"run": ["node", "motion.mjs", "x.motion.json", "--at", "1"],
+                                     "expect": {"exit": "ok", "lines": [{"has": "x", "number": 50}], "shows": ["x"]}}],
+                          "contains": [{"name": "out.svg", "texts": ["<rect"]}], "exists": ["out.svg"]}]}
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.parametrize("change,finding", [
+    ({"dry_run": {"verdict": "passes_now"}}, "already pass"),
+    ({"dry_run": {"verdict": "broken"}}, "could not run"),
+    ({"checks": [{"test": "t", "says": "s", "missing_input": ["position.motion.json"]}]}, "which nothing creates"),
+    ({"checks": [{"test": "t", "says": "s", "unstated": ["x 50"]}]}, "exact text its sentence does not say"),
+    ({"revision": {"after": "passes_now", "error": "no answer"}}, "revision Runesmith asked for did not work"),
+])
+def test_what_runesmith_found_itself_keeps_checks_from_approval(change, finding):
+    assert any(finding in reason for reason in autopilot.gates(proposal(**change)))
+    assert autopilot.gates(proposal()) == []
+
+
+def test_checks_it_cannot_judge_wait_for_the_owner():
+    assert "not tried" in autopilot.undecidable(proposal(dry_run={"verdict": "not_run"}))
+    assert "examples" in autopilot.undecidable(proposal(style="code"))
+    assert autopilot.undecidable(proposal()) is None
+
+
+def test_the_cross_check_is_asked_questions_without_the_expected_values():
+    rows = autopilot.questions(proposal())
+    assert sorted((r["kind"], r["expected"]) for r in rows) == sorted(
+        [("word", "yes"), ("word", "no")] * 4 + [("number", 50), ("number", 57.0), ("word", "no")])  # + its twin, the decoy
+    assert all("50" not in r["question"] and "57" not in r["question"] for r in rows)   # the value is never shown
+    number = next(r for r in rows if r["kind"] == "number" and not r["twin"])
+    assert autopilot.agrees(number, "50") and autopilot.agrees(number, "x = 50.0") and not autopilot.agrees(number, "1")
+    assert autopilot.agrees(number, "At t=1, x is 50") is None                # two numbers: unclear, never a match
+    word = next(r for r in rows if r["kind"] == "word")
+    assert autopilot.agrees(word, "probably") is None and autopilot.agrees(word, None) is None
+    assert rows == autopilot.questions(proposal())                             # the same checks, the same questions
+
+
+def test_the_second_model_is_never_the_one_that_wrote_the_checks(tmp_path):
+    ws = workspace(tmp_path, [])
+    config = ws.config()
+    config["instruments"].update({
+        "gate-nemotron": {"kind": "scripted", "model": "nvidia:nvidia/nemotron-3-super-120b-a12b",
+                          "fallback_models": ["kilo3:nvidia/nemotron-3-super-120b-a12b:free"]},
+        "gate-groq": {"kind": "scripted", "model": "groq3:openai/gpt-oss-120b"}})
+    config["roles"]["acceptance"] = ["gate-nemotron", "gate-groq"]
+    ws.save_config(config)
+    assert autopilot.second_model(ws, "kilo3:nvidia/nemotron-3-super-120b-a12b:free") == "gate-groq"
+    config["roles"]["acceptance"] = ["gate-nemotron"]
+    config["roles"]["plan"] = ["gate-nemotron"]
+    ws.save_config(config)
+    assert autopilot.second_model(ws, "kilo3:nvidia/nemotron-3-super-120b-a12b:free") is None
+
+
+def autopilot_workspace(tmp_path, checker_answers, verifier_answers):
+    ws = workspace(tmp_path, checker_answers)
+    config = ws.config()
+    config["instruments"]["offline"]["model"] = "checker-model"
+    config["instruments"]["verifier"] = {"kind": "scripted", "model": "verifier-model", "answers": list(verifier_answers)}
+    config["roles"]["acceptance"] = ["offline", "verifier"]
+    ws.save_config(config)
+    ws.update_settings({"checks_autopilot": True})
+    return ws
+
+
+def answers_for(first, **overrides):
+    return {"answers": [{"id": row["id"], "answer": str(overrides.get(row["id"], row["expected"]))}
+                        for row in autopilot.questions(first)], "contradicts": "no"}
+
+
+def test_checks_the_second_model_agrees_with_are_approved_by_the_autopilot(tmp_path):
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    config = ws.config(); config["instruments"]["verifier"]["answers"] = [answers_for(first)]; ws.save_config(config)
+    verdict = autopilot.review(ws, "m1", first)
+    assert verdict["decision"] == "approve", verdict
+    said, done = autopilot.act(ws, "m1", first, verdict)
+    assert done == "approve" and "check autopilot approved them" in said and acceptance_file(ws, "m1").is_file()
+    approved = status(ws)["m1"]["approved"]
+    assert approved["provenance"] == "model-proposed, autopilot-approved" and "worked out the same" in approved["autopilot"]
+    header = acceptance_file(ws, "m1").read_text(encoding="utf-8").splitlines()[0]
+    assert header.startswith("# Runesmith check-autopilot acceptance (not owner-reviewed)") and "Owner acceptance" not in header
+
+
+def test_a_disagreement_turns_the_checks_down_and_the_next_checker_hears_why(tmp_path):
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    number = next(r for r in autopilot.questions(first) if r["kind"] == "number" and not r["twin"])
+    twin = next(r for r in autopilot.questions(first) if r["pair"] == number["pair"] and r["twin"])
+    config = ws.config(); config["instruments"]["verifier"]["answers"] = [answers_for(first, **{number["id"]: 7, twin["id"]: 14})]
+    ws.save_config(config)
+    verdict = autopilot.review(ws, "m1", first)
+    assert verdict["decision"] == "turn_down" and "verifier-model worked out 7" in verdict["reason"], verdict
+    autopilot.act(ws, "m1", first, verdict)
+    from runesmith.app.acceptance_proposals import packet
+    said = packet(ws, "m1", "examples")["owner_said_about_earlier_checks"]
+    assert said and "check autopilot turned them down" in said[0] and "worked out 7" in said[0]
+    assert autopilot.rounds_used(ws, "m1") == 1 and not acceptance_file(ws, "m1").is_file()
+
+
+def test_after_two_turn_downs_the_checks_wait_for_the_owner(tmp_path, monkeypatch):
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    monkeypatch.setattr(autopilot, "rounds_used", lambda ws, mid: autopilot.MAX_ROUNDS)
+    monkeypatch.setattr(autopilot, "cross_check", lambda ws, mid, p: {"model": "v", "asked": 3, "disagreements": ["x"], "contradicts": None})
+    verdict = autopilot.review(ws, "m1", first)
+    assert verdict["decision"] == "owner" and "wait for you" in verdict["reason"]
+
+
+def test_checks_the_owner_approved_are_never_replaced_by_the_autopilot(tmp_path):
+    ws = autopilot_workspace(tmp_path, [EXAMPLES, EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    approve(ws, "m1", first["id"])
+    second = propose(ws, ws.router(), "m1")
+    verdict = autopilot.review(ws, "m1", second)
+    assert verdict["decision"] == "owner" and "only you replace them" in verdict["reason"]
+
+
+def test_with_the_autopilot_on_a_ready_milestone_without_checks_gets_them_first(tmp_path):
+    ws = autopilot_workspace(tmp_path, [], [])
+    ws.update_settings({"build_steps": True})
+    worker = Worker(ws, EventBus())
+    assert worker.scheduled_job() == ("propose_acceptance", {"milestone": "m1"})
+    ws.update_settings({"checks_autopilot": False})
+    assert worker.scheduled_job() == ("build", {})
+
+
+def test_a_second_model_that_agrees_with_everything_is_not_counted(tmp_path):
+    # Review of the autopilot: a yes-saying second model approved a check that required the opposite of the milestone.
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    yes = {"answers": [{"id": r["id"], "answer": "yes" if r["kind"] == "word" and r["expected"] in ("yes", "no")
+                        else str(r["expected"])} for r in autopilot.questions(first)], "contradicts": "no"}
+    config = ws.config(); config["instruments"]["verifier"]["answers"] = [yes]; ws.save_config(config)
+    verdict = autopilot.review(ws, "m1", first)
+    assert verdict["decision"] == "owner" and "answered the same way as their opposite" in verdict["reason"], verdict
+
+
+def test_a_check_requiring_the_opposite_is_turned_down(tmp_path):
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    rows = autopilot.questions(first)
+    claim = next(r for r in rows if r["pair"] and r["expected"] == "yes")
+    negation = next(r for r in rows if r["pair"] == claim["pair"] and r["expected"] == "no")
+    config = ws.config()
+    config["instruments"]["verifier"]["answers"] = [answers_for(first, **{claim["id"]: "no", negation["id"]: "yes"})]
+    ws.save_config(config)
+    verdict = autopilot.review(ws, "m1", first)
+    assert verdict["decision"] == "turn_down" and claim["question"] in verdict["reason"], verdict
+
+
+def test_checks_that_call_a_function_wait_for_the_owner_and_a_check_passing_today_is_a_finding():
+    calling = proposal(examples=[{"test": "t", "steps": [{"call": "pkg.mod.f", "args": [], "expect": {"returns": 1}}]}])
+    assert "call a function" in autopilot.undecidable(calling)
+    assert any("already passes" in f for f in autopilot.gates(proposal(checks=[{"test": "t", "says": "s", "passes_today": True}])))
+
+
+def test_a_local_model_name_with_a_tag_is_its_own_family():
+    assert autopilot._family("llama3:8b") == "llama3:8b" and autopilot._family("qwen2.5:7b") != autopilot._family("llama3:8b")
+    assert autopilot._family("kilo3:nvidia/nemotron-3-super-120b-a12b:free") == autopilot._family("nvidia:nvidia/nemotron-3-super-120b-a12b")
+
+
+def test_the_autopilot_stands_aside_when_the_owner_decided_meanwhile(tmp_path):
+    from runesmith.app.acceptance_proposals import discard
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    discard(ws, "m1", first["id"], reason="the owner turned them down while the cross-check ran")
+    said, done = autopilot.act(ws, "m1", first, {"decision": "approve", "reason": "clean"})
+    assert done == "none" and "left them alone" in said and not acceptance_file(ws, "m1").is_file()
+
+
+def test_a_model_answering_by_position_or_saying_yes_to_anything_is_not_counted(tmp_path):
+    # Fix verifier: a model answering every pair "yes, then no" by position approved two contradictory checks.
+    ws = autopilot_workspace(tmp_path, [], [])
+    checks = proposal(drafted_by="checker-model")
+    rows, seen, answers = autopilot.questions(checks), set(), []
+    for r in rows:
+        if r["pair"]:
+            answers.append({"id": r["id"], "answer": "no" if r["pair"] in seen else "yes"})
+            seen.add(r["pair"])
+        else:
+            answers.append({"id": r["id"], "answer": str(r["expected"])})
+    config = ws.config(); config["instruments"]["verifier"]["answers"] = [{"answers": answers, "contradicts": "no"}]
+    ws.save_config(config)
+    assert autopilot.review(ws, "m1", checks)["decision"] != "approve"
+    anything = [{"id": r["id"], "answer": str(r["expected"]) if r["about"] != "decoy" else "yes"} for r in rows]
+    config = ws.config(); config["instruments"]["verifier"]["answers"] = [{"answers": anything, "contradicts": "no"}]
+    ws.save_config(config)
+    assert "said yes to a text nothing asks for" in autopilot.cross_check(ws, "m1", checks)["undecided"]
+
+
+def test_a_check_that_only_asks_whether_the_program_finishes_waits_for_the_owner(tmp_path):
+    ws = autopilot_workspace(tmp_path, [], [])
+    exit_only = proposal(drafted_by="checker-model", examples=[{"test": "t", "steps": [
+        {"run": ["python", "-m", "tally", "months"], "expect": {"exit": "ok"}}]}])
+    assert "only ask whether the program finishes" in autopilot.cross_check(ws, "m1", exit_only)["undecided"]
+
+
+def test_no_contradiction_in_a_full_sentence_is_no_contradiction():
+    assert autopilot._contradiction("No contradiction.") is None and autopilot._contradiction(False) is None
+    assert autopilot._contradiction("There is no contradiction with the other milestones.") is None
+    assert autopilot._contradiction("m1 refuses an empty project file, which this check requires") is not None
+    assert autopilot._contradiction("Nope, these are consistent.") is None
+    assert autopilot._contradiction("Not consistent: m1 refuses what this accepts") is not None
+
+
+def test_a_number_parrot_a_first_quoted_parrot_and_file_only_checks_are_all_caught(tmp_path):
+    # Final autopilot check: copying a number from the command, copying the first quoted text, and a keyword rule on
+    # checks without steps each got a wrong check approved.
+    ws = autopilot_workspace(tmp_path, [], [])
+    checks = proposal(drafted_by="checker-model")
+    rows = autopilot.questions(checks)
+    parrot = [{"id": r["id"], "answer": "1" if r["kind"] == "number" else str(r["expected"])} for r in rows]
+    config = ws.config(); config["instruments"]["verifier"]["answers"] = [{"answers": parrot, "contradicts": False}]
+    ws.save_config(config)
+    assert "undecided" in autopilot.cross_check(ws, "m1", checks)
+    ordered = proposal(drafted_by="checker-model", examples=[{"test": "t", "steps": [
+        {"run": ["python", "-m", "tally", "months"], "expect": {"order": ["2026-01", "2026-03"], "lines": [{"has": "2026-01", "number": 2}]}}]}])
+    rows = autopilot.questions(ordered)
+    first_quoted = [{"id": r["id"], "answer": r["question"].split("“")[1].split("”")[0] if r["kind"] == "text"
+                     else str(r["expected"])} for r in rows]
+    config = ws.config(); config["instruments"]["verifier"]["answers"] = [{"answers": first_quoted, "contradicts": False}]
+    ws.save_config(config)
+    assert "undecided" in autopilot.cross_check(ws, "m1", ordered)
+    files_only = proposal(drafted_by="checker-model", examples=[{"test": "t", "steps": [], "exists": ["README.md"],
+                                                               "contains": [{"name": "README.md", "texts": ["Tally"]}]}])
+    assert any(r["about"] == "decoy" for r in autopilot.questions(files_only))
+
+
+def test_a_claimed_contradiction_is_the_owner_s_call(tmp_path):
+    ws = autopilot_workspace(tmp_path, [], [])
+    checks = proposal(drafted_by="checker-model")
+    right = [{"id": r["id"], "answer": str(r["expected"])} for r in autopilot.questions(checks)]
+    config = ws.config()
+    config["instruments"]["verifier"]["answers"] = [{"answers": right, "contradicts": True, "contradiction": "m1 refuses this file"}]
+    ws.save_config(config)
+    verdict = autopilot.review(ws, "m1", checks)
+    assert verdict["decision"] == "owner" and "m1 refuses this file" in verdict["reason"]

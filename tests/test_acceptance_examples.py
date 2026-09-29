@@ -698,3 +698,37 @@ def test_texts_that_follow_from_the_milestone_and_the_input_are_kept():
     shaped = validate_examples(answer, "Frames: node motion.mjs FILE --at SECONDS --svg OUT.svg writes an SVG file.")
     assert shaped["examples"][0]["contains"] == [{"name": "out.svg", "texts": ["<svg", "<rect", 'x="10"', "red"]}]
     assert any('fill="red"' in d and "checked instead" in d for d in shaped["dropped"])   # the input's word, not its layout
+
+
+def test_the_owner_s_reasons_about_other_milestones_reach_the_checker(tmp_path):
+    # Journey J11-G16: the runes-light Checker repeated the mistake the owner had named for the styles milestone.
+    from runesmith.app.acceptance_proposals import discard, packet
+    ws = workspace(tmp_path, [EXAMPLES])
+    ws.add_milestone("Second part", "Another milestone.", "", "It works.")
+    first = propose(ws, ws.router(), "m1")
+    discard(ws, "m1", first["id"], reason="With --svg the program writes a file; check the file, not the output.")
+    second = next(m["id"] for m in ws.plan()["milestones"] if m["title"] == "Second part")
+    said = packet(ws, second, "examples")["owner_said_about_other_milestones_checks"]
+    assert said and said[0]["said"].startswith("With --svg the program writes a file") and said[0]["milestone"]
+    assert packet(ws, "m1", "examples")["owner_said_about_other_milestones_checks"] == []
+
+
+def test_a_check_request_every_model_turned_away_is_asked_once_more_smaller(tmp_path, monkeypatch):
+    # Journey J11-G17: Groq refused the Checker's full request as too large; nothing ran, so a smaller one is tried.
+    from runesmith.app import acceptance_proposals as proposals
+    from runesmith.instruments import TransportCensored
+    ws = workspace(tmp_path, [EXAMPLES])
+    asked = []
+    real_ask = proposals._ask
+
+    def ask(router, request, style, key):
+        asked.append((key, len(json.dumps(request.get("source_context"), ensure_ascii=False))))
+        if len(asked) == 1:
+            try:
+                raise TransportCensored("every route failed - groq3 bad_request", receipt={"no_route_accepted": True})
+            except TransportCensored as error:
+                raise proposals.PlannerUnavailable("no acceptance checks: every route refused") from error
+        return real_ask(router, request, style, key)
+    monkeypatch.setattr(proposals, "_ask", ask)
+    proposal = propose(ws, ws.router(), "m1")
+    assert proposal["checks"] and [k.endswith("-lean") for k, _ in asked] == [False, True]

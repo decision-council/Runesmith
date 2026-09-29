@@ -476,7 +476,14 @@ class Worker:
         if configuration(self.ws)['configured']:
             mid = choose_next(self.ws)
             return None if mid is None else ('mode', {'mode': mid})
-        return ('build' if self.ws.settings()['build_steps'] else 'round'), {}
+        settings = self.ws.settings()
+        if settings.get('checks_autopilot') and settings['build_steps'] and settings['autonomy'] != 'observe':
+            # With the check autopilot on, a ready milestone without checks gets them first, so an unattended
+            # project never waits for an approval.
+            from runesmith.app.acceptance_autopilot import needs_checks
+            if (missing := needs_checks(self.ws)) is not None:
+                return 'propose_acceptance', {'milestone': missing}
+        return ('build' if settings['build_steps'] else 'round'), {}
 
     def _run(self) -> None:
         while True:
@@ -730,7 +737,18 @@ class Worker:
             trial = (f' {failing} fail on today’s project; {missing} of the checks use a file nothing creates, so they '
                      'would fail on a correct build too.')
         revised = ' Revised once after Runesmith tried and read them.' if proposal.get('revision') and not proposal['revision'].get('error') else ''
-        return {'summary': f"Proposed {len(proposal['checks'])} acceptance checks for {milestone}.{revised}{trial} Read and approve them under Goals & plan; nothing is used until you do."}
+        head = f"Proposed {len(proposal['checks'])} acceptance checks for {milestone}.{revised}{trial}"
+        if self.ws.settings().get('checks_autopilot') and proposal.get('state') == 'proposed':
+            from runesmith.app import acceptance_autopilot
+            self._set('planning', 'The check autopilot is reviewing the proposed checks')
+            verdict = acceptance_autopilot.review(self.ws, milestone, proposal)
+            done, carried_out = acceptance_autopilot.act(self.ws, milestone, proposal, verdict)
+            self.say(done)
+            if carried_out == 'turn_down' and not (self.paused or self._closing or self._stop_after_step):
+                self.enqueue('propose_acceptance', by='schedule', milestone=milestone)
+            self.bus.publish('plan', {'acceptance': proposal['id']})
+            return {'summary': f'{head} {done}'}
+        return {'summary': f"{head} Read and approve them under Goals & plan; nothing is used until you do."}
 
     def _job_build(self, draft_id: str | None = None, author_only: bool = False,
                    milestone_id: str | None = None) -> dict[str, Any]:

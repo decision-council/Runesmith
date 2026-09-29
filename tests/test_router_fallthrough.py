@@ -127,3 +127,40 @@ def test_a_request_every_model_turned_away_is_no_answer_even_when_it_reads_like_
     with pytest.raises(TransportCensored) as caught:
         call(router(tmp_path, too_large_everywhere(a), too_large_everywhere(b), events))
     assert caught.value.receipt.get('no_route_accepted') and [e['instrument'] for e in events] == ['a', 'b']
+
+
+def test_a_model_s_own_reasoning_effort_is_sent_when_the_call_names_none(tmp_path):
+    # Journey J11-B8: Nemotron's answers looped in hidden reasoning to the token cap and were truncated; each used a try.
+    import json as _json
+    from runesmith.config import build_router
+    bodies = []
+
+    def effort(body):
+        if isinstance(body, (bytes, bytearray)):
+            body = body.decode()
+        if isinstance(body, str):
+            try:
+                body = _json.loads(body)
+            except ValueError:
+                return None
+        return body.get('reasoning_effort') if isinstance(body, dict) else None
+
+    def gateway(method, url, headers, body, timeout):
+        bodies.append(body)
+        if method == 'POST':
+            return 202, {'job_id': 'mj_ok', 'state': 'queued', 'agent': 'test'}
+        return 200, {'job_id': 'mj_ok', 'agent': 'test', 'state': 'succeeded', 'parsed': ANSWER,
+                     'meta': {'model': 'worker', 'provider': 'free'}}
+    spec = {'kind': 'scripted', 'answers': [ANSWER, ANSWER], 'reasoning_effort': 'low'}
+    router = build_router({'instruments': {'s': spec}, 'roles': {'plan': ['s']}}, backoff_s=())
+    assert router.instruments['s'].default_reasoning == 'low'
+    inst = milliner(tmp_path, 'm', gateway)
+    inst.default_reasoning = 'low'
+    Router({'m': inst}, {'plan': ['m']}, backoff_s=()).call('plan', prompt='p', system='s', schema=None, max_tokens=10, key='k')
+    assert 'low' in [effort(b) for b in bodies]
+    bodies.clear()
+    Router({'m': inst}, {'plan': ['m']}, backoff_s=()).call('plan', prompt='p', system='s', schema=None, max_tokens=10,
+                                                           key='k2', reasoning_effort='high')
+    assert 'high' in [effort(b) for b in bodies]      # the call's own wins
+    nothing = build_router({'instruments': {'s': dict(spec, reasoning_effort='maximum')}, 'roles': {'plan': ['s']}}, backoff_s=())
+    assert nothing.instruments['s'].default_reasoning is None                                       # unknown values ignored

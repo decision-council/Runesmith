@@ -76,7 +76,7 @@ def build_instrument(name: str, spec: dict[str, Any], home: Path | None = None) 
         return OllamaInstrument(name, spec["model"], base_url=base, timeout_s=float(spec.get("timeout_s", 900)),
                                 max_context=int(spec.get("max_context", 32768)))
     if kind == "scripted":                      # offline demos and tests: answers are replayed in order
-        return ScriptedInstrument(name, spec.get("answers", []))
+        return ScriptedInstrument(name, spec.get("answers", []), model=str(spec.get("model") or "scripted"))
     if kind == "openai":
         if spec.get("api_key_secret"):
             from runesmith.keystore import KeyStore
@@ -110,8 +110,17 @@ def build_instrument(name: str, spec: dict[str, Any], home: Path | None = None) 
     raise ValueError(f"instrument {name!r}: unknown kind {kind!r}")
 
 
+REASONING_EFFORTS = ('low', 'medium', 'high')
+
+
 def build_router(config: dict[str, Any], *, home: Path | None = None, **kwargs) -> Router:
     instruments = {name: build_instrument(name, spec, home) for name, spec in config["instruments"].items()}
+    for name, spec in config["instruments"].items():
+        # A model's own reasoning effort, used when a call names none (journey J11-B8: Nemotron 3 Super spent the
+        # whole answer budget on hidden reasoning, looping to the 16,384-token cap, and each truncated answer used
+        # up a try; "low" is what fixed the same model elsewhere).
+        effort = spec.get("reasoning_effort")
+        instruments[name].default_reasoning = effort if effort in REASONING_EFFORTS else None
     return Router(instruments, config["roles"], **kwargs)
 
 

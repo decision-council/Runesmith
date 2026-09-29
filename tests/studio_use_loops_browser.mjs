@@ -2071,6 +2071,18 @@ try{
     await page.waitForTimeout(200);
     assert.equal(requests.slice(editStart).filter(r=>r.method==='POST').length,0);
     loops.push({id:'B20.09',case:'Adding or editing a milestone takes what it should do and when it is done; Cancel sends nothing',result:'passed'});
+    // B20.10 (owner of J11, 2026-09-29): the check autopilot's approvals say so, what it left for the owner says why, and its switch is in the Build card
+    fixtureAcceptance={m1:{approved:{provenance:'model-proposed, autopilot-approved',proposed_by:'Fixture chat',checks,
+        autopilot:'trial and findings clean; verifier-model worked out the same 4 expected values'},
+      proposal:{id:'p9',checks:checks.slice(0,1),assumes:[],dry_run:{verdict:'fails_now',ran:1,failures:1,errors:0},revision:null,code:'import unittest',drafted_by:'Fixture chat',
+        autopilot:{decision:'left_for_owner',reason:'there is no second model to cross-check with (add another under Thinking power)'}}}};
+    await page.evaluate(()=>window.mount('goals'));
+    const autopilotText=await block().innerText();
+    assert(autopilotText.includes('approved by Runesmith’s check autopilot (trial and findings clean; verifier-model worked out the same 4 expected values)'),autopilotText);
+    assert(autopilotText.includes('Runesmith’s check autopilot left these for you: there is no second model to cross-check with'),autopilotText);
+    assert(!/null|undefined/.test(autopilotText),autopilotText);
+    assert.equal(await page.getByLabel('Let Runesmith approve acceptance checks that pass every test (check autopilot)',{exact:true}).count(),1);
+    loops.push({id:'B20.10',case:'Checks the autopilot approved say so, checks it left for the owner say why, and its switch is in the Build card',result:'passed'});
     fixtureAcceptance={};fixturePlan=null;
   }
   if(selected.has('B21')){

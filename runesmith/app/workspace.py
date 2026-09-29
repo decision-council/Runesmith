@@ -69,6 +69,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "build_steps": False,          # executable build checks are explicitly enabled per workspace
     "build_apply": False,          # only owner acceptance + unchanged source + a root-bound grant can apply
     "build_paths": [],
+    "checks_autopilot": False,    # Runesmith approves proposed checks that pass every gate (acceptance_autopilot)
 }
 # Homes onboarded before the explicit choices existed keep the behaviour they were onboarded with, until their owner
 # chooses (``policy_chosen`` absent from the stored settings marks such a home).
@@ -77,7 +78,7 @@ SETTING_TYPES: dict[str, Any] = {
     "onboarded": bool, "workspace_name": str, "use_type": str, "autonomy": str, "auto_work": bool,
     "interval_minutes": (int, float), "probe_tests": bool, "exclude": list, "max_objects": int, "read_notes": bool,
     "kaizen": bool, "min_experience": int, "kaizen_every": int, "theme": str, "policy_chosen": bool,
-    "build_steps": bool, "build_apply": bool, "build_paths": list,
+    "build_steps": bool, "build_apply": bool, "build_paths": list, "checks_autopilot": bool,
 }
 CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"},
            "use_type": {"", "improve", "build", "docs", "explore", "numbers"}}

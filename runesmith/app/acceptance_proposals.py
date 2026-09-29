@@ -230,6 +230,22 @@ def _owner_reasons(ws, milestone_id, limit=3) -> list[str]:
     return said[:limit]
 
 
+def _owner_reasons_elsewhere(ws, milestone_id, limit=3) -> list[dict[str, str]]:
+    """What the owner said when turning down checks for the project's other milestones, newest first: advice such
+    as \"with --svg the program writes a file, so check the file\" holds for every milestone (journey J11-G16: the
+    runes-light Checker repeated the mistake the owner had just named for the styles milestone)."""
+    said = []
+    for other in (ws.plan() or {}).get('milestones', []):
+        if other.get('id') == milestone_id or not isinstance(other.get('id'), str) or not MILESTONE_ID.fullmatch(other['id']):
+            continue
+        for row in _read_json(_record_path(ws, other['id']), {'proposals': []}).get('proposals') or []:
+            reason = row.get('reason') if row.get('state') == 'discarded' else row.get('replace_reason')
+            if isinstance(reason, str) and reason.strip():
+                said.append((str(row.get('discarded_utc') or row.get('approved_utc') or row.get('utc') or ''),
+                             {'milestone': other.get('title'), 'said': reason.strip()[:600]}))
+    return [row for _, row in sorted(said, key=lambda pair: pair[0], reverse=True)][:limit]
+
+
 def packet(ws, milestone_id, style='code') -> dict[str, Any]:
     milestone = _milestone(ws, milestone_id)
     return {'task': acceptance_examples.TASK if style == 'examples' else TASK,
@@ -238,6 +254,7 @@ def packet(ws, milestone_id, style='code') -> dict[str, Any]:
             'public_acceptance': expectations(ws, milestone_id),
             'other_milestones_checks': _other_checks(ws, milestone_id),
             'owner_said_about_earlier_checks': _owner_reasons(ws, milestone_id),
+            'owner_said_about_other_milestones_checks': _owner_reasons_elsewhere(ws, milestone_id),
             'source_context': source_context(ws, limit=16000),
             # The documents the owner chose to share with models (Goals & plan). Code goes in source_context; documents
             # never do, so without this a Checker could not see a single page of a handbook it is asked to check.
@@ -277,6 +294,12 @@ def _bounded(answer, limit=40000):
     return answer if len(text) <= limit else {'truncated': text[:limit]}
 
 
+def _turned_away(error) -> bool:
+    """Whether every model refused the request before generating anything, so asking again spends nothing."""
+    receipt = getattr(error.__cause__, 'receipt', None) or {}
+    return bool(receipt.get('no_route_accepted') or receipt.get('not_admitted'))
+
+
 def _ask(router, request, style, key):
     """One acceptance call; a PlannerUnavailable or SkippedByOwner says in plain words why there is no answer."""
     try:
@@ -308,14 +331,18 @@ def status(ws) -> dict[str, Any]:
         if file.is_file():
             digest = hashlib.sha256(file.read_bytes()).hexdigest()
             match = next((p for p in record['proposals'] if p.get('state') == 'approved' and p.get('file_sha256') == digest), None)
-            approved = ({'provenance': 'model-proposed, owner-approved', 'proposed_by': match.get('drafted_by'),
-                         'approved_utc': match.get('approved_utc'), 'checks': match['checks'], 'sha256': digest}
+            autopilot = match is not None and match.get('approved_by') == 'autopilot'
+            approved = ({'provenance': 'model-proposed, autopilot-approved' if autopilot else 'model-proposed, owner-approved',
+                         'proposed_by': match.get('drafted_by'), 'approved_utc': match.get('approved_utc'),
+                         'checks': match['checks'], 'sha256': digest,
+                         'autopilot': (match.get('autopilot') or {}).get('reason') if autopilot else None}
                         if match else {'provenance': 'owner file', 'checks': None, 'sha256': digest})
         waiting = next((p for p in reversed(record['proposals']) if p.get('state') == 'proposed'), None)
         if approved or waiting:
             out[mid] = {'approved': approved,
                         'proposal': {k: waiting.get(k) for k in ('id', 'checks', 'assumes', 'dry_run', 'revision', 'code',
-                                                                      'drafted_by', 'utc', 'dropped', 'not_checked', 'style')}
+                                                                      'drafted_by', 'utc', 'dropped', 'not_checked', 'style',
+                                                                      'autopilot')}
                         if waiting else None}
     return out
 
@@ -340,7 +367,17 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
             return old                                  # an unchanged request reuses the waiting answer
     checkpoint()
     key = 'a' + uuid.uuid4().hex[:12]
-    out = _ask(router, data, style, 'acceptance-' + key)
+    try:
+        out = _ask(router, data, style, 'acceptance-' + key)
+    except PlannerUnavailable as error:
+        # Every model turned the request away before generating (nothing ran). One of them may take a smaller one:
+        # Groq's free gpt-oss-120b refused the Checker's full request as too large for its 8,000 tokens a minute
+        # (journey J11-G17). Asked once more with the shorter source excerpt a revision already uses.
+        if not _turned_away(error):
+            raise
+        checkpoint()
+        data = _lean(ws, data)
+        out = _ask(router, data, style, 'acceptance-' + key + '-lean')
     checkpoint()
     drafted_by = out.receipt.get('answered_by') or out.receipt.get('model')
     first_answer = out.data
@@ -530,7 +567,9 @@ def public_criteria(ws, milestone_id, proposal) -> list[dict[str, str]]:
     return kept + ours
 
 
-def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str = '') -> dict[str, Any]:
+def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str = '', by: str = 'owner') -> dict[str, Any]:
+    if by not in ('owner', 'autopilot'):
+        raise WorkspaceError('Checks are approved by the owner or by the check autopilot.')
     _milestone(ws, milestone_id)
     path = _record_path(ws, milestone_id)
     record = _read_json(path, {'proposals': []})
@@ -543,8 +582,11 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
     if target.is_file() and not reason.strip():
         raise WorkspaceError('Say why the existing checks are replaced; the old file is kept.')
     criteria = public_criteria(ws, milestone_id, proposal)
-    header = (f"# Owner acceptance for milestone {milestone_id}. Proposed by {proposal.get('drafted_by') or 'a model'} "
-              f"({proposal['utc']}), approved by the owner ({_now()}).\n"
+    # Checks the autopilot approved never read as the owner's, not even in the file's first words (review of the
+    # autopilot).
+    title = 'Owner acceptance' if by == 'owner' else 'Runesmith check-autopilot acceptance (not owner-reviewed)'
+    header = (f"# {title} for milestone {milestone_id}. Proposed by {proposal.get('drafted_by') or 'a model'} "
+              f"({proposal['utc']}), approved by {'the owner' if by == 'owner' else 'Runesmith’s check autopilot'} ({_now()}).\n"
               "# Builds of this milestone are judged by this file; build authors never see it, only its sentences.\n")
     body = (header + proposal['code'].rstrip('\n') + '\n' + FOOTER).encode('utf-8')
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -555,9 +597,10 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
     temporary.write_bytes(body)
     atomic.replace(temporary, target)
     file_sha = hashlib.sha256(body).hexdigest()
-    published = publish_expectations(ws, milestone_id, criteria, 'The owner approved these acceptance checks in plain words.',
-                                     by='owner (approved acceptance checks)')
-    proposal.update(state='approved', approved_utc=_now(), file_sha256=file_sha, replace_reason=reason.strip() or None,
+    published = publish_expectations(ws, milestone_id, criteria, 'The owner approved these acceptance checks in plain words.'
+                                     if by == 'owner' else 'Runesmith’s check autopilot approved these acceptance checks.',
+                                     by='owner (approved acceptance checks)' if by == 'owner' else 'check autopilot (approved acceptance checks)')
+    proposal.update(state='approved', approved_utc=_now(), approved_by=by, file_sha256=file_sha, replace_reason=reason.strip() or None,
                     expectations_version=published['version'])
     for other in record['proposals']:
         if other is not proposal and other.get('state') == 'proposed':
@@ -566,8 +609,22 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
             other.update(state='replaced', replaced_utc=_now())      # its file is kept as *.replaced-*.py.txt
     _write_json(path, record)
     ws.ledger.append('acceptance.approved', {'milestone': milestone_id, 'proposal': proposal_id, 'sha256': file_sha,
-                                             'proposed_by': proposal.get('drafted_by'), 'replaced': bool(reason.strip())})
+                                             'proposed_by': proposal.get('drafted_by'), 'replaced': bool(reason.strip()),
+                                             'approved_by': by})
     return {'ok': True, 'sha256': file_sha, 'checks': proposal['checks']}
+
+
+def note_autopilot(ws, milestone_id, proposal_id, note) -> None:
+    """What the check autopilot decided about a proposal, kept with it for the owner to read."""
+    path = _record_path(ws, milestone_id)
+    record = _read_json(path, {'proposals': []})
+    proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
+    if proposal is None:
+        raise WorkspaceError('Unknown proposal.')
+    proposal['autopilot'] = note
+    _write_json(path, record)
+    ws.ledger.append('acceptance.autopilot', {'milestone': milestone_id, 'proposal': proposal_id,
+                                              'decision': note.get('decision'), 'reason': str(note.get('reason') or '')[:300]})
 
 
 def discard(ws, milestone_id, proposal_id, *, reason: str = '') -> dict[str, Any]:

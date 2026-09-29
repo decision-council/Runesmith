@@ -272,7 +272,9 @@ export default async function render(root, ctx) {
         // Element.append would print a null part as the word "null"; empty parts are dropped.
         accBlock.append(...[h('b.small', '✓ Your acceptance checks'),
           h('div.tiny.muted', acc.approved.provenance === 'owner file' ? 'Your own checks file. Automatic apply for this milestone is judged by it.'
-            : `Proposed by ${acc.approved.proposed_by || 'a model'}, approved by you. Automatic apply for this milestone is judged by them; builders see only their sentences, never the code.`),
+            : acc.approved.provenance === 'model-proposed, autopilot-approved'
+              ? `Proposed by ${acc.approved.proposed_by || 'a model'}, approved by Runesmith’s check autopilot${acc.approved.autopilot ? ` (${acc.approved.autopilot})` : ''}. Read them; you can replace them at any time.`
+              : `Proposed by ${acc.approved.proposed_by || 'a model'}, approved by you. Automatic apply for this milestone is judged by them; builders see only their sentences, never the code.`),
           acc.approved.checks ? h('ul.small', acc.approved.checks.map((c) => h('li', c.says, exactText(c)))) : null,
           !acc.proposal && ['open', 'doing'].includes(m.status) ? h('div.mt-8',
             h('div.tiny.muted', 'If a build that looks right fails these checks, the checks may be wrong. Ask for new ones: you read them and decide whether they replace these.'),
@@ -317,6 +319,7 @@ export default async function render(root, ctx) {
           p.assumes?.length ? h('div.small.mt-8', h('b', 'They assume (your milestone does not say this):'), h('ul.small', p.assumes.map((a) => h('li', a)))) : null,
           ...examplesNotes(p),
           trial, revised,
+          p.autopilot?.decision === 'left_for_owner' ? h('div.callout.mt-8', h('div', `Runesmith’s check autopilot left these for you: ${p.autopilot.reason}`)) : null,
           h('details', h('summary.tiny', p.style === 'examples' ? `Show the code (examples by ${p.drafted_by || 'a model'}, code written by Runesmith)`
             : `Show the code (proposed by ${p.drafted_by || 'a model'})`), h('pre.code', p.code)),
           h('div.row.wrap.mt-8',
@@ -447,6 +450,7 @@ export default async function render(root, ctx) {
     const [settings, build] = await Promise.all([get('/api/settings'), get('/api/build')]);
     const checks = h('input', {type:'checkbox', checked:settings.build_steps});
     const apply = h('input', {type:'checkbox', checked:build.apply});
+    const autopilot = h('input', {type:'checkbox', checked:Boolean(settings.checks_autopilot)});
     const paths = h('input.input.mono', {value:(settings.build_paths || []).join(', '), 'aria-label':'Allowed files or folders', placeholder:'for example: src, tests, docs (or . for the whole folder)'});
     const save = h('button.btn', {onclick: () => withBusy(save, async () => {
       const chosen = paths.value.split(',').map(x=>x.trim()).filter(Boolean);
@@ -455,16 +459,21 @@ export default async function render(root, ctx) {
       if (apply.checked && !chosen.length) { toast('Name the files or folders Runesmith may write first, for example: src, tests. A . means the whole folder.', 'warn', 8000); return; }
       if (apply.checked && !build.apply && !(await confirmDialog({title:'Apply checked drafts automatically in this folder?',
         text:`Runesmith may then write ${where}. It writes only when a draft passes both its own tests and your acceptance checks for the milestone. You can turn this off here at any time; backups and Undo stay available.`,confirm:'Allow automatic apply'}))) return;
-      await post('/api/settings', {build_steps:checks.checked, build_apply:apply.checked, build_paths:chosen});
+      if (autopilot.checked && !settings.checks_autopilot && !(await confirmDialog({title:'Let Runesmith approve checks itself?',
+        text:'Runesmith then asks for acceptance checks for ready milestones and approves them only when they pass every test: tried on your project, no problems it found itself, and a second model working out the same expected values. Otherwise it turns them down with the reason and asks again, twice at most, then leaves them for you. Checks you approved are never replaced by it. You can read and replace any of its checks.',
+        confirm:'Turn on the check autopilot'}))) return;
+      await post('/api/settings', {build_steps:checks.checked, build_apply:apply.checked, build_paths:chosen, checks_autopilot:autopilot.checked});
       toast('Build settings saved for this folder.', 'good'); buildDirty = false; drawBuild({ force: true });
     })}, 'Save build settings');
     const unsaved = h('span.small.warn', 'Not saved yet: press Save build settings.');
     const markDirty = () => { buildDirty = true; save.classList.add('primary'); if (!unsaved.isConnected) save.after(unsaved); };
     checks.addEventListener('change', markDirty); apply.addEventListener('change', markDirty); paths.addEventListener('input', markDirty);
+    autopilot.addEventListener('change', markDirty);
     clear(buildCard).append(...[h('h3', icon('hammer'), 'Build continuation'),
       h('p.small.muted', 'Builds the next milestone from your project as it is now. By default you review each draft yourself. Automatic apply needs your acceptance checks to pass, not only the draft’s own tests, and nothing may have changed in the meantime.'),
       h('label.row', checks, 'Check drafts on a throwaway copy before they are written (the project’s own tests, if it has any, and your acceptance checks)'),
       h('label.row.mt-8', apply, 'Apply checked drafts automatically (needs your own acceptance checks for the milestone)'),
+      h('label.row.mt-8', autopilot, 'Let Runesmith approve acceptance checks that pass every test (check autopilot)'),
       h('div.label-text.mt-8', 'Allowed files or folders, comma separated'), paths,
       h('p.small.muted', 'Automatic apply needs acceptance checks for each milestone. Use “Propose acceptance checks” on a milestone above and approve them in plain words; nothing is applied automatically without them.'),
       h('p.tiny.faint', `Owner acceptance files: ${build.acceptance_folder} / <milestone-id>.py (unittest). Working copies are not an OS sandbox.`),

@@ -542,7 +542,8 @@ class Router:
             name = names[attempt % len(names)]          # rotate over declared fallbacks
             instrument = self.instruments[name]
             outcome = instrument.complete(prompt=prompt, system=system, schema=schema, max_tokens=max_tokens,
-                                          key=f"{key}-a{attempt}", reasoning_effort=reasoning_effort)
+                                          key=f"{key}-a{attempt}",
+                                          reasoning_effort=reasoning_effort or getattr(instrument, 'default_reasoning', None))
             attempt += 1
             outcome.attempts = attempt
             identity = instrument.identity()
