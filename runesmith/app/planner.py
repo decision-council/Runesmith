@@ -259,8 +259,12 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
     failed = [_read_json(p,{}) for p in (ws.home/'build-attempts').glob('*.json') if p.name not in ignored_attempt_ids]
     failed = sorted((a for a in failed if a.get('contract') == milestone_contract(ws,milestone) and a.get('error')),
                     key=lambda a:a.get('utc',''), reverse=True)[:3]
+    # Only a candidate made on today's source is offered for revision: only then are its edits admitted against it
+    # (journey J11-G33: shown a candidate from older source, the model edited that candidate's code, and every answer
+    # was refused against the current file, seven times). An older one stays in previous_attempts with its feedback.
+    today = (context if context is not None else source_context(ws)).get('snapshot_digest')
     revisions = [d for d in ws.drafts() if d.get('contract') == milestone_contract(ws,milestone)
-                 and d.get('state') == 'needs_revision']
+                 and d.get('state') == 'needs_revision' and d.get('snapshot_digest') == today]
     if revision is not None:
         revisions = [revision]
     candidate = None
@@ -383,7 +387,75 @@ def why_no_answer(error) -> str:
     return f'{plain} ({raw[:160]})'
 
 
-def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_tokens: int):
+ANSWER_RECEIPT = re.compile(r'draft-answers/[A-Za-z0-9_.-]+\.json')
+
+
+def _repeating_authors(ws, contract) -> list[dict[str, str]] | None:
+    """Who sent the last two refused answers for this milestone, when both were refused with the same exact edit;
+    each as {'instrument', 'model'} (the instrument when the answer's receipt kept it); or None.
+
+    Journey J11-G31: shown each refusal, the file's real lines and a hint, Gemini Flash Lite sent Surfaces the same
+    edit quoting the program's output six times (08:14-10:49Z), because every fresh try went to it first again.
+    Only refused answers count: a transport failure between two refusals does not hide them (review).
+    """
+    from runesmith.app.workspace import _read_json
+    rows = []
+    for path in (ws.home / 'build-attempts').glob('*.json'):
+        row = _read_json(path, {})
+        feedback = row.get('feedback') if isinstance(row, dict) else None
+        if (isinstance(row, dict) and row.get('contract') == contract and isinstance(feedback, dict)
+                and isinstance(feedback.get('requested_old_text'), str) and feedback['requested_old_text']):
+            try:
+                written = path.stat().st_mtime_ns          # records of the same second, in the order written (review)
+            except OSError:
+                written = 0
+            rows.append((str(row.get('utc') or ''), written, feedback))
+    last = [feedback for _, _, feedback in sorted(rows, key=lambda r: (r[0], r[1]), reverse=True)[:2]]
+    if len(last) < 2 or last[0]['requested_old_text'] != last[1]['requested_old_text']:
+        return None
+    authors = []
+    for feedback in last:
+        receipt = feedback.get('answer_receipt')
+        answer = _read_json(ws.home / receipt, {}) if isinstance(receipt, str) and ANSWER_RECEIPT.fullmatch(receipt) else {}
+        answer = answer if isinstance(answer, dict) else {}
+        kept = answer.get('receipt') if isinstance(answer.get('receipt'), dict) else {}
+        who = {'instrument': kept.get('instrument') if isinstance(kept.get('instrument'), str) else '',
+               'model': answer.get('author') if isinstance(answer.get('author'), str) else ''}
+        if not (who['instrument'] or who['model']):
+            return None
+        authors.append(who)
+    return authors
+
+
+def _rotate_repeating_author(ws, router, contract) -> list[str] | None:
+    """Ask the Planner role's other instruments first when one keeps sending the same refused edit (J11-G31). It stays
+    last, so a role with one instrument is unchanged; two routes of one instrument count as one. Returns the
+    instruments moved last, or None."""
+    authors = _repeating_authors(ws, contract)
+    roles = getattr(router, 'roles', None)
+    names = roles.get('plan') if authors and isinstance(roles, dict) else None
+    if not names or len(names) < 2:
+        return None
+    specs = ws.config().get('instruments') or {}
+
+    def serves(name, who):
+        if who['instrument']:
+            return who['instrument'] == name
+        # An older answer without its instrument: its model string may carry the provider in front ("provider:model",
+        # for an OpenAI-compatible instrument its base URL), so it ends with the configured model (review).
+        spec = specs.get(name) or {}
+        return any(isinstance(m, str) and m and (who['model'] == m or who['model'].endswith(':' + m))
+                   for m in [spec.get('model')] + list(spec.get('fallback_models') or []))
+    stuck = [name for name in names if all(serves(name, who) for who in authors)]
+    if not stuck or len(stuck) == len(names):
+        return None
+    roles['plan'] = [name for name in names if name not in stuck] + stuck
+    ws.ledger.append('build.author_rotated', {'contract': contract, 'models': [who['model'] for who in authors],
+                                              'instruments': [who['instrument'] for who in authors], 'asked_last': stuck})
+    return stuck
+
+
+def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_tokens: int, receipt_out: dict | None = None):
     try:
         outcome = router.call("plan", prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
     except KeyError as error:
@@ -405,6 +477,8 @@ def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_toke
     if missing:                                     # never save half an answer over a plan the owner has
         raise PlannerUnavailable(f"the model's answer has no {' or '.join(missing)}, so nothing was saved")
     by = outcome.receipt.get("answered_by") or outcome.receipt.get("model")
+    if receipt_out is not None:                     # which instrument answered (review of J11-G31)
+        receipt_out.update({k: v for k, v in (outcome.receipt or {}).items() if isinstance(k, str)})
     return outcome.data, by
 
 
@@ -780,10 +854,14 @@ def draft_files(ws, router, milestone_id: str | None = None, *, revision=None, a
         public_digest=public_digest,exposure=exposure_path.relative_to(ws.home).as_posix(),
         revision=revision,explicit_revision=explicit_revision,attempt_id=attempt_id,revision_view=revision_view,
         revision_operation=revision_operation)
-    data, by = _call(ws, router, prompt, DRAFT_SYSTEM, DRAFT_SCHEMA, request_key, 4000 if explicit_revision else 12000)
+    if not explicit_revision:
+        _rotate_repeating_author(ws, router, contract)
+    answered: dict[str, Any] = {}
+    data, by = _call(ws, router, prompt, DRAFT_SYSTEM, DRAFT_SCHEMA, request_key, 4000 if explicit_revision else 12000,
+                     receipt_out=answered)
     _write_json(exposure_path, dict(exposure, state='answer_received', author=by))
     try:
-        return admit_packet(ws,packet,data,by,admission_guard=admission_guard)
+        return admit_packet(ws,packet,data,by,receipt=answered or None,admission_guard=admission_guard)
     except PlannerUnavailable as error:
         _write_json(ws.home/'author-admissions'/(request_key+'.json'),
                     {'state':'rejected','error':str(error)[:500],'feedback':getattr(error,'feedback',None)})

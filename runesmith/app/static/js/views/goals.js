@@ -16,13 +16,25 @@ async function saveMilestone(heading, url, start, redraw) {
   }
 }
 
+// What Runesmith keeps of each field (workspace MILESTONE_LIMITS); longer text is refused, never cut (J11-F22).
+const LIMITS = { title: 200, detail: 1500, done_when: 400 };
+const counted = (field, limit) => {
+  const count = h('span.tiny.muted', { 'aria-live': 'polite' });
+  const show = () => { const n = [...field.value.trim()].length;          // characters as the Studio counts them
+    count.textContent = `${n.toLocaleString()} of ${limit.toLocaleString()} characters${n > limit ? ': too long, shorten it' : ''}`;
+    count.className = n > limit ? 'tiny warn' : 'tiny muted'; };
+  field.addEventListener('input', show); show();
+  return count;
+};
+
 function milestoneForm(heading, m = {}) {
   return new Promise((resolve) => {
     const title = h('input.input', { value: m.title || '', placeholder: 'e.g. A first page that lists tasks', 'aria-label': 'Title' });
     const detail = h('textarea.textarea', { rows: 3, placeholder: 'What it should do, in your own words (optional)', 'aria-label': 'What it should do' }, m.detail || '');
-    const done = h('input.input', { value: m.done_when || '', placeholder: 'e.g. Opening the page shows the list (optional)', 'aria-label': 'Done when' });
-    modal({ title: heading, body: h('div.col.gap-8', h('label.col', h('span.small', 'Title'), title),
-      h('label.col', h('span.small', 'What it should do'), detail), h('label.col', h('span.small', 'Done when'), done)),
+    const done = h('textarea.textarea', { rows: 2, placeholder: 'e.g. Opening the page shows the list (optional)', 'aria-label': 'Done when' }, m.done_when || '');
+    modal({ title: heading, body: h('div.col.gap-8', h('label.col', h('span.small', 'Title'), title, counted(title, LIMITS.title)),
+      h('label.col', h('span.small', 'What it should do'), detail, counted(detail, LIMITS.detail)),
+      h('label.col', h('span.small', 'Done when'), done, counted(done, LIMITS.done_when))),
       onClose: (v) => resolve(v || null),
       actions: [{ label: 'Cancel', kind: 'ghost', value: null }, { label: 'Save', kind: 'primary', onClick: (close) => close(title.value.trim()
         ? { title: title.value.trim(), detail: detail.value.trim(), done_when: done.value.trim() } : null) }] });

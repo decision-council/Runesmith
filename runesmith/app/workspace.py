@@ -86,6 +86,19 @@ CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"
 RANGES = {"interval_minutes": (1, 7 * 24 * 60), "max_objects": (1, 500), "min_experience": (2, 10_000),
           "kaizen_every": (1, 10_000)}
 MILESTONE_STATES = ("open", "doing", "done", "dropped")
+# The most an owner may write in a milestone; every Checker and builder request carries it (journey J11-F22: longer
+# text was cut silently mid-sentence, so the owner's exact numbers could vanish).
+MILESTONE_LIMITS = {"title": 200, "detail": 1500, "track": 60, "done_when": 400}
+MILESTONE_WORDS = {"title": "The title", "detail": "What it should do", "track": "The track",
+                   "done_when": "Done when"}
+
+
+def _milestone_text_fits(fields: dict[str, Any]) -> None:
+    for key, limit in MILESTONE_LIMITS.items():
+        text = fields.get(key)
+        if isinstance(text, str) and len(text.strip()) > limit:
+            raise WorkspaceError(f"{MILESTONE_WORDS[key]} has {len(text.strip()):,} characters; the most is {limit:,}. "
+                                 "Shorten it: nothing was saved, and nothing is cut without telling you.")
 GENERIC_NAMES = {"readme.md", "readme", "readme.txt", "readme.rst", "index.md", "index.html", "index.htm", "license",
                  "license.md", "changelog.md", "changes.md", "contributing.md", "notes.md", "todo.md", "main.py", "app.js"}
 MAX_DRAFT_FILES, MAX_DRAFT_FILE_BYTES = 12, 60_000
@@ -754,6 +767,7 @@ class Workspace:
             plan = self.plan()
             for m in (plan or {}).get("milestones", []):
                 if m["id"] == milestone_id:
+                    _milestone_text_fits(patch)
                     if patch.get("status") in MILESTONE_STATES:
                         m["status"] = patch["status"]
                     for key, limit in (("title", 200), ("detail", 1500), ("track", 60), ("done_when", 400)):
@@ -768,6 +782,9 @@ class Workspace:
         title = (title or "").strip()
         if not title:
             raise WorkspaceError("a milestone needs a title")
+        detail = detail if isinstance(detail, str) else ""          # not text: ignored, never a server error (review)
+        track = track if isinstance(track, str) else ""
+        _milestone_text_fits({"title": title, "detail": detail, "track": track, "done_when": str(done_when or "")})
         with self._lock:
             plan = self.plan() or {"summary": "", "milestones": [], "tracks": [], "first_steps": [], "questions": [],
                                    "drafted_by": "owner", "utc": _now(), "version": 1}

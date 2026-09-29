@@ -81,3 +81,29 @@ def test_a_python_project_without_tests_still_fails_instead_of_passing_unchecked
              roles=("plan",))
     result = build_step(ws, ws.router())
     assert result["verification"]["status"] == "failed"
+
+
+def test_documents_in_a_folder_the_owner_lets_runesmith_change_can_be_checked(tmp_path):
+    # Journey J11-G32: with "." allowed, a draft writing GUIDE.md, which its approved checks read, "could not be checked".
+    import pytest
+    from runesmith.app.building import _candidate_files
+    from runesmith.app.snapshots import SnapshotUnsupported, _allowed_folders
+    ws = handbook(tmp_path)
+    (ws.root / "GUIDE.md").write_text("# Guide\n", encoding="utf-8")
+    before = collect_snapshot(ws)["digest"]
+    ws.update_settings({"build_paths": ["."]})
+    snapshot = collect_snapshot(ws)
+    assert snapshot["digest"] == before                          # allowing a folder changes no input (review of batch X)
+    assert "GUIDE.md" not in snapshot["files"]
+    made = _candidate_files(snapshot, {"files": [{"path": "GUIDE.md", "content": "# Guide\n"},
+                                                 {"path": "docs/deep/page.md", "content": "x"}]})
+    assert "GUIDE.md" in made and "docs/deep/page.md" in made
+    for bad in ("secrets.md", "private/notes.md", ".hidden/a.md"):
+        with pytest.raises(SnapshotUnsupported):
+            _candidate_files(snapshot, {"files": [{"path": bad, "content": "x"}]})
+    ws.update_settings({"build_paths": ["RECIPES", "motion.mjs"]})
+    snapshot = collect_snapshot(ws)
+    assert "recipes/new.md" in _candidate_files(snapshot, {"files": [{"path": "recipes/new.md", "content": "x"}]})
+    with pytest.raises(SnapshotUnsupported, match="GUIDE.md cannot be checked here"):
+        _candidate_files(snapshot, {"files": [{"path": "GUIDE.md", "content": "x"}]})
+    assert _allowed_folders(["../outside", "./docs/", "a.md", 7]) == {"docs/**"}

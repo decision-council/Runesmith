@@ -21,6 +21,9 @@ EXCLUDED_DIRS = {'.git','.runesmith','.venv','venv','node_modules','__pycache__'
 LOCAL_ASSETS = {'fixtures','assets','static','templates'}
 MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES = 3000, 2_000_000, 32_000_000
 DOCUMENT_SUFFIXES = {'.md','.markdown','.txt','.rst'}
+# A folder the owner lets Runesmith change ("Allowed files or folders") declares every document under it: "docs/**";
+# "." declares every document in the project (journey J11-G32).
+EVERY_DOCUMENT = '**'
 
 
 def document_folder(rel):
@@ -54,9 +57,31 @@ def path_kind(rel, declared=()):
         return 'model'
     # Declared documents: files the owner listed as build paths, or every document in a folder where the owner shared
     # one ("recipes/"). They are verification inputs only: a model sees a document's text only if the owner ticked it.
-    if p.suffix.lower() in DOCUMENT_SUFFIXES and (rel in declared or document_folder(rel) in declared):
+    if p.suffix.lower() in DOCUMENT_SUFFIXES and (rel in declared or document_folder(rel) in declared
+                                                 or _under_allowed_folder(rel, declared)):
         return 'local'
     return None
+
+
+def _under_allowed_folder(rel, declared):
+    rel = rel.lower()                                   # "DOCS" allows docs/ (review of J11-G32)
+    return any(entry == EVERY_DOCUMENT or (entry.endswith('/' + EVERY_DOCUMENT)
+                                           and rel.startswith(entry[:-len(EVERY_DOCUMENT)].lower()))
+               for entry in declared)
+
+
+def _allowed_folders(paths):
+    """The declared-documents entries for the folders among the owner's allowed build paths."""
+    entries = set()
+    for path in paths:
+        if not isinstance(path, str) or Path(path).suffix:
+            continue
+        folder = path.strip().replace('\\', '/').strip('/')
+        if folder in ('', '.'):
+            entries.add(EVERY_DOCUMENT)
+        elif '..' not in folder.split('/'):
+            entries.add(folder.removeprefix('./') + '/' + EVERY_DOCUMENT)
+    return entries
 
 
 def digest_files(files, declared=()):
@@ -93,7 +118,11 @@ def collect_snapshot(ws):
             if len(data)>MAX_FILE_BYTES or total+len(data)>MAX_TOTAL_BYTES or len(files)>=MAX_FILES:
                 raise SnapshotUnsupported('Local verification snapshot exceeds the declared resource profile.')
             total+=len(data);files[rel]=data
-    return dict(digest_files(files,declared),files=files,excluded=excluded)
+    # Journey J11-G32: with "." allowed, a draft writing GUIDE.md, which its approved checks read, could not be
+    # checked. The allowed folders admit a draft's document outputs; they are not inputs and change no identity, so
+    # allowing a folder never makes a waiting draft stale (review of batch X).
+    return dict(digest_files(files,declared),files=files,excluded=excluded,
+                document_outputs=sorted(_allowed_folders(ws.settings().get('build_paths',[]))))
 
 
 def freeze_snapshot(ws,snapshot):
@@ -132,4 +161,4 @@ def load_snapshot(ws,digest):
     checked=digest_files(files,header['policy'].get('declared_documents',[]))
     if checked['digest']!=digest:
         raise SnapshotUnsupported('Snapshot manifest does not match its identity.')
-    return dict(header,files=files)
+    return dict(header,files=files,document_outputs=sorted(_allowed_folders(ws.settings().get('build_paths',[]))))

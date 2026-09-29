@@ -2093,6 +2093,17 @@ try{
     await page.waitForTimeout(200);
     assert.equal(requests.slice(refusedStart).filter(r=>r.method==='POST').length,1);
     loops.push({id:'B20.11',case:'A refused milestone save says why and opens the form again with what was typed',result:'passed'});
+    // B20.12 (journey J11-F22): each field counts against what Runesmith keeps, and says when it is too long
+    await page.getByRole('button',{name:'Milestone',exact:true}).click();
+    const counting=page.locator('.modal',{hasText:'Add a milestone'});
+    await counting.waitFor();
+    assert((await counting.innerText()).includes('0 of 400 characters'));
+    await counting.getByLabel('Done when',{exact:true}).fill('x'.repeat(401));
+    await counting.locator('.warn',{hasText:'401 of 400 characters: too long, shorten it'}).waitFor();
+    await counting.getByLabel('Done when',{exact:true}).fill('x'.repeat(400));
+    assert.equal(await counting.locator('.warn').count(),0);
+    await counting.getByRole('button',{name:'Cancel',exact:true}).click();
+    loops.push({id:'B20.12',case:'The milestone form counts each field against its limit and says when one is too long',result:'passed'});
     // B20.10 (owner of J11, 2026-09-29): the check autopilot's approvals say so, what it left for the owner says why, and its switch is in the Build card
     fixtureAcceptance={m1:{approved:{provenance:'model-proposed, autopilot-approved',proposed_by:'Fixture chat',checks,
         autopilot:'trial and findings clean; verifier-model worked out the same 4 expected values'},

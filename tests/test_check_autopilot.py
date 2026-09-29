@@ -482,3 +482,19 @@ def test_full_speed_starts_the_next_step_at_once_while_models_answer(tmp_path, m
     (ws.home / "WORK.json").write_text(json.dumps({"utc": json.loads((ws.home / "WORK.json").read_text())["utc"],
                                                    "objects": {}}), encoding="utf-8")
     assert 895 < worker._due() <= 900                                        # a round keeps the interval
+
+
+def test_after_a_milestone_is_done_the_next_step_asks_for_checks_first(tmp_path, monkeypatch):
+    # Journey J11-F25: the build chained after a completed milestone drafted the next one before it had checks.
+    ws = autopilot_workspace(tmp_path, [], [])
+    ws.update_settings({"build_steps": True, "auto_work": True, "policy_chosen": True, "onboarded": True,
+                        "checks_autopilot": True})
+    worker = Worker(ws, EventBus())
+    monkeypatch.setattr(worker, "_job_build", lambda **params: {"advanced": True, "summary": "applied"})
+    monkeypatch.setattr(autopilot, "needs_checks", lambda ws: "m1")
+    worker._execute({"id": "b1", "kind": "build", "params": {}, "by": "schedule"})
+    assert [(j["kind"], j["params"]) for j in worker._jobs] == [("propose_acceptance", {"milestone": "m1"})]
+    worker._jobs.clear()
+    monkeypatch.setattr(autopilot, "needs_checks", lambda ws: None)
+    worker._execute({"id": "b2", "kind": "build", "params": {}, "by": "schedule"})
+    assert [j["kind"] for j in worker._jobs] == ["build"]                  # every ready milestone has checks

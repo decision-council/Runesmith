@@ -760,8 +760,12 @@ def _missing_inputs(example, source_text) -> list[str]:
         if name is None:
             continue
         rel = name.replace('\\', '/').removeprefix('./')
+        # A step that runs the program directly on the file reads it, so only an earlier step can have made it
+        # (journey J11-G36: two steps both ran dots.motion.json, each counted as making it for the other, and the
+        # autopilot approved checks every correct build fails). "save X" then "X --at 0" still makes X first.
+        reads = bool(words) and words[0] == name
         others = ' '.join(' '.join(s.get('run', [])) + ' ' + s.get('input', '')
-                          for m, s in enumerate(example['steps']) if m != n)
+                          for m, s in enumerate(example['steps']) if (m < n if reads else m != n))
         if rel not in named and rel not in source_text and rel not in others and rel not in missing:
             missing.append(rel)
     return missing

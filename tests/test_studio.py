@@ -729,3 +729,21 @@ def test_a_write_refused_before_its_body_is_read_closes_the_connection(studio):
     first.read()
     conn.request("GET", "/api/ping")                  # http.client reconnects after "Connection: close"
     assert conn.getresponse().status == 200
+
+
+def test_milestone_text_over_its_limit_is_refused_never_cut(tmp_path):
+    # Journey J11-F22: "What it should do" was cut at 1,500 characters and "Done when" at 400, silently.
+    from runesmith.app.workspace import Workspace, WorkspaceError
+    ws = Workspace(tmp_path)
+    fits = ws.add_milestone("Paths", detail="d" * 1500, done_when="w" * 400)
+    assert len(fits["detail"]) == 1500 and len(fits["done_when"]) == 400
+    for fields, word in (({"detail": "d" * 1501}, "What it should do has 1,501 characters; the most is 1,500"),
+                         ({"done_when": "w" * 401}, "Done when has 401 characters; the most is 400"),
+                         ({"title": "t" * 201}, "The title has 201 characters; the most is 200")):
+        with pytest.raises(WorkspaceError, match=word):
+            ws.add_milestone(fields.get("title", "Paths"), detail=fields.get("detail", ""), done_when=fields.get("done_when", ""))
+        with pytest.raises(WorkspaceError, match=word):
+            ws.update_milestone(fits["id"], fields)
+    kept = next(m for m in ws.plan()["milestones"] if m["id"] == fits["id"])
+    assert kept["detail"] == "d" * 1500 and kept["title"] == "Paths"        # a refused edit changes nothing
+    assert ws.update_milestone(fits["id"], {"status": "doing"})["status"] == "doing"

@@ -286,3 +286,59 @@ def test_stale_code_that_is_part_of_a_longer_line_gets_no_output_hint(tmp_path):
     with pytest.raises(PlannerUnavailable):build_step(ws,ws.router())
     receipt=json.loads(next((ws.home/'build-attempts').glob('*.json')).read_text())
     assert 'hint' not in receipt['feedback'] and 'self.value = 100' in receipt['feedback']['source_excerpt']
+
+
+def test_a_model_that_repeats_a_refused_edit_is_asked_last(tmp_path):
+    # Journey J11-G31: Gemini Flash Lite sent Surfaces the same refused edit six times, always asked first.
+    import json as _json
+    import os
+    from types import SimpleNamespace
+    from runesmith.app.planner import _rotate_repeating_author
+    home = tmp_path / "home"
+    (home / "build-attempts").mkdir(parents=True)
+    (home / "draft-answers").mkdir()
+    logged = []
+    ws = SimpleNamespace(home=home, ledger=SimpleNamespace(append=lambda kind, data: logged.append((kind, data))),
+                         config=lambda: {"instruments": {
+                             "a": {"model": "g:lite", "fallback_models": ["g2:lite"]},
+                             "b": {"model": "n:tron"},
+                             "c": {"kind": "openai", "model": "google/lite:free", "base_url": "https://or.example/v1"}}})
+    clock = [0]
+
+    def attempt(n, old=None, author=None, instrument=None, utc=None, state="failed"):
+        receipt = f"draft-answers/d{n}.json"
+        if author is not None:
+            (home / "draft-answers" / f"d{n}.json").write_text(_json.dumps(
+                {"author": author, "receipt": {"instrument": instrument} if instrument else None}), encoding="utf-8")
+        feedback = {"requested_old_text": old, "answer_receipt": receipt} if old is not None else None
+        path = home / "build-attempts" / f"{n}.json"
+        path.write_text(_json.dumps({"contract": "k", "utc": utc or f"2026-09-29T10:{n:02d}:00Z", "state": state,
+                                     "error": "Exact edit refused" if old else "no answer", "feedback": feedback}),
+                        encoding="utf-8")
+        clock[0] += 1
+        os.utime(path, ns=(clock[0] * 10**9, clock[0] * 10**9))
+    router = lambda: SimpleNamespace(roles={"plan": ["a", "b", "c"]})
+    attempt(1, "<filter/>", "g:lite", "a")
+    first = router()
+    assert _rotate_repeating_author(ws, first, "k") is None and first.roles["plan"] == ["a", "b", "c"]   # once
+    attempt(2, state="transport_failed")                                      # nothing answered: does not count
+    attempt(3, "<filter/>", "g2:lite", "a")                                   # the same instrument by another route
+    again = router()
+    assert _rotate_repeating_author(ws, again, "k") == ["a"] and again.roles["plan"] == ["b", "c", "a"]
+    assert logged[-1][1]["asked_last"] == ["a"] and logged[-1][1]["instruments"] == ["a", "a"]
+    assert _rotate_repeating_author(ws, router(), "another milestone") is None
+    alone = SimpleNamespace(roles={"plan": ["a"]})
+    assert _rotate_repeating_author(ws, alone, "k") is None and alone.roles["plan"] == ["a"]       # never removed
+    attempt(4, "<filter/>", "n:tron", "b")
+    assert _rotate_repeating_author(ws, router(), "k") is None               # two different instruments
+    attempt(5, "<g/>", "n:tron", "b")
+    assert _rotate_repeating_author(ws, router(), "k") is None               # a different edit: it is trying
+    # An OpenAI-compatible answer kept without its instrument: its model string starts with the base URL (review).
+    attempt(6, "<h/>", "https://or.example/v1:google/lite:free", utc="2026-09-29T10:59:00Z")
+    attempt(7, "<h/>", "https://or.example/v1:google/lite:free", utc="2026-09-29T10:59:00Z")   # the same second
+    assert _rotate_repeating_author(ws, router(), "k") == ["c"]
+    attempt(8, "<h/>", utc="2026-09-29T10:59:30Z")                            # its answer file was never kept
+    (home / "build-attempts" / "9.json").write_text(_json.dumps({
+        "contract": "k", "utc": "2026-09-29T10:59:40Z", "state": "failed", "error": "x",
+        "feedback": {"requested_old_text": "<h/>", "answer_receipt": "../../secret.json"}}), encoding="utf-8")
+    assert _rotate_repeating_author(ws, router(), "k") is None               # only a receipt under draft-answers

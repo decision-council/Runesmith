@@ -128,10 +128,13 @@ def _run_checks(stage: Path, kind: str, logs: Path, *, timeout_s=None, inventory
 def _candidate_files(snapshot, draft):
     files = dict(snapshot['files'])
     declared = snapshot['policy'].get('declared_documents', [])
+    outputs = tuple(declared) + tuple(snapshot.get('document_outputs') or ())    # allowed folders (J11-G32)
     for f in draft['files']:
         rel = f['path']
-        if not path_kind(rel, declared):
-            raise SnapshotUnsupported(f'Output is outside the local verification profile: {rel}')
+        if not path_kind(rel, declared) and not path_kind(rel, outputs):
+            raise SnapshotUnsupported(f'{rel} cannot be checked here: Runesmith checks code, settings and documents '
+                                      'only inside the files or folders you allow under Goals & plan → Build '
+                                      '("Allowed files or folders"), and never secrets, data or logs.')
         base = files.get(rel)
         if f.get('expected_sha256') and (base is None or hashlib.sha256(base).hexdigest()!=f['expected_sha256']):
             raise SnapshotUnsupported('Candidate file base does not match the frozen source.')
@@ -460,8 +463,11 @@ def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only)
     contract = milestone_contract(ws, milestone)
     previous = [d for d in ws.drafts() if d.get('contract') == contract]
     if any(d.get('state') == 'applied' for d in previous):
-        return {'summary':'Files applied; milestone awaits acceptance or owner review.', 'milestone':milestone['id']}, \
-            'files applied, awaiting acceptance or your review'
+        # Journey J11-F24: the owner reopened a milestone whose draft was applied, and nothing said what to do.
+        return {'summary':'A draft of this milestone is already applied, so Runesmith does not build it again. To have '
+                          'it built anew, undo that draft on Work; otherwise mark the milestone done.',
+                'milestone':milestone['id']}, \
+            'a draft of it is already applied (undo it on Work to build it anew)'
     inconclusive=next((d for d in previous if d.get('state') in ('waiting','needs_revision')
         and d.get('snapshot_digest')==context['snapshot_digest']
         and d.get('public_acceptance_digest')==expectation_digest(ws,milestone['id'])

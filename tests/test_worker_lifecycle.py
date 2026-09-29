@@ -117,7 +117,8 @@ def test_the_queue_records_who_asked_for_each_job(tmp_path):
         worker.enqueue("health", by="somebody")
     import inspect
     source = inspect.getsource(Worker._execute)
-    assert "self.enqueue('build', by='schedule')" in source and "self.enqueue('breakdown', by='schedule'" in source
+    # The step after a completed milestone is the schedule's own choice (J11-F25), still recorded as the schedule's.
+    assert "self.enqueue(kind, by='schedule', **params)" in source and "self.enqueue('breakdown', by='schedule'" in source
 
 
 def test_a_skipped_chat_request_is_reported_as_skipped_in_plain_words(tmp_path, monkeypatch):

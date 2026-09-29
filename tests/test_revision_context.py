@@ -222,3 +222,17 @@ def test_a_focused_revision_takes_as_many_exact_edits_as_any_answer(tmp_path):
     assert f'return step{MAX_EDITS}' in result[0]['content'] and '987654321' in result[0]['content']
     with pytest.raises(PlannerUnavailable, match=f'1-{MAX_EDITS} exact edits'):
         rc.materialize_answer(ws, prior, view, [{'path': 'app.py', 'edits': chain + [{'old_text': 'x', 'new_text': 'y'}]}])
+
+
+def test_a_candidate_on_older_source_is_not_offered_for_revision(tmp_path):
+    # Journey J11-G33: the model revised a candidate made on older source; every edit was refused against the current file.
+    ws, prior = setup_revision(tmp_path)
+    milestone = ws.plan()['milestones'][0]
+    shown, _ = json.JSONDecoder().raw_decode(draft_prompt(ws, milestone, source_context(ws)))
+    assert shown['candidate_to_revise']['id'] == prior['id']
+    (tmp_path / 'extra.py').write_text('x = 1\n', encoding='utf-8')          # the source changes
+    later, _ = json.JSONDecoder().raw_decode(draft_prompt(ws, milestone, source_context(ws)))
+    assert later['candidate_to_revise'] is None
+    assert any(p['id'] == prior['id'] for p in later['previous_attempts'])   # its feedback is still shown
+    explicit, _ = json.JSONDecoder().raw_decode(draft_prompt(ws, milestone, source_context(ws), revision=prior))
+    assert explicit['candidate_to_revise']['id'] == prior['id']              # an owner's explicit choice is unchanged

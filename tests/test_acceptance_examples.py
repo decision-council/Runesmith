@@ -1041,3 +1041,17 @@ def test_a_checked_svg_or_json_file_must_parse(tmp_path):
             assert "not well-formed" in str(error) or "not valid JSON" in str(error)
         else:
             raise AssertionError(name + " was accepted")
+
+
+def test_a_file_two_steps_only_read_is_named_as_missing():
+    # Journey J11-G36: two steps both ran the program on dots.motion.json, which the example never made.
+    source = json.dumps({"inventory": ["motion.mjs", "sample.motion.json"]}) + ' args.indexOf("--svg")'
+    milestone = "Scatter: node motion.mjs FILE --at 3.5 --svg mid.svg shows the fade."
+    run = lambda *words: {"run": ["node", "motion.mjs", *words]}
+    twice = {"examples": [{"name": "fade", "says": "The dots fade.", "steps": [
+        run("dots.motion.json", "--at", "3.5", "--svg", "mid.svg"), run("dots.motion.json", "--at", "6", "--svg", "end.svg")],
+        "contains": [{"name": "mid.svg", "texts": ["opacity"]}]}]}
+    assert validate_examples(twice, milestone, source_text=source)["checks"][0]["missing_input"] == ["dots.motion.json"]
+    made = json.loads(json.dumps(twice))
+    made["examples"][0]["files"] = [{"name": "dots.motion.json", "text": "{}"}]
+    assert "missing_input" not in validate_examples(made, milestone, source_text=source)["checks"][0]

@@ -642,7 +642,13 @@ class Worker:
                 legacy = False  # Keep the failure receipt; malformed policy cannot restart work.
             if (schedule_next and legacy and job['kind'] == 'build' and outcome.get('advanced') and self.ws.settings()['auto_work']
                     and not self.paused and not self._closing and not self._stop_after_step):
-                self.enqueue('build', by='schedule')
+                # What the schedule would run now: checks first for a ready milestone without them (journey J11-F25:
+                # the next milestone was drafted before it had checks, a model call for a draft that must wait).
+                try:
+                    kind, params = self.scheduled_job() or ('build', {})
+                except Exception:                     # choosing never stops the worker (review of J11-G16)
+                    kind, params = 'build', {}
+                self.enqueue(kind, by='schedule', **params)
             if (schedule_next and legacy and job['kind']=='build' and outcome.get('replan_needed') and self.ws.settings()['auto_work']
                     and not self.paused and not self._closing and not self._stop_after_step):
                 if not self._breakdown_waiting(outcome['milestone']):    # one proposal waits: no repeat (J2-F16)
