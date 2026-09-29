@@ -901,3 +901,15 @@ def test_a_rescued_number_follows_its_own_name_in_the_milestone():
     scope = {}
     exec("import re\n" + HARNESS[HARNESS.index("def number_after"):HARNESS.index("def number_on_line")], scope)
     assert scope["number_after"]("width:", 200, "width:200")
+
+
+def test_checks_written_from_examples_are_not_refused_for_the_template_s_length(tmp_path):
+    # Journey J11-B12: the signature's three examples, each with its motion file, were refused as "The checks file must
+    # contain 1-20000 characters": most of that file is Runesmith's own template.
+    from runesmith.app.acceptance_proposals import MAX_CODE
+    big = "x" * 1500
+    answer = {"examples": [dict(EXAMPLES["examples"][2], name=f"damaged {n}",
+                                files=[{"name": "tally.json", "text": '[{"name": "Ha' + big}]) for n in range(3)]}
+    ws = workspace(tmp_path, [answer])
+    proposal = propose(ws, ws.router(), "m1")
+    assert len(proposal["code"]) > MAX_CODE and len(proposal["checks"]) == 3     # over the old limit, accepted

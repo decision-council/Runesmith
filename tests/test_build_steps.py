@@ -700,3 +700,22 @@ def test_failed_rounds_with_other_parameters_are_not_merged():
               'outcome': {'error': 'every model is busy'}}
     assert _same_waiting_round(failed, dict(failed))
     assert not _same_waiting_round(failed, dict(failed, params={'milestone': 'm2'}))
+
+
+def test_an_edit_whose_old_text_only_escapes_its_quotes_is_matched():
+    # Journey J11-G22: Nemotron wrote '<svg width=\"' for the file's '<svg width="', and the build was refused.
+    import pytest
+    from runesmith.app.planner import _apply_one_edit
+    text = "let s = '<svg width=\"' + w + '\">';\nlet t = 1;\n"
+    old = "let s = '<svg width=\\\"' + w + '\\\">';"
+    new = "let s = '<svg class=\\\"rs\\\"';"
+    assert '\\"' in old
+    assert _apply_one_edit(text, {'old_text': old, 'new_text': new}, 'motion.mjs') == "let s = '<svg class=\"rs\"';\nlet t = 1;\n"
+    with pytest.raises(ValueError):                  # not in a document (review: a README got a stray backslash)
+        _apply_one_edit(text, {'old_text': old, 'new_text': new}, 'README.md')
+    with pytest.raises(ValueError):                  # anything else still does not match
+        _apply_one_edit(text, {'old_text': "let s = '<svg height=\\\"'", 'new_text': 'x'}, 'motion.mjs')
+    # Review: a correctly quoted old text that occurs twice was redirected to the one place its unescaped form occurs.
+    twice = "x = 'a=\\\"1\\\"'\nx = 'a=\\\"1\\\"'\n# a=\"1\"\n"
+    with pytest.raises(ValueError):
+        _apply_one_edit(twice, {'old_text': 'a=\\"1\\"', 'new_text': 'b'}, 'm.py')

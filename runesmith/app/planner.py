@@ -492,8 +492,28 @@ def _apply_one_edit(text: str, edit, rel: str) -> str:
             raise
         shifted = _reindented(text, edit.get("old_text"), edit.get("new_text"))
         if shifted is None:
+            shifted = _quotes_unescaped(text, edit.get("old_text"), edit.get("new_text"), rel)
+        if shifted is None:
             raise
         return shifted
+
+
+QUOTE_ESCAPE_FILES = ('.js', '.mjs', '.cjs', '.py')
+
+
+def _quotes_unescaped(text, old, new, rel=''):
+    """The edit, when its old text occurs nowhere as written but, without a backslash before each quote, exactly once:
+    the model escaped the quotes of the code it quoted (journey J11-G22: Nemotron wrote '<svg width=\"' for the file's
+    '<svg width="'). The new text is read the same way. Only in JS and Python files, where the model quotes code;
+    anything else is refused as before (review: a correct but repeated old text was redirected into a comment, and a
+    README got a stray backslash), and the checks judge the result."""
+    if (not isinstance(old, str) or not isinstance(new, str) or '\\' not in old
+            or not str(rel).lower().endswith(QUOTE_ESCAPE_FILES) or text.count(old) != 0):
+        return None
+    plain = re.sub(r'\\(["\'])', r'\1', old)
+    if plain == old or text.count(plain) != 1:
+        return None
+    return text.replace(plain, re.sub(r'\\(["\'])', r'\1', new), 1)
 
 
 def _edit_key(edit) -> tuple[str, str] | None:

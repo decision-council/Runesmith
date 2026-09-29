@@ -144,13 +144,13 @@ def required_texts(tree, tests) -> dict[str, list[str]]:
             for name, nodes in required.items()}
 
 
-def validate(data: Any) -> dict[str, Any]:
+def validate(data: Any, *, limit: int = MAX_CODE) -> dict[str, Any]:
     """The proposal as stored, or a WorkspaceError naming what is wrong with it."""
     if not isinstance(data, dict) or not isinstance(data.get('checks'), list) or not isinstance(data.get('code'), str):
         raise WorkspaceError('A proposal needs "checks" and "code".')
     code = data['code'].replace('\r\n', '\n')
-    if not code.strip() or len(code) > MAX_CODE:
-        raise WorkspaceError(f'The checks file must contain 1-{MAX_CODE} characters.')
+    if not code.strip() or len(code) > limit:
+        raise WorkspaceError(f'The checks file must contain 1-{limit} characters.')
     try:
         tree = ast.parse(code)
     except SyntaxError as error:
@@ -288,8 +288,11 @@ def _clean(answer, style, data) -> dict[str, Any]:
     shaped = acceptance_examples.validate_examples(
         answer, ' '.join(str(milestone.get(k) or '') for k in ('title', 'detail', 'done_when')),
         json.dumps(data.get('source_context'), ensure_ascii=False) + '\n' + str(data.get('documents') or ''))
+    # The limit is for check code a model writes; here the file is Runesmith's own template plus the examples,
+    # which the examples format already bounds (journey J11-B12: the template grew, and three examples with their
+    # motion files were refused as too long).
     checked = validate({'checks': [{'test': c['test'], 'says': c['says']} for c in shaped['checks']],
-                        'assumes': [], 'code': shaped['code']})
+                        'assumes': [], 'code': shaped['code']}, limit=MAX_CODE + len(acceptance_examples.HARNESS))
     checks = [{'test': c['test'], 'says': c['says'], 'exact': e['exact'],
                **({'missing_input': e['missing_input']} if e.get('missing_input') else {})}
               for c, e in zip(checked['checks'], shaped['checks'])]
