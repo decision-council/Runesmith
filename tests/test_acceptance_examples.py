@@ -973,3 +973,17 @@ def test_moving_an_attribute_never_touches_the_example_s_own_settings():
     shaped = validate_examples(answer, milestone)
     assert shaped["examples"][0]["links_resolve"] is True
     assert any("not checked: too many texts" in d for d in shaped["dropped"])
+
+
+def test_a_file_line_number_may_be_the_text_of_the_element_that_holds_the_name():
+    # Journey J11-G27: "a line with rs-dim-label and the number 120" is the label's text, after its x and y.
+    from runesmith.app.acceptance_examples import HARNESS
+    scope = {}
+    exec("import re\n" + HARNESS[HARNESS.index("def number_after"):HARNESS.index("def number_on_line")], scope)
+    after = scope["number_after"]
+    label = '<text class="rs-dim-label" x="100" y="52">120</text>'
+    assert after("rs-dim-label", 120, label) and not after("rs-dim-label", 130, label)
+    assert after("stroke-dashoffset", 57.5, '<path stroke-dashoffset="57.5" d="M20,60"/>')
+    assert not after("stroke-dashoffset", 60, '<path stroke-dashoffset="57.5" d="M20,60"/>')     # not any number
+    assert not after("stroke-dashoffset", 57.5, '<path stroke-dashoffset="115">57.5</path>')      # an attribute's own value
+    assert not after("stroke-dashoffset", 120, '<path stroke-dashoffset="57.5" d="M1"/>120<circle/>')

@@ -93,7 +93,8 @@ TASK = (
     "the finished project should contain: those files are created before the steps); \"lacks\": [{\"name\", \"texts\"}] "
     "checks that a file afterwards contains none of those texts (for \"there is no X in the file\"; never put a text "
     "that must be absent under \"contains\"); \"file_lines\": [{\"name\", \"has\", \"number\"}] checks that in "
-    "that file the first number after the text \"has\" is \"number\" (for \"out.svg has stroke-dashoffset 57.5\"; "
+    "that file the first number after the text \"has\", or the text of the element that holds it, is \"number\" (for "
+    "\"out.svg has stroke-dashoffset 57.5\" or a label <text class=\"x\">120</text>; "
     "never write the layout, such as 'stroke-dashoffset=\"57.5\"', under \"contains\"); \"links_resolve\": true checks that every "
     "link between the Markdown pages leads to an existing file; \"pages_reachable\": true checks that every Markdown "
     "page can be reached by following links from the front page (README.md or index.md). For documents there is often "
@@ -970,6 +971,12 @@ def number_after(has, number, text):
         first = re.search(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", rest)
         joined = has[-1:].isalnum() and re.match(r"[\w-]", rest[:1])     # "stroke" inside "stroke-width"
         if first and not joined and float(first.group()) == float(number):
+            return True
+        # Or the whole text of the element that holds the name: <text class="rs-dim-label" x="100">120</text> is "a
+        # line with rs-dim-label and the number 120" (journey J11-G27).
+        inner = re.match(r"[^<>]*>\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*<", rest)
+        # Only when the name is not itself an attribute with a value (verifier: stroke-dashoffset="115">57.5 passed).
+        if not joined and not re.match(r"\s*[=:]", rest) and inner and float(inner.group(1)) == float(number):
             return True
     return False
 
