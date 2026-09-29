@@ -113,14 +113,19 @@ def build_instrument(name: str, spec: dict[str, Any], home: Path | None = None) 
 REASONING_EFFORTS = ('low', 'medium', 'high')
 
 
+def default_reasoning(spec: dict[str, Any]) -> str | None:
+    """The reasoning effort an instrument's settings name for every call that names none, or None."""
+    effort = spec.get("reasoning_effort")
+    return effort if effort in REASONING_EFFORTS else None
+
+
 def build_router(config: dict[str, Any], *, home: Path | None = None, **kwargs) -> Router:
     instruments = {name: build_instrument(name, spec, home) for name, spec in config["instruments"].items()}
     for name, spec in config["instruments"].items():
         # A model's own reasoning effort, used when a call names none (journey J11-B8: Nemotron 3 Super spent the
         # whole answer budget on hidden reasoning, looping to the 16,384-token cap, and each truncated answer used
         # up a try; "low" is what fixed the same model elsewhere).
-        effort = spec.get("reasoning_effort")
-        instruments[name].default_reasoning = effort if effort in REASONING_EFFORTS else None
+        instruments[name].default_reasoning = default_reasoning(spec)
     return Router(instruments, config["roles"], **kwargs)
 
 

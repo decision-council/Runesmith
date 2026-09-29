@@ -162,7 +162,7 @@ def list_models(base_url: str, key: str = "", *, kind: str = "openai", provider:
 
 def test_instrument(name: str, spec: dict[str, Any], home) -> dict[str, Any]:
     """One tiny JSON call through the kernel's own instrument, exactly as work would make it."""
-    from runesmith.config import build_instrument
+    from runesmith.config import build_instrument, default_reasoning
     if spec.get("kind") == "manual":
         return {"ok": True, "detail": "a chat-window relay has nothing to test; requests appear under Inference when work needs one"}
     try:
@@ -172,7 +172,8 @@ def test_instrument(name: str, spec: dict[str, Any], home) -> dict[str, Any]:
     started = time.monotonic()
     out = instrument.complete(prompt='Reply with the JSON object {"ok": true}.', system="Reply with JSON only.",
                               schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
-                              max_tokens=400, key=f"runesmith-test-{int(time.time())}")
+                              max_tokens=400, key=f"runesmith-test-{int(time.time())}",
+                              reasoning_effort=default_reasoning(spec))     # as work sends it (review of J11-B8)
     if out.ok:
         detail = "answered with usable JSON"
     elif out.error_kind == "config":                        # already plain words (a refused key, a missing model)

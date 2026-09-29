@@ -221,7 +221,7 @@ function drawDrafts(body, w, reload, ctx) {
   if (w.build_escalation?.kept_answer) {
     const k = w.build_escalation.kept_answer;
     body.append(h('div.callout.mt-8', icon('refresh'), h('div.grow',
-      h('b', `The one more try at ${w.build_escalation.milestone} was refused, and its answer is kept`),
+      h('b', `The one more try at ${k.milestone || w.build_escalation.milestone} was refused, and its answer is kept`),
       h('div.small', String(k.error || '').replace(/^[A-Za-z]+(Unavailable|Error): /, '')),
       k.last_recheck ? h('div.small', `Checked again ${ago(k.last_recheck.utc)}: ${String(k.last_recheck.error || '').replace(/^[A-Za-z]+(Unavailable|Error): /, '')} Checking again gives the same answer until Runesmith is updated.`) : null,
       h('div.tiny.muted', 'After an update, Runesmith may accept what it refused before. Checking it again asks no model: the kept answer goes through the same checks, and nothing is written unless they pass.')),
@@ -230,7 +230,9 @@ function drawDrafts(body, w, reload, ctx) {
         toast('Checking the kept answer again. No model is asked.','good',6000);
       })},icon('refresh'),'Check it again')));
   }
-  for (const c of (w.build_corrections || []).filter(c => c.remaining > 0 || c.can_check_again)) {
+  // A late last correction keeps its card, so it can be set aside (journey J2-F33: with no corrections left the
+  // card was hidden, and with it the only way to release the late one).
+  for (const c of (w.build_corrections || []).filter(c => c.remaining > 0 || c.can_check_again || c.late_correction)) {
     body.append(h('div.callout.warn.mt-8', icon('wrench'), h('div.grow',
       h('b', `An answer for ${c.path} could not be used`),
       h('div.small', String(c.error || 'It did not fit the files as they are.').replace(/^[A-Za-z]+(Unavailable|Error): /, '')),
@@ -251,7 +253,8 @@ function drawDrafts(body, w, reload, ctx) {
         if (!reason.trim()) { toast('Say why, for the record: nothing was changed.','warn'); return; }
         await post(`/api/build/corrections/${c.late_correction}/set-aside`,{reason});
         // The late one already counted as one of the two; setting it aside uses nothing more (review, 2026-09-28).
-        toast(`Set aside. You can ask for a correction again (${c.remaining} of 2 left).`,'good',6000);
+        toast(c.remaining > 0 ? `Set aside. You can ask for a correction again (${c.remaining} of 2 left).`
+          : 'Set aside. No corrections are left; the kept answer can still be checked again, with no model call.','good',6000);
       })},icon('x'),'Set it aside') :
       h('button.btn.sm', {disabled:!c.eligible, onclick:(e)=>withBusy(e.currentTarget,async()=>{
         const ok=await confirmDialog({title:'Ask the model to correct this answer?',

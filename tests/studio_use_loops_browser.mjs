@@ -2313,7 +2313,8 @@ try{
     loops.push({id:'B26.02',case:'A draft whose milestone a later draft finished is marked superseded, says so plainly and offers no write or recheck',result:'passed'});
     // B26.04 (journey J2-F18): a correction whose answer never arrived offers to set it aside, not a call that must fail
     const oldCorrections=fixtureWork.build_corrections;
-    fixtureWork.build_corrections=[{attempt:'a1',path:'readinglog/cli.py',error:'Exact edit refused',remaining:1,corrections:1,eligible:false,late_correction:'c0123456789ab'}];
+    // J2-F33: the late correction is the last of the two, so no correction is left; the card must still be shown.
+    fixtureWork.build_corrections=[{attempt:'a1',path:'readinglog/cli.py',error:'Exact edit refused',remaining:0,corrections:2,eligible:false,late_correction:'c0123456789ab'}];
     await page.evaluate(async()=>{window.cleanup?.();document.querySelector('#page').replaceChildren();
       const module=await import('/static/js/views/work.js');
       window.cleanup=await module.default(document.querySelector('#page'),{sub:['drafts'],app:{state:{proposals:{waiting:0},drafts:{}}},navigate(){}});});
@@ -2332,6 +2333,7 @@ try{
     await page.waitForTimeout(200);
     const aside=requests.slice(asideStart).filter(r=>r.method==='POST');
     assert.deepEqual(aside.map(r=>[r.path,r.body.reason]),[['/api/build/corrections/c0123456789ab/set-aside','waited an hour and nothing arrived']]);
+    assert(!(await page.locator('.toast').allInnerTexts()).join(' ').includes('0 of 2 left'));   // review of J2-F33
     fixtureWork.build_corrections=oldCorrections;
     loops.push({id:'B26.04',case:'A correction whose answer never arrived offers “Set it aside” with a reason, not a call that must fail',result:'passed'});
     // B26.06 (journey J11): a refused answer can be checked again with no model call, even with no corrections left

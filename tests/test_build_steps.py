@@ -595,3 +595,108 @@ def test_every_milestone_s_late_answer_is_fetched_and_one_that_arrived_is_checke
     fetched.clear()
     rows[:] = [dict(rows[0], milestone=None)]                     # an answer whose milestone is unknown holds all
     assert 'has not arrived yet' in build_step(ws, ws.router())['summary'] and fetched == ['r1']
+
+
+def test_a_build_every_model_refused_before_answering_uses_no_try(tmp_path):
+    # Review of J11-G17: a build request too large for a directly called model counted as one of the three tries.
+    from runesmith.instruments import CallOutcome
+    ws = setup(tmp_path, acceptance=True); enable(ws)
+
+    class TooLarge:
+        def call(self, *args, **kwargs):
+            return CallOutcome(False, error_kind="config", receipt={"refused_before_answer": "too_large"},
+                               error="This request needs about 20000 tokens, more than this service accepts at once.")
+    for _ in range(3):
+        with pytest.raises(Exception):
+            build_step(ws, TooLarge())
+    states = sorted(json.loads(p.read_text())['state'] for p in (ws.home / 'build-attempts').glob('*.json'))
+    assert states == ['transport_failed'] * 3
+    assert build_escalation_status(ws)['allowance']['remaining'] == 3
+
+
+def test_the_one_more_try_goes_to_a_milestone_that_has_not_used_its_own(tmp_path, monkeypatch):
+    # Journey J2-F34: m8's one more try was spent; m9's tries were used up too, but only m8's card was ever shown.
+    from runesmith.app import building
+    ws = setup(tmp_path, acceptance=True); enable(ws)
+    ready = building.ready_milestones(ws.plan())
+    assert len(ready) >= 1
+    first = ready[0]
+    second = dict(first, id='m-second', title='Second')
+    monkeypatch.setattr(building, 'ready_milestones', lambda plan: [first, second])
+    contracts = {first['id']: 'c-first', 'm-second': 'c-second'}
+    monkeypatch.setattr(building, 'milestone_contract', lambda ws, m: contracts[m['id']])
+    spent = {'c-first': [{'id': 'e1'}], 'c-second': []}
+
+    def allowance(ws, contract, snapshot):
+        return {'remaining': 0, 'used': 3, 'limit': 3, 'escalations': spent[contract], 'scope': contract, 'attempts': [], 'known': True,
+                'can_draft': False, 'blockers': [], 'snapshot_digest': snapshot, 'reuse_draft': None}
+    monkeypatch.setattr(building, 'ordinary_allowance', allowance)
+    assert building.build_escalation_status(ws)['milestone'] == 'm-second'
+    spent['c-second'] = [{'id': 'e2'}]
+    assert building.build_escalation_status(ws)['milestone'] == first['id']     # both used: the first, as before
+
+
+def test_identical_failed_scheduled_rounds_are_one_row_with_a_count():
+    # Review of batch E: a refused key uses no try, so every scheduled round failed the same way; each added a row.
+    from runesmith.app.worker import _same_waiting_round
+    failed = {'by': 'schedule', 'kind': 'build', 'result': 'failed', 'outcome': {'error': 'the key was refused'}}
+    assert _same_waiting_round(failed, dict(failed))
+    assert not _same_waiting_round(failed, dict(failed, outcome={'error': 'something else'}))
+    assert not _same_waiting_round(dict(failed, by='owner'), dict(failed, by='owner'))
+
+
+def test_a_draft_nothing_can_check_does_not_hold_the_next_milestone(tmp_path, monkeypatch):
+    # Journey J11-B11: Styles' draft had no checks and nothing to run, so its verification was "unchecked"; every build
+    # checked it again and stopped there, and Runes light, whose checks were approved, never ran.
+    from runesmith.app import building
+    ws = setup(tmp_path, acceptance=True); enable(ws)
+    first = building.ready_milestones(ws.plan())[0]
+    second = dict(first, id='m-next', title='Next')
+    monkeypatch.setattr(building, 'ready_milestones', lambda plan: [first, second])
+    calls = []
+
+    def fake_build(ws_, router, milestone, context, *, checkpoint, author_only):
+        calls.append(milestone['id'])
+        if milestone['id'] == first['id']:
+            return {'summary': 'Draft “Styles” waits for you', 'milestone': first['id']}, 'a draft waits for you'
+        return {'summary': 'Built', 'milestone': second['id'], 'advanced': True}, None
+    monkeypatch.setattr(building, '_build_milestone', fake_build)
+    assert building.build_step(ws, object())['milestone'] == second['id'] and calls == [first['id'], second['id']]
+
+
+def test_an_unchecked_draft_that_has_not_changed_is_not_checked_again(tmp_path):
+    from runesmith.app import building
+    ws = setup(tmp_path, acceptance=True)
+    milestone = building.ready_milestones(ws.plan())[0]
+    context = building.source_context(ws)
+    draft = {'id': 'd1', 'title': 'Styles', 'verification': {'status': 'unchecked', 'snapshot_digest': context['snapshot_digest'],
+             'acceptance_bundle': {n: __import__('hashlib').sha256(d).hexdigest()
+                                   for n, d in building._acceptance_files(ws, milestone['id']).items()}}}
+    result = building._unchanged_verdict(ws, draft, milestone, 'c', context, lambda: None)
+    assert result and result['unchanged'] and 'nothing can check it' in result['summary']
+
+
+def test_a_saved_draft_whose_checks_now_fail_is_still_reported(tmp_path, monkeypatch):
+    # Review of batch J: moving on past every non-advancing recheck hid a draft whose checks had just failed.
+    from runesmith.app import building
+    ws = setup(tmp_path, acceptance=True); enable(ws)
+    milestone = building.ready_milestones(ws.plan())[0]
+    context = building.source_context(ws)
+    contract = building.milestone_contract(ws, milestone)
+    pending = {'id': 'd1', 'state': 'waiting', 'contract': contract, 'snapshot_digest': context['snapshot_digest'],
+               'context_digest': context['digest'], 'public_acceptance_digest': building.expectation_digest(ws, milestone['id'])}
+    monkeypatch.setattr(ws, 'drafts', lambda: [pending])
+    monkeypatch.setattr(building, '_unchanged_verdict', lambda *a, **k: None)
+    for status, reason in (('failed', None), ('unchecked', 'a draft waits for you'), ('self_checks_passed', 'a draft waits for you')):
+        monkeypatch.setattr(building, '_check_and_record', lambda *a, status=status, **k: {
+            'draft': 'd1', 'milestone': milestone['id'], 'verification': {'status': status}, 'summary': status})
+        _, got = building._build_milestone(ws, object(), milestone, context, checkpoint=lambda: None, author_only=False)
+        assert got == reason, (status, got)
+
+
+def test_failed_rounds_with_other_parameters_are_not_merged():
+    from runesmith.app.worker import _same_waiting_round
+    failed = {'by': 'schedule', 'kind': 'propose_acceptance', 'result': 'failed', 'params': {'milestone': 'm1'},
+              'outcome': {'error': 'every model is busy'}}
+    assert _same_waiting_round(failed, dict(failed))
+    assert not _same_waiting_round(failed, dict(failed, params={'milestone': 'm2'}))

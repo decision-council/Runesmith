@@ -56,8 +56,14 @@ def gates(proposal) -> list[str]:
         if check.get('unstated'):
             found.append(f"{check['test']} requires exact text its sentence does not say: "
                          + ', '.join(json.dumps(t, ensure_ascii=False) for t in check['unstated']))
-        if check.get('passes_today'):
-            found.append(f"{check['test']} already passes on the project as it is, so it may not test what the milestone adds")
+        # A single check that passes today is not a finding on its own: "without a style the picture stays as it
+        # is" passes today by design. Held against it, the Checker rewrote that right check into a wrong one so it
+        # would fail today (journey J11-G18). The set must still fail today somewhere (above), and the second
+        # model's cross-check judges every check.
+    for note in proposal.get('dropped') or []:
+        # A file check reduced to "the file exists" checks far less than its sentence says (review of J11-G19).
+        if isinstance(note, str) and 'checked instead that it exists' in note:
+            found.append(f'{note}: only that the file exists is checked, not what it should or should not contain')
     revision = proposal.get('revision') or {}
     if revision.get('error') and revision.get('after') != 'unusable':
         found.append('the revision Runesmith asked for did not work')
@@ -79,7 +85,11 @@ def _command(step) -> str:
     return ' '.join(step.get('run') or [])
 
 
-def questions(proposal) -> list[dict[str, Any]]:
+DECOY_WORDS = ('violet walrus', 'paper comet', 'amber otter', 'silent tuba', 'velvet anchor', 'copper giraffe',
+               'frozen trumpet', 'woolly lantern')
+
+
+def questions(proposal, context: str = '') -> list[dict[str, Any]]:
     """What the checks expect, as questions a second model answers without seeing the expected values.
 
     Each yes-or-no question comes with its negation ("must contain" and "must leave out"): a second model that says
@@ -149,10 +159,37 @@ def questions(proposal) -> list[dict[str, Any]]:
                 decoy = decoy or (test, f'After the steps, must the file {files["name"]} contain')
                 both(test, f'After the steps, must the file {files["name"]} contain “{text}”?',
                      f'After the steps, must the file {files["name"]} leave out “{text}”?')
+        for line in example.get('file_lines') or []:      # journey J11-G21: the number, with its "add 7" twin
+            pair = f'p{len(units) + 1}'
+            asked_about = f'After the steps, in the file {line["name"]}, which number comes first after “{line["has"]}”?'
+            twins([row(test, 'number', asked_about + ' Answer with that number only.', line['number'], pair),
+                   row(test, 'number', asked_about + ' Add 7 to it and answer with the result only.',
+                       float(line['number']) + 7, pair, twin=True)])
+        for files in example.get('lacks') or []:          # journey J11-G19
+            for text in files.get('texts') or []:
+                decoy = decoy or (test, f'After the steps, must the file {files["name"]} contain')
+                both(test, f'After the steps, must the file {files["name"]} leave out “{text}”?',
+                     f'After the steps, must the file {files["name"]} contain “{text}”?')
+    for check in proposal.get('checks') or []:
+        # A check that already passes today is kept only when the milestone requires it, as "without a style the
+        # picture stays as it is" does (journey J11-G18; review: dropped outright, a check that passes today by
+        # accident went unexamined). A yes-sayer or a no-sayer answers both the same way and is not counted.
+        if check.get('passes_today') and isinstance(check.get('says'), str) and check['says'].strip():
+            said = check['says'].strip()[:300]
+            both(check['test'], f'Does the milestone require this, which the project already does today: “{said}”?',
+                 f'Could a project meet the milestone without this: “{said}”?', about='unchanged')
     if decoy and units:
         # One question whose honest answer is always "no", about a command or, for checks on files only, a file
         # (final autopilot check: checks without steps had none).
-        token = 'rs-' + hashlib.sha256(json.dumps(proposal.get('examples'), sort_keys=True, default=str).encode('utf-8')).hexdigest()[:10]
+        # Two plainly unrelated words, never the project's own vocabulary (journey J11-G20: "rs-" and hex digits looked
+        # like this project's own SVG ids, rs-light and rs-glow, and the second model said yes to it).
+        digest = hashlib.sha256(json.dumps(proposal.get('examples'), sort_keys=True, default=str).encode('utf-8')).hexdigest()
+        # What the second model reads: the examples, and the milestone and other checks (review of J11-G20).
+        seen = (json.dumps(proposal.get('examples'), ensure_ascii=False, default=str) + ' ' + context).lower()
+        start = int(digest[:8], 16)
+        pairs = [DECOY_WORDS[(start + i) % len(DECOY_WORDS)] for i in range(len(DECOY_WORDS))]
+        words = min(pairs, key=lambda w: sum(bool(re.search(r'\b' + re.escape(part) + r'\b', seen)) for part in w.split()))
+        token = f'{words} {digest[:4]}'
         ask(decoy[0], 'word', f'{decoy[1]} “{token}”? Answer "yes" or "no".', 'no', about='decoy')
     ordered = [r for unit in sorted(units, key=lambda unit: hashlib.sha256(unit[0]['question'].encode('utf-8')).hexdigest())
                for r in unit]
@@ -251,7 +288,13 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
     name = second_model(ws, proposal.get('drafted_by'))
     if name is None:
         return {'undecided': 'there is no second model to cross-check with (add another under Thinking power)'}
-    asked = questions(proposal)
+    from runesmith.app.acceptance_proposals import _milestone, _other_checks
+    try:
+        context = json.dumps({'milestone': {k: _milestone(ws, milestone_id).get(k) for k in ('title', 'detail', 'done_when')},
+                              'others': _other_checks(ws, milestone_id)}, ensure_ascii=False, default=str)
+    except Exception:                               # the decoy then avoids only the examples' own words
+        context = ''
+    asked = questions(proposal, context)
     if not asked:
         return {'undecided': 'the checks expect nothing that can be worked out by hand'}
     if all(row['about'] in ('exit', 'decoy') for row in asked):
@@ -268,6 +311,9 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
     if not out.ok or not isinstance(out.data, dict):
         return {'undecided': f'the cross-check answer was unusable ({(out.error or "no JSON")[:160]})', 'model': name}
     answers = {str(a.get('id')): a.get('answer') for a in out.data.get('answers') or [] if isinstance(a, dict)}
+    # Kept with the decision, so the owner can see what was asked and answered (journey J11-F15).
+    record = [{'test': row['test'], 'question': row['question'][:300], 'expected': row['expected'],
+               'answer': str(answers.get(row['id']))[:160]} for row in asked][:40]
     model = out.receipt.get('answered_by') or out.receipt.get('model') or name
     judged = {row['id']: agrees(row, answers.get(row['id'])) for row in asked}
     unclear = [row for row in asked if judged[row['id']] is None]
@@ -286,21 +332,23 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
     if unclear or blind or fooled:
         return {'undecided': f'{model} gave no clear judgement ({len(unclear)} unclear answers, {len(blind)} questions '
                              'answered the same way as their opposite' + (', and it said yes to a text nothing asks for'
-                                                                          if fooled else '') + ')', 'model': model}
+                                                                          if fooled else '') + ')', 'model': model,
+                'answers': record}
     disagreements = [f"{row['test']}: {row['question']} The checks expect {row['expected']}; {model} worked out "
                      f"{answers.get(row['id'])}." for row in asked
                      if judged[row['id']] is False and row['about'] != 'decoy' and not row['twin']]
     said = out.data.get('contradicts')
     contradicts = (str(out.data.get('contradiction') or 'yes, without saying which').strip()[:400] if said is True
                    else None if said is False else _contradiction(said))
-    return {'model': model, 'asked': len(asked), 'disagreements': disagreements, 'contradicts': contradicts}
+    return {'model': model, 'asked': len(asked), 'disagreements': disagreements, 'contradicts': contradicts,
+            'answers': record}
 
 
 def rounds_used(ws, milestone_id) -> int:
     """Proposals the autopilot turned down since the last approval of this milestone's checks."""
-    from runesmith.app.acceptance_proposals import _record_path
+    from runesmith.app.acceptance_proposals import _proposal_rows
     used = 0
-    for row in reversed(_read_json(_record_path(ws, milestone_id), {'proposals': []}).get('proposals') or []):
+    for row in reversed(_proposal_rows(ws, milestone_id)):
         if row.get('state') in ('approved', 'replaced'):
             break
         used += (row.get('autopilot') or {}).get('decision') == 'turned_down'
@@ -338,12 +386,12 @@ def review(ws, milestone_id, proposal) -> dict[str, Any]:
 
 def needs_checks(ws) -> str | None:
     """A ready milestone with no checks and nothing proposed or waiting, which the autopilot may ask for."""
-    from runesmith.app.acceptance_proposals import acceptance_file, _record_path
+    from runesmith.app.acceptance_proposals import acceptance_file, _proposal_rows
     from runesmith.app.planner import ready_milestones
     for milestone in ready_milestones(ws.plan()):
         if acceptance_file(ws, milestone['id']).is_file():
             continue
-        proposals = _read_json(_record_path(ws, milestone['id']), {'proposals': []}).get('proposals') or []
+        proposals = _proposal_rows(ws, milestone['id'])
         if any(p.get('state') == 'proposed' for p in proposals):
             continue
         if rounds_used(ws, milestone['id']) >= MAX_ROUNDS:
@@ -358,14 +406,15 @@ def act(ws, milestone_id, proposal, verdict) -> tuple[str, str]:
     Returns (what it did, the decision carried out: approve, turn_down, owner or none). The owner may have decided
     while the cross-check ran; then the autopilot stands aside (review of the autopilot).
     """
-    from runesmith.app.acceptance_proposals import _record_path, acceptance_file, approve, discard, note_autopilot
-    current = next((row for row in _read_json(_record_path(ws, milestone_id), {'proposals': []}).get('proposals') or []
+    from runesmith.app.acceptance_proposals import _proposal_rows, acceptance_file, approve, discard, note_autopilot
+    current = next((row for row in _proposal_rows(ws, milestone_id)
                     if row.get('id') == proposal['id']), None)
     if not current or current.get('state') != 'proposed':
         return 'You decided about these checks meanwhile; the autopilot left them alone.', 'none'
     note = {k: verdict.get(k) for k in ('decision', 'reason', 'findings') if verdict.get(k)}
     if verdict.get('cross_check'):
-        note['cross_check'] = {k: verdict['cross_check'].get(k) for k in ('model', 'asked', 'contradicts') if k in verdict['cross_check']}
+        note['cross_check'] = {k: verdict['cross_check'].get(k) for k in ('model', 'asked', 'contradicts', 'answers')
+                               if k in verdict['cross_check']}
     note_autopilot(ws, milestone_id, proposal['id'], dict(note, decision={'approve': 'approved', 'turn_down': 'turned_down',
                                                                           'owner': 'left_for_owner'}[verdict['decision']], utc=_now()))
     if verdict['decision'] == 'approve':

@@ -218,12 +218,28 @@ def _other_checks(ws, milestone_id, limit=6000) -> list[dict[str, Any]]:
     return rows
 
 
+def _record(ws, milestone_id, default=None) -> dict[str, Any]:
+    """A milestone's proposal record with only well-formed rows (reviews of J11-G16: one malformed row made every
+    reader fail, the schedule's among them). A row that is not a proposal is left out, also when the record is
+    written back."""
+    fresh = dict(default) if default else {'proposals': []}
+    record = _read_json(_record_path(ws, milestone_id), fresh)
+    record = record if isinstance(record, dict) else fresh
+    rows = record.get('proposals')
+    record['proposals'] = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    return record
+
+
+def _proposal_rows(ws, milestone_id) -> list[dict[str, Any]]:
+    return _record(ws, milestone_id)['proposals']
+
+
 def _owner_reasons(ws, milestone_id, limit=3) -> list[str]:
     """What the owner said when turning down or replacing earlier checks for this milestone, newest first. Asked
     again, the Checker was never told (journey J11-G14: "x goes from 0 to 100 over 2 seconds, so at 1 second it is
     50, not 1")."""
     said = []
-    for row in reversed(_read_json(_record_path(ws, milestone_id), {'proposals': []}).get('proposals') or []):
+    for row in reversed(_proposal_rows(ws, milestone_id)):
         reason = row.get('reason') if row.get('state') == 'discarded' else row.get('replace_reason')
         if isinstance(reason, str) and reason.strip() and reason.strip()[:600] not in said:
             said.append(reason.strip()[:600])
@@ -238,7 +254,7 @@ def _owner_reasons_elsewhere(ws, milestone_id, limit=3) -> list[dict[str, str]]:
     for other in (ws.plan() or {}).get('milestones', []):
         if other.get('id') == milestone_id or not isinstance(other.get('id'), str) or not MILESTONE_ID.fullmatch(other['id']):
             continue
-        for row in _read_json(_record_path(ws, other['id']), {'proposals': []}).get('proposals') or []:
+        for row in _proposal_rows(ws, other['id']):
             reason = row.get('reason') if row.get('state') == 'discarded' else row.get('replace_reason')
             if isinstance(reason, str) and reason.strip():
                 said.append((str(row.get('discarded_utc') or row.get('approved_utc') or row.get('utc') or ''),
@@ -296,8 +312,9 @@ def _bounded(answer, limit=40000):
 
 def _turned_away(error) -> bool:
     """Whether every model refused the request before generating anything, so asking again spends nothing."""
-    receipt = getattr(error.__cause__, 'receipt', None) or {}
-    return bool(receipt.get('no_route_accepted') or receipt.get('not_admitted'))
+    receipt = getattr(error, 'receipt', None) or getattr(error.__cause__, 'receipt', None) or {}
+    return bool(receipt.get('no_route_accepted') or receipt.get('not_admitted')
+                or receipt.get('refused_before_answer') == 'too_large')
 
 
 def _ask(router, request, style, key):
@@ -312,7 +329,9 @@ def _ask(router, request, style, key):
     if isinstance(out.data, dict) and out.data.get('skipped_by_owner'):
         raise SkippedByOwner('you skipped the request, so nothing changed')
     if not out.ok and out.error_kind == "config":
-        raise PlannerUnavailable(out.error or "the model service refused this request")
+        failure = PlannerUnavailable(out.error or "the model service refused this request")
+        failure.receipt = dict(out.receipt or {})          # a model called directly may have refused it as too large
+        raise failure
     if not out.ok:
         raise PlannerUnavailable(f"the model's answer was not usable: {(out.error or 'no JSON')[:200]}")
     return out
@@ -325,7 +344,7 @@ def status(ws) -> dict[str, Any]:
         mid = milestone.get('id')
         if not isinstance(mid, str) or not MILESTONE_ID.fullmatch(mid):
             continue
-        record = _read_json(_record_path(ws, mid), {'proposals': []})
+        record = _record(ws, mid)
         file = acceptance_file(ws, mid)
         approved = None
         if file.is_file():
@@ -361,7 +380,7 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
     text = json.dumps(data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
     path = _record_path(ws, milestone_id)
-    record = _read_json(path, {'milestone': milestone_id, 'proposals': []})
+    record = _record(ws, milestone_id, {'milestone': milestone_id, 'proposals': []})
     for old in record['proposals']:
         if old.get('input_sha256') == digest and old.get('state') == 'proposed':
             return old                                  # an unchanged request reuses the waiting answer
@@ -572,7 +591,7 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
         raise WorkspaceError('Checks are approved by the owner or by the check autopilot.')
     _milestone(ws, milestone_id)
     path = _record_path(ws, milestone_id)
-    record = _read_json(path, {'proposals': []})
+    record = _record(ws, milestone_id)
     proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
     if proposal is None or proposal.get('state') != 'proposed':
         raise WorkspaceError('That proposal is not waiting for approval.')
@@ -617,7 +636,7 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
 def note_autopilot(ws, milestone_id, proposal_id, note) -> None:
     """What the check autopilot decided about a proposal, kept with it for the owner to read."""
     path = _record_path(ws, milestone_id)
-    record = _read_json(path, {'proposals': []})
+    record = _record(ws, milestone_id)
     proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
     if proposal is None:
         raise WorkspaceError('Unknown proposal.')
@@ -629,7 +648,7 @@ def note_autopilot(ws, milestone_id, proposal_id, note) -> None:
 
 def discard(ws, milestone_id, proposal_id, *, reason: str = '') -> dict[str, Any]:
     path = _record_path(ws, milestone_id)
-    record = _read_json(path, {'proposals': []})
+    record = _record(ws, milestone_id)
     proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
     if proposal is None or proposal.get('state') != 'proposed':
         raise WorkspaceError('That proposal is not waiting for approval.')

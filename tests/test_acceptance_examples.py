@@ -683,7 +683,8 @@ def test_file_checks_inside_a_step_and_too_many_texts_are_forgiven():
     example = shaped["examples"][0]
     assert example["exists"] == ["out.svg"] and example["steps"][0].get("expect") is None
     assert any("1 more texts to find in out.svg" in d for d in shaped["dropped"])
-    assert any("does not contain some text" in d for d in shaped["dropped"])
+    # J11-G19: a "hides" naming a file is a "lacks" check; "<circle" is not in the milestone, so it is dropped as unstated
+    assert any("leaves out" in d and "<circle" in d for d in shaped["dropped"]) and example.get("lacks") == []
     assert answer["examples"][0]["steps"][0]["expect"]["exists"] == ["out.svg"]          # the answer itself is kept
 
 
@@ -732,3 +733,154 @@ def test_a_check_request_every_model_turned_away_is_asked_once_more_smaller(tmp_
     monkeypatch.setattr(proposals, "_ask", ask)
     proposal = propose(ws, ws.router(), "m1")
     assert proposal["checks"] and [k.endswith("-lean") for k, _ in asked] == [False, True]
+
+
+def test_a_malformed_record_of_another_milestone_does_not_stop_proposing(tmp_path):
+    # Review of J11-G16: one record with a row that is not a proposal made packet() fail for every milestone.
+    from runesmith.app.acceptance_proposals import _record_path, packet
+    ws = workspace(tmp_path, [EXAMPLES])
+    ws.add_milestone("Second part", "Another milestone.", "", "It works.")
+    second = next(m["id"] for m in ws.plan()["milestones"] if m["title"] == "Second part")
+    path = _record_path(ws, second)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"proposals": [None, "oops", {"state": "discarded", "reason": "Check the file."}]}),
+                    encoding="utf-8")
+    assert packet(ws, "m1", "examples")["owner_said_about_other_milestones_checks"][0]["said"] == "Check the file."
+    path.write_text(json.dumps(["not", "a", "record"]), encoding="utf-8")
+    assert packet(ws, "m1", "examples")["owner_said_about_other_milestones_checks"] == []
+
+
+def test_a_check_request_too_large_for_a_directly_called_model_is_asked_again_smaller(tmp_path):
+    # Review of J11-G17: the smaller retry covered only the gateway's refusals, not Groq called directly.
+    from runesmith.app import acceptance_proposals as proposals
+    from runesmith.instruments import OpenAICompatInstrument, Router
+    small = OpenAICompatInstrument("groq", "openai/gpt-oss-120b", base_url="http://groq.invalid/openai/v1",
+                                   transport=lambda *args: (500, {}), max_request_tokens=1000)
+    router = Router({"groq": small}, {"acceptance": ["groq"]}, backoff_s=())
+    with pytest.raises(proposals.PlannerUnavailable) as caught:
+        proposals._ask(router, {"x": "y" * 9000}, "examples", "k")
+    assert proposals._turned_away(caught.value) and "tokens" in str(caught.value)
+
+
+LACKS = {"examples": [
+    {"name": "no draft marks", "says": "After adding an entry, tally.json holds no DRAFT mark.",
+     "steps": [add("Tea", "2026-01-05"), {"run": T + ["list"], "expect": {"shows": ["Tea"]}}],
+     "lacks": [{"name": "tally.json", "texts": ["DRAFT", "banana split"]}]}]}
+
+
+def test_a_file_that_must_not_contain_a_text_is_checked(tmp_path):
+    # Journey J11-G19: "with no style there is no rs-bg in out.svg" could not be said, so the Checker put the text
+    # that must be absent under "contains", the opposite of its own sentence.
+    from runesmith.app.acceptance_examples import TASK, SCHEMA
+    assert '"lacks"' in TASK and "lacks" in json.dumps(SCHEMA)
+    ws = workspace(tmp_path, [LACKS])
+    ws.update_milestone("m1", {"detail": MILESTONE + " The saved tally.json never holds a DRAFT mark."})
+    proposal = propose(ws, ws.router(), "m1")
+    example = proposal["examples"][0]
+    assert example["lacks"] == [{"name": "tally.json", "texts": ["DRAFT"]}]      # "banana split" is not stated
+    assert "leaves out" in proposal["checks"][0]["exact"] and "DRAFT" in proposal["checks"][0]["exact"]
+    assert 'for row in example.get("lacks", [])' in proposal["code"]
+    assert proposal["dry_run"]["verdict"] in ("passes_now", "fails_now", "broken")
+
+
+def test_a_hides_naming_a_file_becomes_a_lacks_check():
+    from runesmith.app.acceptance_examples import _lifted
+    dropped = []
+    row, steps = _lifted({"name": "x"}, [{"run": ["node", "m.mjs"], "expect": {
+        "exit": "ok", "hides": ["Error", {"name": "out.svg", "texts": ["rs-bg"]}]}}], "Example 1", dropped)
+    assert row["lacks"] == [{"name": "out.svg", "texts": ["rs-bg"]}] and steps[0]["expect"]["hides"] == ["Error"]
+    assert dropped == []
+
+
+def test_an_expect_next_to_the_steps_is_read_not_ignored():
+    # Journey J11-B10: Runes light's checks put their expectations in an "expect" next to "steps"; nothing read it and
+    # nothing said so, so both checks only ran the program.
+    milestone = ('Runes light: node motion.mjs FILE --at 0 --svg out.svg writes out.svg containing id="rs-light"; '
+                 'other styles have no rs-light.')
+    answer = {"examples": [
+        {"name": "glow", "says": "With the runes style out.svg has the light gradient.",
+         "files": [{"name": "t.motion.json", "text": "{}"}],
+         "steps": [{"run": ["node", "motion.mjs", "t.motion.json", "--at", "0", "--svg", "out.svg"]}],
+         "expect": {"contains": [{"name": "out.svg", "texts": ['id="rs-light"']}],
+                    "hides": [{"name": "out.svg", "texts": ["rs-light-2"]}, "Error"]},
+         "priority": "high"}]}
+    shaped = validate_examples(answer, milestone)
+    example = shaped["examples"][0]
+    assert example["contains"] == [{"name": "out.svg", "texts": ['id="rs-light"']}]
+    # the output text "Error" reached its step, where it is dropped as unstated, and said
+    assert any("Error" in d for d in shaped["dropped"]) and any("rs-light-2" in d for d in shaped["dropped"])
+    assert any('"priority" is not something these checks read' in d for d in shaped["dropped"])
+    files_only = {"examples": [{"name": "doc", "says": "The guide exists.", "expect": {"exists": ["GUIDE.md"]}}]}
+    assert validate_examples(files_only, "A GUIDE.md")["examples"][0]["exists"] == ["GUIDE.md"]
+
+
+def test_the_number_after_a_name_in_a_file_is_checked():
+    # Journey J11-G21: 'stroke-dashoffset="57.5"' was dropped as an unstated layout, so the self-drawing rune's three
+    # checks never looked at its offset and would pass a rune that never draws.
+    milestone = ('One rune: at --at 0 out.svg has a line with stroke-dashoffset and 115; at --at 1 the number 57.5. '
+                 'node motion.mjs FILE --at SECONDS --svg out.svg writes out.svg.')
+    answer = {"examples": [{"name": "half", "says": "At 1 s the rune is half drawn.",
+                            "files": [{"name": "r.motion.json", "text": "{}"}],
+                            "steps": [{"run": ["node", "motion.mjs", "r.motion.json", "--at", "1", "--svg", "out.svg"]}],
+                            "contains": [{"name": "out.svg", "texts": ['stroke-dashoffset="57.5"']}]}]}
+    shaped = validate_examples(answer, milestone)
+    example = shaped["examples"][0]
+    assert example["file_lines"] == [{"name": "out.svg", "has": "stroke-dashoffset", "number": 57.5}]
+    assert "first number after" in shaped["checks"][0]["exact"] and "57.5" in shaped["checks"][0]["exact"]
+    assert any("checked instead" in d for d in shaped["dropped"])
+    explicit = {"examples": [dict(answer["examples"][0], contains=[],
+                                  file_lines=[{"name": "out.svg", "has": "stroke-dashoffset", "number": 57.5}])]}
+    assert validate_examples(explicit, milestone)["examples"][0]["file_lines"][0]["number"] == 57.5
+
+
+def test_the_template_reads_the_first_number_after_the_name():
+    from runesmith.app.acceptance_examples import HARNESS
+    scope = {}
+    source = HARNESS[HARNESS.index("def number_after"):HARNESS.index("def number_on_line")]
+    exec("import re\n" + source, scope)
+    after = scope["number_after"]
+    svg = '<path stroke-dasharray="115" stroke-dashoffset="57.5"/>\n<path stroke-dashoffset="57.5" d="M20,60"/>'
+    assert after("stroke-dashoffset", 57.5, svg) and not after("stroke-dashoffset", 115, svg)
+    assert not after("stroke-dashoffset", 57.5, '<path stroke-dashoffset="115"/> 57.5')
+    assert not after("stroke", 57.5, svg)                    # "stroke-dasharray" is not "stroke" followed by a number
+
+
+def test_a_text_to_remove_may_be_one_only_the_project_has_and_a_joined_name_is_another_name():
+    # Review of J11-G19: "remove the leftover debug banner" lost its text (only the source has it) and became "the file
+    # exists"; and "no rs-bg" failed a correct build with "rs-bg-2".
+    from runesmith.app.acceptance_examples import HARNESS, _ground
+    example = {"steps": [], "files": [], "exists": [], "contains": [], "unchanged": [],
+               "lacks": [{"name": "report.txt", "texts": ["DEBUG BUILD - DO NOT SHIP"]}]}
+    _ground(example, "Remove the leftover debug banner from the report.", "BANNER = 'DEBUG BUILD - DO NOT SHIP'")
+    assert example["lacks"] == [{"name": "report.txt", "texts": ["DEBUG BUILD - DO NOT SHIP"]}] and example["exists"] == []
+    scope = {}
+    exec("import re\n" + HARNESS[HARNESS.index("def found_whole"):HARNESS.index("def number_after")], scope)
+    whole = scope["found_whole"]
+    assert not whole("rs-bg", '<rect class="rs-bg-2"/>') and whole("rs-bg", '<rect class="rs-bg"/>')
+    assert whole('class="rs-bg"', '<rect class="rs-bg"/>')
+
+
+def test_a_rescued_number_must_be_stated_and_an_unreadable_expect_is_said():
+    # Review of J11-G21: 'width="9999"' became a requirement though only the name "width" was stated anywhere.
+    milestone = 'node motion.mjs FILE --at 1 --svg out.svg writes out.svg; at 1 s its stroke-dashoffset is 57.5.'
+    base = {"name": "e", "says": "At 1 s.", "files": [{"name": "r.motion.json", "text": '{"width": 200}'}],
+            "steps": [{"run": ["node", "motion.mjs", "r.motion.json", "--at", "1", "--svg", "out.svg"]}]}
+    invented = validate_examples({"examples": [dict(base, contains=[{"name": "out.svg", "texts": ['width="9999"']}])]}, milestone)
+    assert not invented["examples"][0].get("file_lines")
+    stated = validate_examples({"examples": [dict(base, contains=[{"name": "out.svg", "texts": ['stroke-dashoffset="57.5px"']}])]}, milestone)
+    assert stated["examples"][0]["file_lines"] == [{"name": "out.svg", "has": "stroke-dashoffset", "number": 57.5}]
+    # Review of J11-B10: an "expect" that is not an object, or whose output checks have no single program step, is said
+    odd = validate_examples({"examples": [dict(base, expect="contains rs-light")]}, milestone)
+    assert any("could not be read" in d for d in odd["dropped"])
+    two = dict(base, steps=base["steps"] * 2, expect={"shows": ["57.5"], "contains": [{"name": "out.svg", "texts": ["<svg"]}]})
+    shaped = validate_examples({"examples": [two]}, milestone)
+    assert any("inside the step it is about" in d for d in shaped["dropped"]) and shaped["examples"][0]["contains"]
+
+
+def test_the_number_after_a_name_is_not_read_inside_a_longer_name():
+    from runesmith.app.acceptance_examples import HARNESS
+    scope = {}
+    exec("import re\n" + HARNESS[HARNESS.index("def number_after"):HARNESS.index("def number_on_line")], scope)
+    after = scope["number_after"]
+    assert not after("stroke-dashoffset", 57.5, '<path data-stroke-dashoffset="57.5" stroke-dashoffset="115"/>')
+    assert after("stroke-dashoffset", 57.5, '<path style="stroke-dashoffset: 5.75e1px"/>')

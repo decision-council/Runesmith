@@ -164,3 +164,51 @@ def test_a_model_s_own_reasoning_effort_is_sent_when_the_call_names_none(tmp_pat
     assert 'high' in [effort(b) for b in bodies]      # the call's own wins
     nothing = build_router({'instruments': {'s': dict(spec, reasoning_effort='maximum')}, 'roles': {'plan': ['s']}}, backoff_s=())
     assert nothing.instruments['s'].default_reasoning is None                                       # unknown values ignored
+
+
+def test_a_request_too_large_for_a_directly_called_model_moves_on_to_the_next_one():
+    # Review of J11-G17: Groq called directly refused a request as too large for its 8,000 tokens a minute before
+    # sending it, and the role's next model was never asked.
+    from runesmith.instruments import OpenAICompatInstrument, ScriptedInstrument
+    sent = []
+
+    def transport(*args):
+        sent.append(args)
+        return 200, {"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}]}
+    small = OpenAICompatInstrument("groq", "openai/gpt-oss-120b", base_url="http://groq.invalid/openai/v1",
+                                   transport=transport, max_request_tokens=1000)
+    events = []
+    router = Router({"groq": small, "next": ScriptedInstrument("next", [ANSWER])}, {"plan": ["groq", "next"]},
+                    backoff_s=(), on_call=events.append)
+    outcome = router.call("plan", prompt="p" * 9000, system="s", schema=None, max_tokens=10, key="k")
+    assert outcome.ok and outcome.data == ANSWER and not sent and [e["instrument"] for e in events] == ["groq", "next"]
+    alone = Router({"groq": small}, {"plan": ["groq"]}, backoff_s=()).call("plan", prompt="p" * 9000, system="s",
+                                                                          schema=None, max_tokens=10, key="k2")
+    assert not alone.ok and alone.error_kind == "config" and alone.receipt["refused_before_answer"] == "too_large"
+
+
+def test_a_model_that_refused_for_good_is_not_asked_again_and_its_refusal_is_named():
+    # Review of batch E: with [bad key, flaky], every backoff tier asked the bad key again, and the final error named
+    # only the flaky one's network failure.
+    from runesmith.instruments import CallOutcome, ScriptedInstrument
+    asked = []
+
+    class BadKey(ScriptedInstrument):
+        def complete(self, **kwargs):
+            asked.append("bad")
+            return CallOutcome(False, error_kind="config", receipt={"refused_before_answer": "refused"},
+                               error="The service refused the key (401). Check it, or paste it again, under Thinking power.")
+
+    class Flaky(ScriptedInstrument):
+        def complete(self, **kwargs):
+            asked.append("flaky")
+            return CallOutcome(False, error_kind="transport", error="URLError: connection refused")
+    router = Router({"bad": BadKey("bad", []), "flaky": Flaky("flaky", [])}, {"plan": ["bad", "flaky"]},
+                    backoff_s=(0, 0, 0), sleep=lambda _: None)
+    with pytest.raises(TransportCensored) as caught:
+        router.call("plan", prompt="p", system="s", schema=None, max_tokens=10, key="k")
+    assert asked.count("bad") == 1 and asked.count("flaky") == 4
+    assert "refused the key" in str(caught.value)
+    alone = Router({"bad": BadKey("bad", [])}, {"plan": ["bad"]}, backoff_s=(0, 0), sleep=lambda _: None)
+    outcome = alone.call("plan", prompt="p", system="s", schema=None, max_tokens=10, key="k2")
+    assert outcome.error_kind == "config" and "refused the key" in outcome.error

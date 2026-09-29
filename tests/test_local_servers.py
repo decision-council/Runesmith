@@ -123,6 +123,7 @@ def test_groq_free_windows_are_respected_before_and_after_sending():
         unchecked = build_instrument("g", dict(spec, max_request_tokens=None))
         too_large = routed(unchecked).call("plan", prompt=BIG, system="s", schema=SCHEMA, max_tokens=3000, key="k")
         assert not too_large.ok and too_large.error_kind == "config" and len(server.requests) == 1
+        assert refused.receipt["refused_before_answer"] == too_large.receipt["refused_before_answer"] == "too_large"
         server.requests.clear()
         busy_then_fine = routed(unchecked).call("plan", prompt="p", system="s", schema=SCHEMA, max_tokens=100, key="k2")
         assert busy_then_fine.ok and len(server.requests) == 2          # a 429 is waited out, a 413 is not

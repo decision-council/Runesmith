@@ -69,8 +69,12 @@ def _same_waiting_round(last, done) -> bool:
     """A scheduled round that ended exactly like the one before, having advanced nothing (for example, every try
     for a step used up, or the same draft still waiting for checks): recorded as one row with a count. A new draft
     has a new id, so its outcome never equals the one before."""
+    # A scheduled round that failed exactly like the one before counts too (review of J11-G17: a refused key or a
+    # request too large for every model uses no try, so each round failed the same way and pushed real work out).
     return (isinstance(last, dict) and last.get('by') == done.get('by') == 'schedule'
-            and last.get('kind') == done.get('kind') and last.get('result') == done.get('result') == 'done'
+            and last.get('kind') == done.get('kind') and last.get('params') == done.get('params')
+            and last.get('result') == done.get('result')
+            and done.get('result') in ('done', 'failed')
             and last.get('outcome') == done.get('outcome') and not (done.get('outcome') or {}).get('advanced'))
 
 
@@ -504,6 +508,17 @@ class Worker:
                             self._set('blocked', str(error))
                             self._cv.wait(timeout=30.0)
                             continue
+                        except Exception as error:          # never end the worker thread (review of J11-G16)
+                            try:
+                                (self.ws.home / 'logs').mkdir(parents=True, exist_ok=True)
+                                with open(self.ws.home / 'logs' / 'worker-errors.log', 'a', encoding='utf-8', newline='\n') as stream:
+                                    stream.write(f"{_now()} choosing scheduled work\n{traceback.format_exc()}\n")
+                            except OSError:                 # the log is best effort (review of batch H)
+                                pass
+                            self._set('blocked', f'The schedule could not choose the next step ({type(error).__name__}: '
+                                                 f'{str(error)[:200]}). Activity has the details.')
+                            self._cv.wait(timeout=30.0)
+                            continue
                         job = {"id": uuid.uuid4().hex, "kind": kind, "params": params, "queued": _now(), "by": "schedule"}
                         break
                     self._cv.wait(timeout=min(30.0, due) if due is not None else 30.0)
@@ -565,7 +580,9 @@ class Worker:
             with open(self.ws.home / "logs" / "worker-errors.log", "a", encoding="utf-8", newline="\n") as stream:
                 stream.write(f"{_now()} {job['kind']}\n{traceback.format_exc()}\n")
         finally:
-            if job['kind'] in {'build', 'mode'}:
+            # A scheduled check request moves the schedule on like a build (journey J11-B9: it did not, so while every
+            # free model was busy the autopilot asked again as soon as the last request failed, six times in 2.5 min).
+            if job['kind'] in {'build', 'mode'} or (job['kind'] == 'propose_acceptance' and job.get('by') == 'schedule'):
                 _write_json(self.ws.home / 'WORK.json', {'utc':_now(), 'kind':job['kind'], 'result':result})
             done = dict(job, finished=_now(), seconds=round(time.monotonic() - started, 1), result=result,
                         outcome={k: v for k, v in outcome.items() if k in ("summary", "error", "detail", "objects",
@@ -723,7 +740,9 @@ class Worker:
         def checkpoint():
             self._work_checkpoint()
             if self._stop_after_step or self._closing or self.paused: raise StopRequested()
-        self._set('planning', 'Proposing acceptance checks for a milestone (you approve them)')
+        autopilot_on = bool(self.ws.settings().get('checks_autopilot'))       # read once: wording and decision agree
+        self._set('planning', 'Proposing acceptance checks for a milestone ('
+                  + ('the check autopilot reviews them' if autopilot_on else 'you approve them') + ')')   # J11-F13
         self.say('Asking the planner model to propose acceptance checks from the milestone’s own words')
         proposal = propose(self.ws, self.ws.router(on_call=self._on_call, backoff_s=()), milestone, checkpoint=checkpoint)
         self.bus.publish('plan', {'acceptance': proposal['id']})
@@ -738,7 +757,7 @@ class Worker:
                      'would fail on a correct build too.')
         revised = ' Revised once after Runesmith tried and read them.' if proposal.get('revision') and not proposal['revision'].get('error') else ''
         head = f"Proposed {len(proposal['checks'])} acceptance checks for {milestone}.{revised}{trial}"
-        if self.ws.settings().get('checks_autopilot') and proposal.get('state') == 'proposed':
+        if autopilot_on and proposal.get('state') == 'proposed':
             from runesmith.app import acceptance_autopilot
             self._set('planning', 'The check autopilot is reviewing the proposed checks')
             verdict = acceptance_autopilot.review(self.ws, milestone, proposal)
@@ -746,6 +765,13 @@ class Worker:
             self.say(done)
             if carried_out == 'turn_down' and not (self.paused or self._closing or self._stop_after_step):
                 self.enqueue('propose_acceptance', by='schedule', milestone=milestone)
+            settings = self.ws.settings()
+            if (carried_out == 'approve' and settings['build_steps'] and settings['auto_work']
+                    and not (self.paused or self._closing or self._stop_after_step)):
+                try:
+                    self.enqueue('build', by='schedule')     # approved checks build at once (J11-F14)
+                except (WorkspaceError, OSError) as error:  # e.g. building was switched off meanwhile: the
+                    self.say(f'The next build waits for the schedule: {error}')   # approval stands (review)
             self.bus.publish('plan', {'acceptance': proposal['id']})
             return {'summary': f'{head} {done}'}
         return {'summary': f"{head} Read and approve them under Goals & plan; nothing is used until you do."}

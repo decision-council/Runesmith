@@ -323,7 +323,8 @@ def _unchanged_verdict(ws, draft, milestone, contract, context, checkpoint):
     expectation or owner acceptance file (for example, checks the owner has just approved) means checking again.
     """
     verification = draft.get('verification') or {}
-    if (verification.get('status') not in ('self_checks_passed', 'acceptance_passed')
+    # "unchecked": nothing could check it yet; unchanged, checking it again only repeats that (journey J11-B11).
+    if (verification.get('status') not in ('self_checks_passed', 'acceptance_passed', 'unchecked')
             or verification.get('snapshot_digest') != context['snapshot_digest']
             or verification.get('acceptance_bundle') != {name: hashlib.sha256(data).hexdigest()
                                                          for name, data in _acceptance_files(ws, milestone['id']).items()}):
@@ -334,6 +335,9 @@ def _unchanged_verdict(ws, draft, milestone, contract, context, checkpoint):
     if verification['status'] == 'acceptance_passed':
         with ws._lock:
             _apply_if_current(ws, draft, milestone, contract, status(ws), verification, result)
+    elif verification['status'] == 'unchecked':
+        result['summary'] = (f"Draft “{draft.get('title') or draft['id']}” waits for you: nothing can check it until "
+                             f"“{milestone.get('title') or milestone['id']}” has acceptance checks. Propose them in Goals & plan.")
     else:
         # Titles, not ids (journey J2-F26: "d2026092813431050d4 … needs acceptance checks for b3a755fd75179-s1").
         result['summary'] = (f"Draft “{draft.get('title') or draft['id']}” passed its own checks and waits for you. "
@@ -509,7 +513,14 @@ def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only)
         checkpoint()
         return {'draft':draft['id'], 'milestone':milestone['id'], 'author_only':True,
                 'summary':f"Draft {draft['id']} retained for review. No checks, apply or follow-on work; existing checks, if any, are unchanged."}, None
-    return _check_and_record(ws, draft, milestone, contract, checkpoint=checkpoint), None
+    result = _check_and_record(ws, draft, milestone, contract, checkpoint=checkpoint)
+    if (pending is not None and not result.get('advanced')
+            and (result.get('verification') or {}).get('status') in ('unchecked', 'self_checks_passed')):
+        # A saved draft checked again (no model call) that only waits for checks or for you: the next milestone
+        # may build meanwhile (journey J11-B11: Styles' draft held every build, so Runes light, with approved
+        # checks, never ran). A draft whose checks now fail is reported as before (review of batch J).
+        return result, 'a draft waits for you'
+    return result, None
 
 def build_escalation_status(ws):
     """Describe the one-shot alternate-author escape after a bounded miss.
@@ -525,8 +536,13 @@ def build_escalation_status(ws):
     def used_up(candidate):
         try:return not ordinary_allowance(ws,milestone_contract(ws,candidate),context['snapshot_digest'])['remaining']
         except WorkspaceError:return False
-    # The one more try belongs to the ready milestone whose tries are used up, not simply the first (J11-B6).
-    milestone=next((m for m in ready if used_up(m)),ready[0])
+    def unescalated(candidate):
+        try:return not ordinary_allowance(ws,milestone_contract(ws,candidate),context['snapshot_digest'])['escalations']
+        except WorkspaceError:return False
+    # The one more try belongs to the ready milestone whose tries are used up, not simply the first (J11-B6), and
+    # to one that has not used its own yet (journey J2-F34: m8 had, and m9's was never offered).
+    spent=[m for m in ready if used_up(m)]
+    milestone=next((m for m in spent if unescalated(m)),spent[0] if spent else ready[0])
     contract=milestone_contract(ws,milestone)
     try:
         allowance=ordinary_allowance(ws,contract,context['snapshot_digest'])
@@ -559,13 +575,20 @@ def build_escalation_status(ws):
     # The one more try's answer, refused by the host, is kept. A newer Runesmith may accept it: the owner can check
     # it again with no model call (journey J2-G1). Readmitting revises a checked candidate on this source.
     kept=None
-    revisable=any(d.get('state')=='needs_revision' and d.get('snapshot_digest')==context['snapshot_digest'] for d in drafts)
-    for row in escalations if revisable and ws.settings()['autonomy']!='observe' else []:
-        receipt=_read_json(ws.home/'build-escalations'/(row['id']+'.json'),{})
-        if row['state']=='failed' and (receipt.get('feedback') or {}).get('answer_receipt'):
-            if not kept or str(receipt.get('utc') or '')>kept['utc']:
-                kept={'id':row['id'],'utc':str(receipt.get('utc') or ''),'error':str(receipt.get('error') or '')[:300],
-                      'last_recheck':receipt.get('last_recheck')}
+    # Of every milestone whose tries are used up, not only the one the one more try belongs to now (review of
+    # J2-F34: when it moved to the next milestone, the first one's kept answer disappeared).
+    for candidate in [milestone]+[m for m in spent if m is not milestone]:
+        own=milestone_contract(ws,candidate)
+        try:own_escalations=escalations if candidate is milestone else ordinary_allowance(ws,own,context['snapshot_digest'])['escalations']
+        except WorkspaceError:continue
+        revisable=any(d.get('state')=='needs_revision' and d.get('snapshot_digest')==context['snapshot_digest']
+                      for d in ws.drafts() if d.get('contract')==own)
+        for row in own_escalations if revisable and ws.settings()['autonomy']!='observe' else []:
+            receipt=_read_json(ws.home/'build-escalations'/(row['id']+'.json'),{})
+            if row['state']=='failed' and (receipt.get('feedback') or {}).get('answer_receipt'):
+                if not kept or str(receipt.get('utc') or '')>kept['utc']:
+                    kept={'id':row['id'],'utc':str(receipt.get('utc') or ''),'error':str(receipt.get('error') or '')[:300],
+                          'last_recheck':receipt.get('last_recheck'),'milestone':candidate['id']}
     if not allowance['remaining'] and not reuse:blockers.append('Ordinary author allowance exhausted. Review saved candidates or an explicitly available continuation.')
     view=dict(allowance,known=True,reuse_draft=reuse,blockers=blockers,can_draft=not blockers)
     if lineage_error:

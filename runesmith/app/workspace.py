@@ -454,6 +454,19 @@ class Workspace:
         for key in ("model", "base_url", "label", "note", "caller_tag", "budget_tag"):
             if key in clean:
                 clean[key] = str(clean[key]).strip()[:300]
+        # Kept on save (review of J11-B8): the Groq preset's request limit (8,000 tokens a minute on its free tier) was
+        # dropped here, so a model added in the Studio was never checked for size before sending; and a model's own
+        # reasoning effort.
+        if spec.get("max_request_tokens") not in (None, ""):
+            limit = spec["max_request_tokens"]
+            if isinstance(limit, bool) or not isinstance(limit, int) or not 1000 <= limit <= 10_000_000:
+                raise WorkspaceError("the request limit is a whole number of tokens from 1000 up")
+            clean["max_request_tokens"] = limit
+        if spec.get("reasoning_effort") not in (None, ""):
+            from runesmith.config import REASONING_EFFORTS
+            if spec["reasoning_effort"] not in REASONING_EFFORTS:
+                raise WorkspaceError("the reasoning effort is low, medium or high")
+            clean["reasoning_effort"] = spec["reasoning_effort"]
         if kind == 'milliner' and 'fallback_models' in spec:
             models = spec['fallback_models']
             if (not isinstance(models, list) or len(models) > 5 or

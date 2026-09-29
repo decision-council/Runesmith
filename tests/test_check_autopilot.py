@@ -167,10 +167,13 @@ def test_a_check_requiring_the_opposite_is_turned_down(tmp_path):
     assert verdict["decision"] == "turn_down" and claim["question"] in verdict["reason"], verdict
 
 
-def test_checks_that_call_a_function_wait_for_the_owner_and_a_check_passing_today_is_a_finding():
+def test_checks_that_call_a_function_wait_for_the_owner_and_one_check_passing_today_is_not_a_finding():
     calling = proposal(examples=[{"test": "t", "steps": [{"call": "pkg.mod.f", "args": [], "expect": {"returns": 1}}]}])
     assert "call a function" in autopilot.undecidable(calling)
-    assert any("already passes" in f for f in autopilot.gates(proposal(checks=[{"test": "t", "says": "s", "passes_today": True}])))
+    # Journey J11-G18: "without a style the picture stays as it is" passes today by design; held against it, the
+    # Checker rewrote it into a wrong check. A set that passes today as a whole is still held back.
+    assert autopilot.gates(proposal(checks=[{"test": "t", "says": "s", "passes_today": True}])) == []
+    assert autopilot.gates(proposal(dry_run={"verdict": "passes_now"}))
 
 
 def test_a_local_model_name_with_a_tag_is_its_own_family():
@@ -254,3 +257,170 @@ def test_a_claimed_contradiction_is_the_owner_s_call(tmp_path):
     ws.save_config(config)
     verdict = autopilot.review(ws, "m1", checks)
     assert verdict["decision"] == "owner" and "m1 refuses this file" in verdict["reason"]
+
+
+def test_saving_a_model_keeps_its_request_limit_and_reasoning_effort(tmp_path):
+    # Review of J11-B8: the Groq preset's request limit and a model's reasoning effort were dropped on save.
+    from runesmith.app.workspace import WorkspaceError
+    ws = autopilot_workspace(tmp_path, [], [])
+    spec = {"kind": "openai", "model": "openai/gpt-oss-120b", "base_url": "https://api.groq.com/openai/v1",
+            "preset": "groq", "max_request_tokens": 8000, "reasoning_effort": "low"}
+    ws.save_instrument("groqfree", spec)
+    saved = ws.config()["instruments"]["groqfree"]
+    assert saved["max_request_tokens"] == 8000 and saved["reasoning_effort"] == "low"
+    from runesmith.config import build_instrument
+    assert build_instrument("groqfree", saved, ws.home).max_request_tokens == 8000
+    for bad in ({"max_request_tokens": "lots"}, {"max_request_tokens": True}, {"max_request_tokens": 5},
+                {"reasoning_effort": "maximum"}):
+        with pytest.raises(WorkspaceError):
+            ws.save_instrument("groqbad", dict(spec, **bad))
+
+
+def test_the_test_button_sends_the_model_s_own_reasoning_effort(tmp_path, monkeypatch):
+    # Review of J11-B8: "Test" under Thinking power built the model without its reasoning effort.
+    from runesmith.app import providers
+    from runesmith import config as config_module
+    sent = {}
+
+    class Fake:
+        def complete(self, **kwargs):
+            sent.update(kwargs)
+            from runesmith.instruments import CallOutcome
+            return CallOutcome(True, data={"ok": True})
+    monkeypatch.setattr(config_module, "build_instrument", lambda *args, **kwargs: Fake())
+    spec = {"kind": "openai", "model": "m", "base_url": "https://x.invalid/v1", "reasoning_effort": "low"}
+    assert providers.test_instrument("x", spec, tmp_path)["ok"] and sent["reasoning_effort"] == "low"
+    providers.test_instrument("x", dict(spec, reasoning_effort=None), tmp_path)
+    assert sent["reasoning_effort"] is None
+
+
+def test_a_scheduled_check_request_moves_the_schedule_on(tmp_path, monkeypatch):
+    # Journey J11-B9: a scheduled check request did not move the schedule on, so failed ones ran back to back.
+    ws = autopilot_workspace(tmp_path, [], [])
+    ws.update_settings({"build_steps": True, "auto_work": True, "policy_chosen": True, "onboarded": True})
+    worker = Worker(ws, EventBus())
+
+    def refused(milestone):
+        from runesmith.app.planner import PlannerUnavailable
+        raise PlannerUnavailable("no acceptance checks: every model is busy")
+    monkeypatch.setattr(worker, "_job_propose_acceptance", refused)
+    assert worker._due() == 0
+    worker._execute({"id": "own", "kind": "propose_acceptance", "params": {"milestone": "m1"}, "by": "owner"})
+    assert worker._due() == 0                               # the owner's own request leaves the schedule alone
+    worker._execute({"id": "sched", "kind": "propose_acceptance", "params": {"milestone": "m1"}, "by": "schedule"})
+    assert worker._due() > 60 and json.loads((ws.home / "WORK.json").read_text())["kind"] == "propose_acceptance"
+
+
+def test_checks_the_autopilot_approved_build_at_once(tmp_path, monkeypatch):
+    # J11-F14: approved checks waited a whole schedule interval before their milestone was built.
+    from runesmith.app import acceptance_proposals
+    ws = autopilot_workspace(tmp_path, [], [])
+    ws.update_settings({"build_steps": True, "auto_work": True, "policy_chosen": True})
+    worker = Worker(ws, EventBus())
+    monkeypatch.setattr(acceptance_proposals, "propose", lambda *a, **k: proposal(state="proposed"))
+    monkeypatch.setattr(autopilot, "review", lambda *a, **k: {"decision": "approve", "reason": "ok"})
+    monkeypatch.setattr(autopilot, "act", lambda *a, **k: ("The check autopilot approved them.", "approve"))
+    statuses = []
+    monkeypatch.setattr(worker, "_set", lambda state, detail="": statuses.append(detail))
+    worker._job_propose_acceptance("m1")
+    assert [j["kind"] for j in worker._jobs] == ["build"]
+    assert "the check autopilot reviews them" in statuses[0]            # J11-F13: not "(you approve them)"
+
+
+def test_a_lacks_check_is_asked_as_leave_out_with_its_negation():
+    # J11-G19: the second model is asked whether the file must leave the text out, paired with "must contain".
+    checks = proposal(examples=[{"test": "t", "files": [], "steps": [{"run": ["node", "motion.mjs", "x.json"],
+                                                                        "expect": {"exit": "ok"}}],
+                                 "lacks": [{"name": "out.svg", "texts": ['class="rs-bg"']}]}])
+    rows = [r for r in autopilot.questions(checks) if 'rs-bg' in r["question"]]
+    assert sorted((("leave out" in r["question"]), r["expected"]) for r in rows) == [(False, "no"), (True, "yes")]
+
+
+def test_every_reader_of_a_proposal_record_skips_a_malformed_row(tmp_path):
+    # Review of batch E: status, propose, approve, discard, rounds_used and needs_checks still failed on such a row,
+    # and needs_checks runs in the schedule, where the error ended the worker thread.
+    from runesmith.app.acceptance_proposals import _record_path, discard, status
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    path = _record_path(ws, "m1")
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["proposals"] = [None, "oops"] + record["proposals"]
+    path.write_text(json.dumps(record), encoding="utf-8")
+    assert status(ws)["m1"]["proposal"]["id"] == first["id"]
+    assert autopilot.rounds_used(ws, "m1") == 0 and autopilot.needs_checks(ws) is None      # one is waiting
+    discard(ws, "m1", first["id"], reason="Not these.")
+    assert autopilot.needs_checks(ws) == "m1"
+
+
+def test_the_schedule_survives_an_unexpected_error_in_choosing_work(tmp_path, monkeypatch):
+    import threading
+    ws = autopilot_workspace(tmp_path, [], [])
+    ws.update_settings({"build_steps": True, "auto_work": True, "policy_chosen": True, "onboarded": True})
+    worker = Worker(ws, EventBus())
+    calls = []
+
+    def broken():
+        calls.append(1)
+        raise AttributeError("'NoneType' object has no attribute 'get'")
+    monkeypatch.setattr(worker, "scheduled_job", broken)
+    waited = threading.Event()
+    real_wait = worker._cv.wait
+
+    def wait(timeout=None):
+        waited.set()
+        worker._closing = True
+        return real_wait(timeout=0)
+    monkeypatch.setattr(worker._cv, "wait", wait)
+    thread = threading.Thread(target=worker._run, daemon=True)
+    thread.start()
+    thread.join(timeout=10)
+    assert calls and waited.is_set() and not thread.is_alive()
+    assert worker.status == "blocked" and "could not choose the next step" in worker.detail
+    assert "choosing scheduled work" in (ws.home / "logs" / "worker-errors.log").read_text(encoding="utf-8")
+
+
+def test_a_check_that_passes_today_is_asked_whether_the_milestone_requires_it():
+    # Review of batch F (J11-G18): such a check is not a gate on its own, but it is not left unexamined either.
+    checks = proposal(checks=[{"test": "test_01_x", "says": "x is 50 at 1 s"},
+                              {"test": "test_02_plain", "says": "Without a style the picture stays as it is.",
+                               "passes_today": True}])
+    rows = [r for r in autopilot.questions(checks) if r["about"] == "unchanged"]
+    assert sorted(r["expected"] for r in rows) == ["no", "yes"] and all(r["test"] == "test_02_plain" for r in rows)
+    assert all("stays as it is" in r["question"] for r in rows)
+
+
+def test_the_decoy_is_never_the_project_s_own_vocabulary_and_answers_are_kept(tmp_path):
+    # J11-G20: the decoy "rs-…" looked like this project's own ids; J11-F15: the answers were not kept.
+    checks = proposal(examples=[{"test": "t", "files": [], "steps": [{"run": ["node", "motion.mjs", "x.json"],
+                                                                        "expect": {"exit": "ok"}}],
+                                 "contains": [{"name": "out.svg", "texts": ['id="rs-light"']}]}])
+    decoy = next(r for r in autopilot.questions(checks) if r["about"] == "decoy")
+    assert "rs-" not in decoy["question"] and any(w in decoy["question"] for w in autopilot.DECOY_WORDS)
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    config = ws.config(); config["instruments"]["verifier"]["answers"] = [answers_for(first)]; ws.save_config(config)
+    verdict = autopilot.review(ws, "m1", first)
+    autopilot.act(ws, "m1", first, verdict)
+    from runesmith.app.acceptance_proposals import _proposal_rows
+    kept = next(r for r in _proposal_rows(ws, "m1") if r["id"] == first["id"])["autopilot"]["cross_check"]["answers"]
+    assert kept and all({"question", "expected", "answer"} <= set(r) for r in kept)
+
+
+def test_a_file_line_is_asked_as_a_number_with_its_twin():
+    checks = proposal(examples=[{"test": "t", "files": [], "steps": [{"run": ["node", "motion.mjs", "x.json"],
+                                                                        "expect": {"exit": "ok"}}],
+                                 "file_lines": [{"name": "out.svg", "has": "stroke-dashoffset", "number": 57.5}]}])
+    rows = [r for r in autopilot.questions(checks) if "stroke-dashoffset" in r["question"]]
+    assert sorted(r["expected"] for r in rows) == [57.5, 64.5] and all("57.5" not in r["question"] for r in rows)
+
+
+def test_a_file_check_reduced_to_the_file_existing_is_not_approved():
+    reduced = proposal(dropped=["Example 1: report.txt leaves out “DEBUG”", "Example 1: report.txt: checked instead that it exists"])
+    assert any("only that the file exists" in f for f in autopilot.gates(reduced))
+
+
+def test_the_decoy_avoids_the_words_the_second_model_reads():
+    checks = proposal()
+    every = " ".join(autopilot.DECOY_WORDS)
+    decoy = next(r for r in autopilot.questions(checks, context=every.replace("tuba", "")) if r["about"] == "decoy")
+    assert "silent tuba" in decoy["question"]              # the one pair the context leaves free

@@ -46,6 +46,11 @@ SCHEMA = LenientSchema({'type': 'object', 'properties': {
         'unchanged': STRINGS, 'exists': STRINGS,
         'contains': {'type': 'array', 'items': {'type': 'object', 'properties': {
             'name': {'type': 'string'}, 'texts': STRINGS}, 'required': ['name', 'texts']}},
+        'lacks': {'type': 'array', 'items': {'type': 'object', 'properties': {
+            'name': {'type': 'string'}, 'texts': STRINGS}, 'required': ['name', 'texts']}},
+        'file_lines': {'type': 'array', 'items': {'type': 'object', 'properties': {
+            'name': {'type': 'string'}, 'has': {'type': 'string'}, 'number': {'type': 'number'}},
+            'required': ['name', 'has', 'number']}},
         'links_resolve': {'type': 'boolean'}, 'pages_reachable': {'type': 'boolean'}},
         'required': ['name', 'says']}},
     'not_checked': STRINGS}, 'required': ['examples']})
@@ -83,7 +88,11 @@ TASK = (
     "\"unchanged\": [names of files this example creates with \"files\"] checks that they are exactly the same "
     "afterwards (to check that a program leaves its data alone, create that data file with \"files\"); \"exists\": [names]; "
     "\"contains\": [{\"name\", \"texts\"}] checks a file's text afterwards (never use \"files\" to say what "
-    "the finished project should contain: those files are created before the steps); \"links_resolve\": true checks that every "
+    "the finished project should contain: those files are created before the steps); \"lacks\": [{\"name\", \"texts\"}] "
+    "checks that a file afterwards contains none of those texts (for \"there is no X in the file\"; never put a text "
+    "that must be absent under \"contains\"); \"file_lines\": [{\"name\", \"has\", \"number\"}] checks that in "
+    "that file the first number after the text \"has\" is \"number\" (for \"out.svg has stroke-dashoffset 57.5\"; "
+    "never write the layout, such as 'stroke-dashoffset=\"57.5\"', under \"contains\"); \"links_resolve\": true checks that every "
     "link between the Markdown pages leads to an existing file; \"pages_reachable\": true checks that every Markdown "
     "page can be reached by following links from the front page (README.md or index.md). For documents there is often "
     "no program to run: then an example has no steps and only these file checks, and \"documents\" shows the pages "
@@ -292,6 +301,7 @@ def _inputs(example) -> str:
 
 TOKEN = re.compile(r"[^\W_](?:[\w.'-]*[^\W_])?")
 NUMBER_TOKEN = re.compile(r'\d+(?:\.\d+)?')
+ATTRIBUTE_NUMBER = re.compile(r'\s*([A-Za-z][\w:.-]*)\s*[=:]\s*["\']?(-?\d+(?:\.\d+)?)(?:px|%|em|s|ms)?["\']?\s*;?\s*')
 
 
 def _loosen(text, inputs):
@@ -346,6 +356,7 @@ def _ground(example, milestone_text, source_text):
         return ' ' + ' '.join(re.findall(r'[a-z0-9]+', value.lower())) + ' '
 
     known_words = plain(known)
+    stated_numbers = {float(n) for n in re.findall(r'-?\d+(?:\.\d+)?', known)}
 
     def grounded(text, extra=''):
         if text.lower() in known or bool(extra and text.lower() in extra):
@@ -418,6 +429,14 @@ def _ground(example, milestone_text, source_text):
         for text in row['texts']:
             if grounded(text, source_text.lower()):            # a file may hold text the project already has
                 texts.append(text)
+            elif ((pair := ATTRIBUTE_NUMBER.fullmatch(text)) and grounded(pair.group(1))
+                  and float(pair.group(2)) in stated_numbers):     # the number too (review of J11-G21)
+                # 'stroke-dashoffset="57.5"' guesses the layout; the number after the name is what the milestone
+                # states (journey J11-G21: dropped, the self-drawing rune's checks never looked at its offset).
+                example.setdefault('file_lines', []).append(
+                    {'name': row['name'], 'has': pair.group(1), 'number': _number(float(pair.group(2)))})
+                changed.append(f'{row["name"]} contains “{text}” (checked instead: the first number after '
+                               f'“{pair.group(1)}” is {_number(float(pair.group(2)))})')
             elif subjects := _loosen(text, inputs)[0]:
                 texts += subjects
                 changed.append(f'{row["name"]} contains “{text}” (checked instead: {_quote(subjects)})')
@@ -430,6 +449,23 @@ def _ground(example, milestone_text, source_text):
             example['exists'].append(row['name'])
             changed.append(f'{row["name"]}: checked instead that it exists')
     example['contains'] = [r for r in example.get('contains', []) if r['texts']]
+    for row in example.get('lacks', []):
+        # A text to remove is often one only the project has now ("the leftover debug banner"): grounded like
+        # "contains" (review of J11-G19).
+        kept = [text for text in row['texts'] if grounded(text, source_text.lower())]
+        changed += [f'{row["name"]} leaves out “{text}”' for text in row['texts'] if text not in kept]
+        row['texts'] = list(dict.fromkeys(kept))
+        if not row['texts'] and row['name'] not in example.setdefault('exists', []):
+            example['exists'].append(row['name'])
+            changed.append(f'{row["name"]}: checked instead that it exists')
+    example['lacks'] = [r for r in example.get('lacks', []) if r['texts']]
+    kept_lines = []
+    for row in example.get('file_lines', []):
+        if grounded(row['has']):
+            kept_lines.append(row)
+        else:
+            changed.append(f'{row["name"]}: the number after “{row["has"]}”')
+    example['file_lines'] = [dict(r) for r in {(r['name'], r['has'].lower(), r['number']): r for r in kept_lines}.values()]
     return changed
 
 
@@ -515,6 +551,9 @@ def _exact(example, shown) -> str:
     parts += [f'`{n}` is left exactly as it was' for n in example.get('unchanged', [])]
     parts += [f'`{n}` exists' for n in example.get('exists', [])]
     parts += [f'`{r["name"]}` contains ' + _quote(r['texts']) for r in example.get('contains', [])]
+    parts += [f'`{r["name"]}` leaves out ' + _quote(r['texts']) for r in example.get('lacks', [])]
+    parts += [f'in `{r["name"]}` the first number after “{r["has"]}” is '
+              f'{int(r["number"]) if float(r["number"]).is_integer() else r["number"]}' for r in example.get('file_lines', [])]
     if example.get('links_resolve'):
         parts.append('every link between the Markdown pages leads to an existing file')
     if example.get('pages_reachable'):
@@ -550,13 +589,20 @@ def _joined(steps):
     return joined
 
 
-FILE_CHECKS = ('exists', 'contains', 'unchanged')
+FILE_CHECKS = ('exists', 'contains', 'lacks', 'file_lines', 'unchanged')
+
+
+EXAMPLE_KEYS = {'name', 'says', 'files', 'steps', 'unchanged', 'exists', 'contains', 'lacks', 'file_lines',
+                'links_resolve', 'pages_reachable'}
 
 
 def _lifted(row, steps, what, dropped):
     """File checks written inside a step's "expect" moved to the example they belong to (journey J11-G9: for the SVG
     frame, the Checker put "exists" and "contains" for out.svg under the step that writes it). A "hides" naming a file
-    is not something the format checks; it is dropped with a note. Copies: the model's answer itself is kept as sent.
+    is a "lacks" check (J11-G19). Copies: the model's answer itself is kept as sent.
+
+    An "expect" next to "steps" belongs to the last step that runs something (journey J11-B10: for Runes light it
+    was ignored without a word, so both checks only ran the program); its file checks move to the example.
 
     Files given inside a step are created for the example (journey J11-G11: for s1 Nemotron wrote position.motion.json
     inside the step that reads it, where it was ignored, and its revision made each file a step of its own, which was
@@ -565,6 +611,48 @@ def _lifted(row, steps, what, dropped):
     if not isinstance(steps, list):
         return row, steps
     row, moved = dict(row), []
+    top = row.pop('expect', None)
+    if top is not None and not isinstance(top, dict):
+        dropped.append(f'{what}: "expect" next to "steps" could not be read (it is not an object)')
+    elif top:
+        top = dict(top)
+        # File checks, and a "hides" naming a file, belong to the example wherever they were written.
+        for key in FILE_CHECKS:
+            if isinstance(top.get(key), list):
+                row[key] = list(row.get(key) or []) + top.pop(key)
+        if isinstance(top.get('hides'), list):
+            texts_only = []
+            for h in top['hides']:
+                texts = h.get('texts') if isinstance(h, dict) and isinstance(h.get('texts'), list) else None
+                if isinstance(h, dict) and isinstance(h.get('name'), str) and texts:
+                    row['lacks'] = list(row.get('lacks') or []) + [{'name': h['name'], 'texts': texts}]
+                elif isinstance(h, dict):
+                    dropped.append(f'{what}: a "hides" beside the steps without a file name and its texts')
+                else:
+                    texts_only.append(h)
+            top['hides'] = texts_only
+            if not texts_only:
+                top.pop('hides')
+        # What the output shows belongs to a step: only when exactly one step runs a program is it clear which
+        # (review of J11-B10: a document step ignores it, and with several steps the last is only a guess).
+        acting = [n for n, s in enumerate(steps) if isinstance(s, dict) and any(s.get(k) for k in ('run', 'call', 'doc'))]
+        runs = [n for n in acting if steps[n].get('run')]
+        if top and len(acting) == 1 and runs:
+            steps = list(steps)
+            last = dict(steps[runs[0]])
+            own = dict(last.get('expect') or {}) if isinstance(last.get('expect'), dict) else {}
+            for key, value in top.items():
+                if isinstance(value, list) and isinstance(own.get(key), list):
+                    own[key] = own[key] + value
+                elif key not in own:
+                    own[key] = value
+                else:
+                    dropped.append(f'{what}: "expect" next to "steps" gave another "{key}" than its step')
+            last['expect'] = own
+            steps[runs[0]] = last
+        elif top:
+            dropped.append(f'{what}: "expect" next to "steps" ({", ".join(sorted(map(str, top)))}): put what the '
+                           'output shows inside the step it is about')
     for n, step in enumerate(steps, 1):
         if isinstance(step, dict) and ('files' in step or any(k in step for k in FILE_CHECKS)):
             step = dict(step)
@@ -590,7 +678,13 @@ def _lifted(row, steps, what, dropped):
         hides = expect.get('hides')
         if isinstance(hides, list) and any(isinstance(h, dict) for h in hides):
             expect['hides'] = [h for h in hides if not isinstance(h, dict)]
-            dropped.append(f'{what}: that a file does not contain some text (not something these checks can look at)')
+            for h in (h for h in hides if isinstance(h, dict)):
+                # That a file does not contain some text is a "lacks" check (journey J11-G19).
+                texts = h.get('texts') if isinstance(h.get('texts'), list) else [h['text']] if isinstance(h.get('text'), str) else None
+                if isinstance(h.get('name'), str) and texts:
+                    row['lacks'] = list(row.get('lacks') or []) + [{'name': h['name'], 'texts': texts}]
+                else:
+                    dropped.append(f'{what}: that a file does not contain some text, without naming the file and the text')
             if not expect['hides']:
                 expect.pop('hides')
         step = dict(step, expect=expect) if expect else {k: v for k, v in step.items() if k != 'expect'}
@@ -611,7 +705,8 @@ def _missing_inputs(example, source_text) -> list[str]:
     write), and a step that is expected to fail may name a missing file on purpose.
     """
     named = ({f['name'] for f in example['files']} | set(example['exists']) | set(example['unchanged'])
-             | {c['name'] for c in example['contains']})
+             | {c['name'] for c in example['contains']} | {c['name'] for c in example.get('lacks', [])}
+             | {c['name'] for c in example.get('file_lines', [])})
     missing = []
     for n, step in enumerate(example['steps']):
         if 'run' not in step or (step.get('expect') or {}).get('exit') == 'error':
@@ -645,6 +740,8 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
         steps = row.get('steps') if row.get('steps') is not None else []
         steps = _joined(steps) if isinstance(steps, list) else steps
         row, steps = _lifted(row, steps, what, dropped)
+        if unread := sorted(str(k) for k in row if k not in EXAMPLE_KEYS):
+            dropped.append(f'{what}: ' + ', '.join(f'"{k}"' for k in unread) + ' is not something these checks read')
         if not isinstance(steps, list) or len(steps) > LIMITS['steps']:
             raise WorkspaceError(f'{what} needs at most {LIMITS["steps"]} steps.')
         example: dict[str, Any] = {'test': _name(row.get('name'), index, taken), 'says': says,
@@ -662,28 +759,40 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
         if missing := [n for n in example['unchanged'] if n not in written]:
             raise WorkspaceError(f'{what}: "unchanged" can only name files the example creates, not {missing[0]!r}.')
         example['exists'] = [_relative(n, f'{what}: "exists"') for n in _texts(row.get('exists'), f'{what}: "exists"')]
-        contains = row.get('contains') or []
-        if not isinstance(contains, list) or len(contains) > LIMITS['files']:
-            raise WorkspaceError(f'{what}: "contains" must be a short list.')
-        example['contains'] = []
-        for c in contains:
-            texts = c.get('texts') if isinstance(c, dict) else None
-            if isinstance(texts, list) and len(texts) > LIMITS['texts']:
-                # Too many texts to find is not a reason to refuse the answer: the first ones are checked (J11-G9).
-                dropped.append(f'{what}: {len(texts) - LIMITS["texts"]} more texts to find in {c.get("name")} '
-                               f'(at most {LIMITS["texts"]} are checked)')
-                texts = texts[:LIMITS['texts']]
-            example['contains'].append({'name': _relative(c.get('name') if isinstance(c, dict) else None,
-                                                          f'{what}: "contains"'),
-                                        'texts': _texts(texts, f'{what}: "contains"')})
+        for key in ('contains', 'lacks'):              # "lacks": journey J11-G19
+            rows = row.get(key) or []
+            if not isinstance(rows, list) or len(rows) > LIMITS['files']:
+                raise WorkspaceError(f'{what}: "{key}" must be a short list.')
+            example[key] = []
+            for c in rows:
+                texts = c.get('texts') if isinstance(c, dict) else None
+                if isinstance(texts, list) and len(texts) > LIMITS['texts']:
+                    # Too many texts is not a reason to refuse the answer: the first ones are checked (J11-G9).
+                    dropped.append(f'{what}: {len(texts) - LIMITS["texts"]} more texts to find in {c.get("name")} '
+                                   f'(at most {LIMITS["texts"]} are checked)')
+                    texts = texts[:LIMITS['texts']]
+                example[key].append({'name': _relative(c.get('name') if isinstance(c, dict) else None,
+                                                       f'{what}: "{key}"'),
+                                     'texts': _texts(texts, f'{what}: "{key}"')})
+        lines = row.get('file_lines') or []
+        if not isinstance(lines, list) or len(lines) > LIMITS['texts']:
+            raise WorkspaceError(f'{what}: "file_lines" must be a short list.')
+        example['file_lines'] = []
+        for line in lines:
+            if (not isinstance(line, dict) or not isinstance(line.get('has'), str) or not line['has'].strip()
+                    or len(line['has']) > 200 or isinstance(line.get('number'), bool)
+                    or not isinstance(line.get('number'), (int, float))):
+                raise WorkspaceError(f'{what}: each of "file_lines" needs a file "name", a text "has" and a "number".')
+            example['file_lines'].append({'name': _relative(line.get('name'), f'{what}: "file_lines"'),
+                                          'has': line['has'].strip(), 'number': line['number']})
         example['links_resolve'] = bool(row.get('links_resolve'))
         example['pages_reachable'] = bool(row.get('pages_reachable'))
-        if not example['steps'] and not (example['exists'] or example['contains'] or example['links_resolve']
-                                         or example['pages_reachable']):
+        if not example['steps'] and not (example['exists'] or example['contains'] or example['lacks']
+                                         or example['file_lines'] or example['links_resolve'] or example['pages_reachable']):
             # "files" was used to say what the finished page should contain (journey J11-G6, m4 and m5).
             hint = (' "files" only prepares files before the steps, so they would always be there; to check what '
                     'the finished project contains, use "exists" or "contains".' if example['files'] else '')
-            raise NothingToCheck(f'{what} needs steps, or a check on files ("exists", "contains", "links_resolve" '
+            raise NothingToCheck(f'{what} needs steps, or a check on files ("exists", "contains", "lacks", "links_resolve" '
                                  'or "pages_reachable").' + hint)
         for n, step in enumerate(example['steps'], 1):
             word = _command_word(step)
@@ -696,7 +805,8 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
         for n, step in enumerate(example['steps'], 1):
             if not step.pop('unchecked_expect', False):
                 continue
-            if n == len(example['steps']) and not (example['unchanged'] or example['exists'] or example['contains']):
+            if n == len(example['steps']) and not (example['unchanged'] or example['exists'] or example['contains']
+                                                   or example['lacks'] or example['file_lines']):
                 raise WorkspaceError(f'{what}, step {n}: check what an interrupted run leaves behind with a later step.')
             dropped.append(f'{what}: what {_show(step)} shows while it is interrupted (a later check looks at what it left behind)')
         dropped += [f'{what}: {d}' for d in _ground(example, milestone_text, source_text)]
@@ -809,6 +919,23 @@ def found(text, output):
     elif text[-1:].isalnum():
         pattern += r"(?!\w)"
     return re.search(pattern, output, re.IGNORECASE)
+
+
+def found_whole(text, content):
+    """Like found, but a name joined by '-' is another name: "rs-bg-2" does not contain "rs-bg"."""
+    pattern = (r"(?<![\w-])" if text[:1].isalnum() else "") + re.escape(text) + (r"(?![\w-])" if text[-1:].isalnum() else "")
+    return re.search(pattern, content, re.IGNORECASE)
+
+
+def number_after(has, number, text):
+    """Whether, somewhere in text, the first number after has (on the same line) is number."""
+    pattern = (r"(?<![\w-])" if has[:1].isalnum() else "") + re.escape(has)
+    for match in re.finditer(pattern, text, re.IGNORECASE):
+        rest = text[match.end():].split("\n", 1)[0]
+        first = re.search(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", rest)
+        if first and not re.match(r"[\w-]", rest[:1]) and float(first.group()) == float(number):
+            return True
+    return False
 
 
 def number_on_line(has, number, output):
@@ -1047,6 +1174,20 @@ def run_example(case, example):
                 text = handle.read()
             for wanted in row["texts"]:
                 case.assertTrue(found(wanted, text), row["name"] + " does not contain " + repr(wanted))
+        for row in example.get("lacks", []):
+            path = os.path.join(copy, row["name"])
+            case.assertTrue(os.path.isfile(path), row["name"] + " does not exist")
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+            for unwanted in row["texts"]:
+                case.assertFalse(found_whole(unwanted, text), row["name"] + " contains " + repr(unwanted))
+        for row in example.get("file_lines", []):
+            path = os.path.join(copy, row["name"])
+            case.assertTrue(os.path.isfile(path), row["name"] + " does not exist")
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+            case.assertTrue(number_after(row["has"], row["number"], text),
+                            row["name"] + ": the first number after " + repr(row["has"]) + " is not " + repr(row["number"]))
         if example.get("links_resolve"):
             check_links(case, copy)
         if example.get("pages_reachable"):

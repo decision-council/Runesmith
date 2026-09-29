@@ -104,8 +104,11 @@ def readmit_kept_answer(ws, attempt_id: str, *, checkpoint=lambda: None):
         raise WorkspaceError('A correction of this answer already became a draft; check that draft instead.')
     if any(row.get('state') == 'candidate' for row in _readmits(ws, attempt_id)):
         raise WorkspaceError('The kept answer was already checked again and became a draft; check that draft instead.')
-    correction = history[-1] if history else None
-    if correction is not None and not (correction.get('state') == 'refused' and isinstance(correction.get('answer'), dict)):
+    # The newest correction that left an answer: one set aside or never sent left none, and is not the newest kept
+    # answer (journey J2-F33: a set-aside late correction blocked checking the earlier refused one again).
+    answered = [row for row in history if isinstance(row.get('answer'), dict)]
+    correction = answered[-1] if answered else None
+    if correction is not None and correction.get('state') != 'refused':
         raise WorkspaceError('The last correction left no answer to check again.')
     if correction:
         operations = [row for row in (correction['answer'].get('files') or []) if isinstance(row, dict)]
@@ -312,6 +315,12 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
     except Exception as error:
         _write_json(receipt_path,dict(receipt,state='uncertain',error=type(error).__name__+': '+str(error)[:300],finished=_now()))
         raise
+    if not outcome.ok and (outcome.receipt or {}).get('refused_before_answer'):
+        # Every model refused the correction before answering (too large for it, a refused key): nothing ran, so
+        # nothing is used up (review of J11-G17; like J2-B9's calls no model answered).
+        _write_json(receipt_path,dict(receipt,state='transport_failed',error=(outcome.error or '')[:300],finished=_now()))
+        raise PlannerUnavailable((outcome.error or 'the model service refused this request')+
+                                 ' Nothing was used up: the correction can be asked again.')
     receipt.update(state='answered',finished=_now(),answer=outcome.data,
                    instrument={k:outcome.receipt.get(k) for k in ('model','requested_model','answered_by','job_id','est_usd')})
     _write_json(receipt_path,receipt);checkpoint()

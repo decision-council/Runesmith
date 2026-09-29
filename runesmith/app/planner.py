@@ -354,7 +354,7 @@ def nothing_ran(error) -> bool:
     remote = getattr(error, 'remote_receipt', None)
     if not isinstance(remote, dict) or not remote or remote.get('unresolved'):
         return False
-    if remote.get('not_admitted') or remote.get('no_route_accepted'):
+    if remote.get('not_admitted') or remote.get('no_route_accepted') or remote.get('refused_before_answer'):
         return True
     try:
         return int(remote.get('tokens_in') or 0) == 0 and int(remote.get('tokens_out') or 0) == 0
@@ -395,7 +395,10 @@ def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_toke
     if isinstance(outcome.data, dict) and outcome.data.get("skipped_by_owner"):
         raise SkippedByOwner("you skipped the request, so nothing changed")
     if not outcome.ok and outcome.error_kind == "config":
-        raise PlannerUnavailable(outcome.error or "the model service refused this request")
+        failure = PlannerUnavailable(outcome.error or "the model service refused this request")
+        if (outcome.receipt or {}).get("refused_before_answer"):
+            failure.remote_receipt = dict(outcome.receipt)    # refused before answering: no try is used (J2-B9)
+        raise failure
     if not outcome.ok or not isinstance(outcome.data, dict):
         raise PlannerUnavailable(f"the model's answer was not usable: {(outcome.error or 'no JSON')[:200]}")
     missing = [k for k in schema.get("required", []) if k not in outcome.data]

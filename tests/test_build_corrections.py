@@ -240,3 +240,46 @@ def test_a_replayed_correction_credits_who_answered_it(tmp_path):
     _write_json(receipt,row)
     draft=readmit_kept_answer(ws,attempt_id)
     assert draft['drafted_by']=='the model the owner asked' and draft['title']=='First answer'
+
+
+def test_a_correction_every_model_refused_before_answering_uses_nothing(tmp_path):
+    # Review of J11-G17: a correction too large for a directly called model was recorded "refused" and used one of
+    # the two corrections, although no model answered.
+    from runesmith.instruments import CallOutcome
+    ws, attempt_id = rejected_answer(tmp_path)
+
+    class TooLarge:
+        def call(self, *args, **kwargs):
+            return CallOutcome(False, error_kind="config", receipt={"refused_before_answer": "too_large"},
+                               error="This request needs about 20000 tokens, more than this service accepts at once.")
+    with pytest.raises(PlannerUnavailable) as failure:
+        correct_rejected_answer(ws, TooLarge(), attempt_id)
+    [row] = [json.loads(p.read_text()) for p in (ws.home / 'build-corrections').glob('*.json')]
+    candidate = next(c for c in correction_candidates(ws) if c['attempt'] == attempt_id)
+    assert row['state'] == 'transport_failed' and 'Nothing was used up' in str(failure.value)
+    assert candidate['remaining'] == MAX_CORRECTIONS and candidate['eligible']
+
+
+def test_a_set_aside_late_correction_leaves_the_earlier_refused_answer_to_check_again(tmp_path):
+    # Journey J2-F33: the last correction's answer never arrived; once set aside, the earlier refused correction's
+    # answer is the newest kept answer, and checking it again must not be refused as "no answer".
+    from runesmith.app import build_corrections as corrections
+    ws, attempt_id = rejected_answer(tmp_path)
+    folder = ws.home / 'build-corrections'
+    folder.mkdir(parents=True, exist_ok=True)
+    base = {'attempt': attempt_id, 'utc': '2026-09-28T20:45:43Z'}
+    (folder / 'c000000000001.json').write_text(json.dumps(dict(base, id='c000000000001', state='refused', number=1,
+        answer={'title': 't', 'why': 'w', 'files': [{'path': 'test_tool.py', 'content': 'expected = 2\n'}]},
+        error='old_text did not match')), encoding='utf-8')
+    (folder / 'c000000000002.json').write_text(json.dumps(dict(base, id='c000000000002', state='abandoned', number=2,
+        utc='2026-09-28T21:29:55Z')), encoding='utf-8')
+    history = corrections._corrections(ws, attempt_id)
+    assert [row['state'] for row in history] == ['refused', 'abandoned']
+    candidate = next(c for c in correction_candidates(ws) if c['attempt'] == attempt_id)
+    assert candidate['can_check_again'] and candidate['late_correction'] is None
+    try:
+        corrections.readmit_kept_answer(ws, attempt_id)
+    except WorkspaceError as error:
+        assert 'left no answer' not in str(error), error
+    except PlannerUnavailable:
+        pass

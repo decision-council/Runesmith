@@ -307,6 +307,15 @@ def _permanent(status: int, message: str) -> str | None:
     return None
 
 
+def _refusal(status: int, message: str) -> str:
+    """How a service refused a request before any answer: \"too_large\" when a smaller request might be taken, else
+    \"refused\" (a key or a model name). Either way nothing was generated and nothing charged."""
+    low = message.lower()
+    if status == 413 or "request too large" in low or any(p in low for p in CONTEXT_OVERFLOW):
+        return "too_large"
+    return "refused"
+
+
 def _unreachable(base_url: str, error: Exception) -> str:
     local = any(h in base_url for h in ("127.0.0.1", "localhost", "[::1]"))
     if local:
@@ -348,7 +357,7 @@ class OpenAICompatInstrument(Instrument):
             body["reasoning_effort"] = reasoning_effort
         needed = _estimate_tokens(instruction, prompt) + max_tokens
         if self.max_request_tokens and needed > self.max_request_tokens:
-            return CallOutcome(False, error_kind="config", error=(
+            return CallOutcome(False, error_kind="config", receipt={"refused_before_answer": "too_large"}, error=(
                 f"This request needs about {needed} tokens (the text plus room for the answer), more than this service "
                 f"accepts at once ({self.max_request_tokens} tokens a minute on its free tier). Give this role a model "
                 "with a larger window."))
@@ -370,7 +379,8 @@ class OpenAICompatInstrument(Instrument):
         if not 200 <= status < 300:
             plain = _permanent(status, message)
             if plain:
-                return CallOutcome(False, error_kind="config", error=f"{plain} ({message[:300]})", latency_s=latency)
+                return CallOutcome(False, error_kind="config", error=f"{plain} ({message[:300]})", latency_s=latency,
+                                   receipt={"refused_before_answer": _refusal(status, message)})
             return CallOutcome(False, error_kind=classify(message), error=message, latency_s=latency)
         try:
             choice = payload["choices"][0]
@@ -417,7 +427,7 @@ class OllamaInstrument(Instrument):
         estimate = _estimate_tokens(instruction, prompt)
         needed = estimate + max_tokens + 256
         if needed > self.max_context:
-            return CallOutcome(False, error_kind="config", error=(
+            return CallOutcome(False, error_kind="config", receipt={"refused_before_answer": "too_large"}, error=(
                 f"This request needs about {needed} tokens (the text plus room for the answer), more than the "
                 f"{self.max_context}-token window allowed for this Ollama model. Allow it a larger window, or give "
                 "this role a model with a larger window."))
@@ -440,7 +450,7 @@ class OllamaInstrument(Instrument):
         if not 200 <= status < 300:
             message = str(payload.get("error") or payload)[:500]
             if "not found" in message.lower():
-                return CallOutcome(False, error_kind="config", latency_s=latency, error=(
+                return CallOutcome(False, error_kind="config", latency_s=latency, receipt={"refused_before_answer": "refused"}, error=(
                     f"The model '{self.model}' is not downloaded yet: run 'ollama pull {self.model}' (or choose one "
                     f"that is), then try again. ({message[:200]})"))
             return CallOutcome(False, error_kind=classify(message), error=f"http_{status} {message}", latency_s=latency)
@@ -518,11 +528,12 @@ class Router:
             raise KeyError(f"no instrument serves role {role!r}")
         errors = []
         attempt = 0
+        gone: dict[str, CallOutcome] = {}          # refused before answering: not asked again in this call
         for delay in (0,) + self.backoff_s:
             if delay:
                 self._sleep(delay)
             outcome = self._attempt(role, names, attempt, prompt=prompt, system=system, schema=schema,
-                                    max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort)
+                                    max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort, gone=gone)
             attempt = outcome.attempts
             if not outcome.ok and (outcome.receipt.get('not_admitted') or outcome.receipt.get('no_route_accepted')):
                 # Every model turned the request away before generating: nothing ran, so this is no answer, never an
@@ -534,12 +545,18 @@ class Router:
             if outcome.receipt.get('no_retry'):
                 raise TransportCensored(outcome.error or 'Saved remote request requires review', receipt=outcome.receipt)
             errors.append(outcome.error)
-        raise TransportCensored(f"role {role!r}: no response after {attempt} attempts; last: {errors[-1] if errors else ''}")
+        refusals = '; '.join(f"{name} refused before answering: {(o.error or '')[:200]}" for name, o in gone.items())
+        raise TransportCensored(f"role {role!r}: no response after {attempt} attempts; last: {errors[-1] if errors else ''}"
+                                + (f"; {refusals}" if refusals else ''))
 
-    def _attempt(self, role, names, attempt, *, prompt, system, schema, max_tokens, key, reasoning_effort):
+    def _attempt(self, role, names, attempt, *, prompt, system, schema, max_tokens, key, reasoning_effort, gone=None):
         refused = set()
+        gone = {} if gone is None else gone
         while True:
-            name = names[attempt % len(names)]          # rotate over declared fallbacks
+            live = [n for n in names if n not in gone]
+            if not live:                                # every model refused for good: its own plain words
+                return next(iter(gone.values()))
+            name = live[attempt % len(live)]            # rotate over declared fallbacks
             instrument = self.instruments[name]
             outcome = instrument.complete(prompt=prompt, system=system, schema=schema, max_tokens=max_tokens,
                                           key=f"{key}-a{attempt}",
@@ -560,7 +577,14 @@ class Router:
                                "error_kind": outcome.error_kind, "error": (outcome.error or "")[:300] or None,
                                "latency_s": round(outcome.latency_s, 3), **outcome.receipt})
             refused.add(name)
-            # Nothing ran and nothing was charged: refused at submission, or refused by every route (journey J11-F2).
-            turned_away = outcome.receipt.get('not_admitted') or outcome.receipt.get('no_route_accepted')
-            if outcome.ok or not turned_away or set(names) <= refused:
+            # Nothing ran and nothing was charged: refused at submission, or refused by every route (journey J11-F2),
+            # or refused by a model called directly before it answered: too large for it, a refused key, an unknown
+            # model (review of J11-G17: a directly called Groq's size refusal never let the role's next model try).
+            turned_away = (outcome.receipt.get('not_admitted') or outcome.receipt.get('no_route_accepted')
+                           or outcome.receipt.get('refused_before_answer'))
+            if not outcome.ok and (outcome.receipt.get('refused_before_answer') or outcome.receipt.get('no_route_accepted')):
+                # Refused for good, or by every route it has for this very request: a later backoff tier does not
+                # ask it again (reviews). Refused at admission (capacity) may pass later, so it is asked again.
+                gone[name] = outcome
+            if outcome.ok or not turned_away or set(names) <= refused | set(gone):
                 return outcome
