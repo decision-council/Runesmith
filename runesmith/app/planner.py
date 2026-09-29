@@ -494,8 +494,33 @@ def _apply_one_edit(text: str, edit, rel: str) -> str:
         if shifted is None:
             shifted = _quotes_unescaped(text, edit.get("old_text"), edit.get("new_text"), rel)
         if shifted is None:
+            shifted = _first_line_unindented(text, edit.get("old_text"), edit.get("new_text"), rel)
+        if shifted is None:
             raise
         return shifted
+
+
+def _first_line_unindented(text, old, new, rel=''):
+    """The edit, when its old text occurs nowhere as written but, without its first line's extra leading whitespace,
+    exactly once at the start of a line (journey J11-G26: Gemini indented only the first line of '  if (data.project.
+    style === "runes") {', which the file has flush left). The new text loses the same extra indentation. Anything else
+    is refused as before, and the checks judge the result."""
+    if (not isinstance(old, str) or not isinstance(new, str) or '\n' not in old or text.count(old) != 0
+            or not str(rel).lower().endswith(QUOTE_ESCAPE_FILES)):
+        return None
+    first, rest = old.split('\n', 1)
+    indent = first[:len(first) - len(first.lstrip(' \t'))]
+    if not indent or not first.strip() or not new.startswith(indent):
+        return None
+    body = first[len(indent):] + '\n' + rest
+    # Whole lines only, in code files only (review: a match ending mid-line rewrote a string literal's contents, and a
+    # README's code fence was reindented).
+    starts = [m.start() for m in re.finditer(re.escape(body), text)
+              if not text[text.rfind('\n', 0, m.start()) + 1:m.start()].strip(' \t')
+              and (body.endswith('\n') or text[m.end():m.end() + 1] in ('', '\n'))]
+    if len(starts) != 1:
+        return None
+    return text[:starts[0]] + new[len(indent):] + text[starts[0] + len(body):]
 
 
 QUOTE_ESCAPE_FILES = ('.js', '.mjs', '.cjs', '.py')

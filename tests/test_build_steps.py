@@ -719,3 +719,23 @@ def test_an_edit_whose_old_text_only_escapes_its_quotes_is_matched():
     twice = "x = 'a=\\\"1\\\"'\nx = 'a=\\\"1\\\"'\n# a=\"1\"\n"
     with pytest.raises(ValueError):
         _apply_one_edit(twice, {'old_text': 'a=\\"1\\"', 'new_text': 'b'}, 'm.py')
+
+
+def test_an_edit_whose_first_line_alone_is_indented_is_matched():
+    # Journey J11-G26: Gemini indented only the first line of an old text whose first line the file has flush left.
+    import pytest
+    from runesmith.app.planner import _apply_one_edit
+    text = "let s = 1;\nif (style === 'runes') {\n  s += 2;\n}\n"
+    old = "  if (style === 'runes') {\n  s += 2;"
+    new = "  if (style === 'runes') {\n  s += 3;"
+    assert _apply_one_edit(text, {'old_text': old, 'new_text': new}, 'motion.mjs') == "let s = 1;\nif (style === 'runes') {\n  s += 3;\n}\n"
+    with pytest.raises(ValueError):                  # a later line with other content still does not match
+        _apply_one_edit(text, {'old_text': "  if (style === 'runes') {\n  s += 5;", 'new_text': new}, 'motion.mjs')
+    with pytest.raises(ValueError):                  # not in a document (review)
+        _apply_one_edit(text, {'old_text': old, 'new_text': new}, 'README.md')
+    literal = 'HELP = """\nif (style === \'runes\') {\n  s += 2; keep"""\n'
+    with pytest.raises(ValueError):                  # whole lines only: never a match ending mid-line (review)
+        _apply_one_edit(literal, {'old_text': old, 'new_text': new}, 'help.py')
+    twice = "if (a) {\n  b();\n}\n  if (a) {\n  b();\n}\n"
+    with pytest.raises(ValueError):                  # two places: never a guess
+        _apply_one_edit(twice + "x", {'old_text': "    if (a) {\n  b();", 'new_text': "    if (a) {\n  c();"}, 'm.js')
