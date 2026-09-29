@@ -356,6 +356,7 @@ def _ground(example, milestone_text, source_text):
         return ' ' + ' '.join(re.findall(r'[a-z0-9]+', value.lower())) + ' '
 
     known_words = plain(known)
+    emptied = []                                   # files whose contains/lacks lost every text
     def stated_after(name, number) -> bool:
         """Whether the milestone or the example's input states this number after this name, in the same sentence,
         as a number of its own (verifier of batch L: a flat set of every number, the digits of "m2" and "#1b2130"
@@ -451,11 +452,8 @@ def _ground(example, milestone_text, source_text):
             else:
                 changed.append(f'{row["name"]} contains “{text}”')
         row['texts'] = list(dict.fromkeys(texts))
-        if not row['texts'] and row['name'] not in example.setdefault('exists', []):
-            # None of its wording is stated, but that the file is there still is: without this, m5's checks ended
-            # up checking nothing and passed on an empty folder (journey J11-B3).
-            example['exists'].append(row['name'])
-            changed.append(f'{row["name"]}: checked instead that it exists')
+        if not row['texts']:
+            emptied.append(row['name'])
     example['contains'] = [r for r in example.get('contains', []) if r['texts']]
     for row in example.get('lacks', []):
         # A text to remove is often one only the project has now ("the leftover debug banner"): grounded like
@@ -463,9 +461,8 @@ def _ground(example, milestone_text, source_text):
         kept = [text for text in row['texts'] if grounded(text, source_text.lower())]
         changed += [f'{row["name"]} leaves out “{text}”' for text in row['texts'] if text not in kept]
         row['texts'] = list(dict.fromkeys(kept))
-        if not row['texts'] and row['name'] not in example.setdefault('exists', []):
-            example['exists'].append(row['name'])
-            changed.append(f'{row["name"]}: checked instead that it exists')
+        if not row['texts']:
+            emptied.append(row['name'])
     example['lacks'] = [r for r in example.get('lacks', []) if r['texts']]
     kept_lines = []
     for row in example.get('file_lines', []):
@@ -474,6 +471,16 @@ def _ground(example, milestone_text, source_text):
         else:
             changed.append(f'{row["name"]}: the number after “{row["has"]}”')
     example['file_lines'] = [dict(r) for r in {(r['name'], r['has'].lower(), r['number']): r for r in kept_lines}.values()]
+    # A file whose checks lost all their stated text is still checked to exist: without this, m5's checks ended up
+    # checking nothing and passed on an empty folder (journey J11-B3). Only when no other check on it remains
+    # (journey J11-B13: "checked instead that it exists" was said while its contents and offset were still
+    # checked, and the check autopilot turned a good set down on it).
+    remaining = ({r['name'] for r in example.get('contains', [])} | {r['name'] for r in example.get('lacks', [])}
+                 | {r['name'] for r in example.get('file_lines', [])})
+    for name in dict.fromkeys(emptied):
+        if name not in remaining and name not in example.setdefault('exists', []):
+            example['exists'].append(name)
+            changed.append(f'{name}: checked instead that it exists')
     return changed
 
 

@@ -913,3 +913,17 @@ def test_checks_written_from_examples_are_not_refused_for_the_template_s_length(
     ws = workspace(tmp_path, [answer])
     proposal = propose(ws, ws.router(), "m1")
     assert len(proposal["code"]) > MAX_CODE and len(proposal["checks"]) == 3     # over the old limit, accepted
+
+
+def test_checked_instead_that_it_exists_only_when_nothing_else_checks_the_file():
+    # Journey J11-B13: a dropped "lacks" text added "checked instead that it exists" while the file's contents and
+    # offset were still checked, and the check autopilot turned a good set down on that note.
+    from runesmith.app.acceptance_examples import _ground
+    example = {"steps": [], "files": [], "exists": [], "unchanged": [],
+               "contains": [{"name": "out.svg", "texts": ['stroke-dasharray="115"']}],
+               "lacks": [{"name": "out.svg", "texts": ["M20,60 L35,0 M"]}],
+               "file_lines": [{"name": "out.svg", "has": "stroke-dashoffset", "number": 115}]}
+    changed = _ground(example, 'out.svg has stroke-dasharray="115" and a line with stroke-dashoffset and 115.', "")
+    assert example["exists"] == [] and not any("checked instead that it exists" in c for c in changed)
+    alone = {"steps": [], "files": [], "exists": [], "unchanged": [], "contains": [{"name": "page.html", "texts": ["Welcome, friend"]}]}
+    assert any("checked instead that it exists" in c for c in _ground(alone, "A page.", "")) and alone["exists"] == ["page.html"]
