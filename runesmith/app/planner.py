@@ -664,9 +664,21 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
                     lines=searchable.splitlines()
                     anchors=[line.strip() for line in old.splitlines() if len(line.strip())>5]
                     start=next((n for anchor in anchors for n,line in enumerate(lines) if line.strip()==anchor),None)
+                    # A quoted line found only inside a longer line: the model quoted what the program writes, not its
+                    # code (journey J11-G28: the excerpt was empty, and Surfaces' model repeated it four times).
+                    inside=None if start is not None else next((n for anchor in anchors for n,line in enumerate(lines)
+                                                                 if anchor in line),None)
+                    start=start if start is not None else inside
                     excerpt='' if start is None else '\n'.join(f'{n+1}: {lines[n]}' for n in range(max(0,start-1),min(len(lines),start+len(old.splitlines())+4)))
                     feedback.update(edit_index=edit_index+1,requested_old_text=old[:800],source_excerpt=excerpt[:1600],
                                     candidate_base_available=bool(candidate_text))
+                    # Only when every quoted line sits in a string literal (right after a quote): stale code such as
+                    # "x = 10" against "x = 100" is not output (verifier of J11-G28).
+                    quoted=lambda anchor,line:(anchor in line and line[:line.find(anchor)].rstrip()[-1:] in ('"',"'",'`'))
+                    if inside is not None and all(any(quoted(anchor,line) for line in lines) for anchor in anchors):
+                        feedback['hint']=(f'Each line of this old_text appears in {rel} only inside a longer line, for example '
+                                          f'line {inside+1}: {lines[inside].strip()[:200]} . old_text must quote the file\'s own '
+                                          'lines exactly as they are (its code), not the text the program writes.')
                 failure=PlannerUnavailable(f'Exact edit refused for {rel}: {error}')
                 failure.feedback=feedback
                 raise failure from error

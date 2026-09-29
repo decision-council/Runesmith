@@ -260,3 +260,29 @@ def test_a_prerequisite_builder_sees_the_checks_approved_for_its_goal(tmp_path):
     publish_expectations(ws, goal['id'], [{'id': 'check.test_01_export', 'description': said}], 'approved by the owner')
     assert 'export --file books.csv' in draft_prompt(ws, ws.plan()['milestones'][1])
     assert 'parent_public_acceptance' in draft_prompt(ws, ws.plan()['milestones'][0])       # null for a goal itself
+
+
+def test_a_refusal_for_quoting_the_output_shows_the_code_and_says_so(tmp_path):
+    # Journey J11-G28: the model quoted the SVG the program writes; those lines are pieces of string literals in the
+    # code, the refusal showed no source, and the model repeated the mistake four times.
+    from runesmith.app.building import build_step
+    import json
+    ws=planned(tmp_path);(tmp_path/'tool.py').write_text("out = ''\nout += '  <defs>\\n'\nout += '    <filter id=\"glow\"/>\\n'\nout += '  </defs>\\n'\n")
+    scripted(ws,[{'title':'Quoted output','files':[{'path':'tool.py','edits':[
+        {'old_text':'    <filter id="glow"/>\n  </defs>','new_text':'x'}]}]}],roles=('plan',))
+    with pytest.raises(PlannerUnavailable):build_step(ws,ws.router())
+    receipt=json.loads(next((ws.home/'build-attempts').glob('*.json')).read_text())
+    assert '<filter id="glow"/>' in receipt['feedback']['source_excerpt']
+    assert 'only inside a longer line' in receipt['feedback']['hint'] and 'not the text the program writes' in receipt['feedback']['hint']
+
+
+def test_stale_code_that_is_part_of_a_longer_line_gets_no_output_hint(tmp_path):
+    # Verifier of J11-G28: "self.value = 10" against "self.value = 100" is stale code, not the program's output.
+    from runesmith.app.building import build_step
+    import json
+    ws=planned(tmp_path);(tmp_path/'tool.py').write_text("class A:\n    def f(self):\n        self.value = 100\n        self.count = 200\n")
+    scripted(ws,[{'title':'Stale code','files':[{'path':'tool.py','edits':[
+        {'old_text':'        self.value = 10\n        self.count = 20','new_text':'x'}]}]}],roles=('plan',))
+    with pytest.raises(PlannerUnavailable):build_step(ws,ws.router())
+    receipt=json.loads(next((ws.home/'build-attempts').glob('*.json')).read_text())
+    assert 'hint' not in receipt['feedback'] and 'self.value = 100' in receipt['feedback']['source_excerpt']
