@@ -22,7 +22,7 @@ const errors=[],requests=[],loops=[];let revision=1;
 let manualRequests=[];
 let reviewNotes=[];
 let reconciliationConflict=false;
-let authorRevisionConflict=false,authorRevisionBlocked=false;
+let authorRevisionConflict=false,authorRevisionBlocked=false,milestoneRefusal=null;
 const authorRevisionFixture={eligible:true,blockers:[],parent:'fixtureDraft',instrument:'fixture-author',
   instruments:[{name:'fixture-author',kind:'scripted',model:'Fixture free model'},
     {name:'alternate-author',kind:'manual',model:'Chat relay'}],
@@ -287,7 +287,10 @@ await context.route('**/*',async route=>{
     }
     data={ok:true,fixture_only:true};
   }
-  else if(p==='/api/plan/milestones'&&req.method()==='POST')data={id:'mnew',status:'open',...body};
+  else if(p==='/api/plan/milestones'&&req.method()==='POST'){
+    if(milestoneRefusal){const why=milestoneRefusal;milestoneRefusal=null;await route.fulfill({status:401,json:{error:why}});return;}
+    data={id:'mnew',status:'open',...body};
+  }
   else {await route.fulfill({status:400,json:{error:'Unimplemented fixture route: '+p}});return;}
   await route.fulfill({json:data});
 });
@@ -2071,6 +2074,25 @@ try{
     await page.waitForTimeout(200);
     assert.equal(requests.slice(editStart).filter(r=>r.method==='POST').length,0);
     loops.push({id:'B20.09',case:'Adding or editing a milestone takes what it should do and when it is done; Cancel sends nothing',result:'passed'});
+    // B20.11 (journey J11-F19): a refused save says why and opens the form again with what was typed
+    milestoneRefusal='open Runesmith from its launcher to get access';
+    const refusedStart=requests.length;
+    await page.getByRole('button',{name:'Milestone',exact:true}).click();
+    const again=page.locator('.modal',{hasText:'Add a milestone'});
+    await again.waitFor();
+    await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Title');
+    await again.getByLabel('Title',{exact:true}).fill('Blueprint frames that open');
+    await again.getByLabel('Done when',{exact:true}).fill('out.svg is well-formed');
+    await again.getByRole('button',{name:'Save',exact:true}).click();
+    await page.locator('.toast',{hasText:'Not saved: open Runesmith from its launcher'}).waitFor();
+    const reopened=page.locator('.modal',{hasText:'Add a milestone'});
+    await reopened.waitFor();
+    assert.equal(await reopened.getByLabel('Title',{exact:true}).inputValue(),'Blueprint frames that open');
+    assert.equal(await reopened.getByLabel('Done when',{exact:true}).inputValue(),'out.svg is well-formed');
+    await reopened.getByRole('button',{name:'Cancel',exact:true}).click();
+    await page.waitForTimeout(200);
+    assert.equal(requests.slice(refusedStart).filter(r=>r.method==='POST').length,1);
+    loops.push({id:'B20.11',case:'A refused milestone save says why and opens the form again with what was typed',result:'passed'});
     // B20.10 (owner of J11, 2026-09-29): the check autopilot's approvals say so, what it left for the owner says why, and its switch is in the Build card
     fixtureAcceptance={m1:{approved:{provenance:'model-proposed, autopilot-approved',proposed_by:'Fixture chat',checks,
         autopilot:'trial and findings clean; verifier-model worked out the same 4 expected values'},
@@ -2216,6 +2238,16 @@ try{
     await page.waitForFunction(()=>[...document.querySelectorAll('.pillbox button')].some(b=>b.textContent.includes('recipes')&&b.getAttribute('aria-pressed')==='true'));
     assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST'&&r.path==='/api/settings').map(r=>r.body).at(-1),{exclude:['recipes']});
     loops.push({id:'B24.02',case:'A folder chip under Never touch says whether it is pressed',result:'passed'});
+    // B24.03 (journey J11-F21): full speed is the owner's switch, off until chosen, and says what it waits for
+    const speed=page.getByLabel('Full speed',{exact:true});
+    assert.equal(await speed.isChecked(),false);
+    const rhythm=page.locator('.card',{hasText:'Rhythm'});
+    assert((await rhythm.innerText()).includes('never longer than above'));
+    assert((await rhythm.innerText()).includes('With full speed on, the longest wait.'));
+    await speed.locator('xpath=ancestor::label[1]').click();
+    await page.waitForFunction(()=>document.querySelector('input[aria-label="Full speed"]')?.checked===true);
+    assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST'&&r.path==='/api/settings').map(r=>r.body).at(-1),{full_speed:true});
+    loops.push({id:'B24.03',case:'Full speed is off until the owner turns it on, says when it still waits, and saves only that switch',result:'passed'});
   }
   if(selected.has('B25')){
     // A folder of documents: a model reads only the documents the owner ticks, and the page says so (journey J4-G2).

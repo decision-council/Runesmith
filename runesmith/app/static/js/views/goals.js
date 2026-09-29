@@ -4,6 +4,18 @@ import { h, icon, get, post, del, bus, toast, commentable, openNotes, clear, ago
 
 // A milestone in the owner's words: what it should do and when it is done, not only a title. Checkers and builders
 // read all three; an owner's own milestone used to get a title and nothing else (journey J11-G7).
+// Save a milestone; a refusal is said and the form opens again with what was typed (journey J11-F19: after a
+// restart the session was stale, the dialog closed with nothing said, and the owner's text was lost).
+async function saveMilestone(heading, url, start, redraw) {
+  let values = start;
+  for (;;) {
+    const f = await milestoneForm(heading, values);
+    if (!f) return;
+    try { await post(url, f); redraw(); return; }
+    catch (error) { toast(`Not saved: ${error.message}`, 'bad', 8000); values = f; }
+  }
+}
+
 function milestoneForm(heading, m = {}) {
   return new Promise((resolve) => {
     const title = h('input.input', { value: m.title || '', placeholder: 'e.g. A first page that lists tasks', 'aria-label': 'Title' });
@@ -204,7 +216,7 @@ export default async function render(root, ctx) {
       await post('/api/worker/run', { job: 'plan' }); toast('The Planner is drafting. This page updates when it is done.', 'good', 6000);
     }));
     clear(planCard).append(h('div.card-head', h('h3', icon('route'), 'Plan'), plan ? h('span.badge', `v${plan.version} · ${plan.drafted_by || 'owner'} · ${ago(plan.utc)}`) : null,
-      h('div.actions', h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, showAuthorContext)}, icon('eye'), 'Author context'), h('button.btn.sm', { onclick: async () => { const f = await milestoneForm('Add a milestone'); if (f) { await post('/api/plan/milestones', f); drawPlan(); } } }, icon('plus'), 'Milestone'), draftBtn)));
+      h('div.actions', h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, showAuthorContext)}, icon('eye'), 'Author context'), h('button.btn.sm', { onclick: () => saveMilestone('Add a milestone', '/api/plan/milestones', {}, drawPlan) }, icon('plus'), 'Milestone'), draftBtn)));
     if(planningBlocks.length)planCard.append(h('div.callout.warn',h('div',planningBlocks.join(' '),
       h('div.row.wrap.mt-8',
         data.autonomy==='observe' ? h('button.btn.sm.primary',{onclick:(e)=>withBusy(e.currentTarget,async()=>{
@@ -263,7 +275,7 @@ export default async function render(root, ctx) {
                 await post('/api/worker/run',{job:'breakdown',params:{milestone:m.id}});
                 toast('Runesmith is proposing smaller prerequisites from the evidence. The goal stays unchanged.','good',6000);
               })},icon('route'),'Propose smaller steps') : null,
-            h('button.btn.sm.ghost', { onclick: async () => { const f = await milestoneForm('Edit milestone', m); if (f) { await post(`/api/plan/milestones/${m.id}`, f); drawPlan(); } } }, icon('pencil'), 'Edit'))),
+            h('button.btn.sm.ghost', { onclick: () => saveMilestone('Edit milestone', `/api/plan/milestones/${m.id}`, m, drawPlan) }, icon('pencil'), 'Edit'))),
         h('span', { class: `badge ${cls}` }, label));
       // Acceptance checks the owner approves in plain words: automatic apply for this milestone is judged by them.
       const acc = data.acceptance_checks?.[m.id];

@@ -444,3 +444,41 @@ def test_a_file_line_is_asked_as_a_claim_and_its_negation():
 def test_the_output_gate_reads_the_joined_form_and_minus_o_only_before_a_file_name():
     assert autopilot._written(["node", "m.mjs", "--svg=out.svg"]) == "out.svg"
     assert autopilot._written(["node", "m.mjs", "-o", "fast"]) is None and autopilot._written(["node", "m.mjs", "-o", "a.txt"]) == "a.txt"
+
+
+def test_full_speed_starts_the_next_step_at_once_while_models_answer(tmp_path, monkeypatch):
+    # Journey J11-F21 (Lars: "go straight to next process after being done"): a failed build waited the whole
+    # interval (10:14:17Z, then nothing until 10:29:39Z).
+    from runesmith.app.planner import PlannerUnavailable
+    ws = autopilot_workspace(tmp_path, [], [])
+    ws.update_settings({"build_steps": True, "auto_work": True, "policy_chosen": True, "onboarded": True,
+                        "interval_minutes": 15, "full_speed": True})
+    worker = Worker(ws, EventBus())
+    calls = []
+
+    def step(milestone):
+        for event in calls:
+            ws.record_call(dict(event, instrument="x", role="acceptance"))
+        raise PlannerUnavailable("no usable checks")
+    monkeypatch.setattr(worker, "_job_propose_acceptance", step)
+
+    def run(*events):
+        calls[:] = events
+        worker._execute({"id": f"s{len(events)}", "kind": "propose_acceptance", "params": {"milestone": "m1"}, "by": "schedule"})
+        return worker._due()
+    assert run({"ok": True}) == 0                                            # answered: straight on
+    assert run({"ok": False, "error_kind": "output"}) == 0                   # answered badly: straight on, with feedback
+    assert 55 < run({"ok": False, "error_kind": "transport"}) <= 60          # nobody answered: 1 minute
+    assert 115 < run({"ok": False, "error_kind": "transport"}) <= 120        # again: 2 minutes
+    assert 235 < run({"ok": False, "error_kind": "transport"}, {"ok": False, "error_kind": "transport"}) <= 240
+    for _ in range(4):
+        waited = run({"ok": False, "error_kind": "transport"})
+    assert 895 < waited <= 900                                               # never longer than the interval
+    assert run({"ok": True}) == 0 and json.loads((ws.home / "WORK.json").read_text())["busy_streak"] == 0
+    assert 115 < run() <= 120                                                # nothing asked of a model: 2 minutes
+    ws.update_settings({"full_speed": False})
+    assert 895 < worker._due() <= 900                                        # off: the interval, as before
+    ws.update_settings({"full_speed": True})
+    (ws.home / "WORK.json").write_text(json.dumps({"utc": json.loads((ws.home / "WORK.json").read_text())["utc"],
+                                                   "objects": {}}), encoding="utf-8")
+    assert 895 < worker._due() <= 900                                        # a round keeps the interval

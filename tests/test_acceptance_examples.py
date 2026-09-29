@@ -80,7 +80,11 @@ def run(tmp_path, name, code, **flags):
 def test_the_rendered_checks_fail_before_and_on_broken_builds_and_pass_on_every_correct_build(tmp_path):
     shaped = validate_examples(EXAMPLES, MILESTONE)
     assert shaped["dropped"] == [] and "runesmith" not in shaped["code"].split("EXAMPLES =")[0].split('"""', 2)[2]
-    validate({"checks": [{"test": c["test"], "says": c["says"]} for c in shaped["checks"]], "code": shaped["code"]})
+    from runesmith.app.acceptance_examples import HARNESS
+    from runesmith.app.acceptance_proposals import MAX_CODE
+    # As proposals do: the limit leaves room for Runesmith's own template (journey J11-B12).
+    validate({"checks": [{"test": c["test"], "says": c["says"]} for c in shaped["checks"]], "code": shaped["code"]},
+             limit=MAX_CODE + len(HARNESS))
     verdicts = {name: run(tmp_path, name, shaped["code"], **flags) for name, flags in {
         "before": {"months": False, "safe": False, "damaged": False},
         "correct": {}, "correct_worded_differently": {"wordy": True},
@@ -412,7 +416,8 @@ def test_milliner_gets_the_lenient_examples_schema_as_text_not_as_a_forced_schem
 def test_a_file_a_step_hands_the_program_that_nothing_creates_is_named_under_its_check():
     # Journey J11-G10: "node motion.mjs position.motion.json --at 1" ran on a file no one made; every correct build
     # failed with ENOENT, and prerequisite s1 used two of its three tries on it.
-    source = json.dumps({"inventory": ["motion.mjs", "sample.motion.json"]}) + ' if (command === "save")'
+    source = (json.dumps({"inventory": ["motion.mjs", "sample.motion.json"]}) + ' if (command === "save")'
+              ' args.indexOf("--out")')                    # an option the program names (J11-G30)
     milestone = "Make --at optional: node motion.mjs sample.motion.json checks the project."
 
     def motion(*words, **expect):
@@ -510,6 +515,33 @@ def test_a_command_neither_the_milestone_nor_the_program_mentions_is_refused_wit
     on_purpose = {"examples": [{"name": "unknown", "says": "A command the program does not know is refused.",
                                 "steps": [{"run": T + ["count"], "expect": {"exit": "error", "message": True}}]}]}
     assert validate_examples(on_purpose, "A README that shows each command.", source_text=source)["examples"]
+
+
+def test_an_option_neither_the_milestone_nor_the_program_mentions_is_refused_with_its_name():
+    # Journey J11-G30: for a browser export milestone the Checker ran --export-png and --export-webm, which nothing
+    # names, and the autopilot approved them.
+    source = "const at = args.indexOf('--at'); const svg = args.indexOf('--svg');"
+    milestone = "Export Capabilities. Implement WebM and PNG export functionality from the browser canvas."
+    run = lambda *words: {"examples": [{"name": "export", "says": "The frame is exported.",
+                                         "steps": [{"run": ["node", "motion.mjs", "sample.motion.json", *words]}],
+                                         "exists": ["frame.png"]}]}
+    with pytest.raises(WorkspaceError, match="with “--export-png”, an option neither the milestone nor the program"):
+        validate_examples(run("--export-png", "frame.png"), milestone, source_text=source)
+    with pytest.raises(WorkspaceError, match="“--export-png”, “--scale”, options neither"):
+        validate_examples(run("--export-png=frame.png", "--scale", "2"), milestone, source_text=source)
+    assert validate_examples(run("--at", "0", "--svg", "frame.png"), milestone, source_text=source)["examples"]
+    assert validate_examples(run("--png", "frame.png"), milestone, source_text=source)["examples"]   # the milestone says PNG
+    for piece in ('{"inventory": ["motion.mjs", "export-png-helper.js"]}', '<button class="btn-export-png">'):
+        with pytest.raises(WorkspaceError, match="“--export-png”, an option neither"):     # review: a piece of another name
+            validate_examples(run("--export-png", "frame.png"), milestone, source_text=source + piece)
+    with pytest.raises(WorkspaceError, match="“--json”, an option neither"):
+        validate_examples(run("--json"), "Export the canvas as a picture.", source_text=source + " legacy-json-migrator.js")
+    assert validate_examples(run("--json"), "Print the frame as JSON.", source_text=source)["examples"]
+    assert validate_examples(run("--export-png", "frame.png"), milestone)["examples"]              # no source: not judged
+    on_purpose = {"examples": [{"name": "unknown", "says": "An option the program does not know is refused.",
+                                "steps": [{"run": ["node", "motion.mjs", "sample.motion.json", "--export-png"],
+                                           "expect": {"exit": "error", "message": True}}]}]}
+    assert validate_examples(on_purpose, milestone, source_text=source)["examples"]
 
 
 @pytest.mark.parametrize("given,meant", [(0, "ok"), ("0", "ok"), ("success", "ok"), ("Succeeds", "ok"), (2, "error"),
@@ -987,3 +1019,25 @@ def test_a_file_line_number_may_be_the_text_of_the_element_that_holds_the_name()
     assert not after("stroke-dashoffset", 60, '<path stroke-dashoffset="57.5" d="M20,60"/>')     # not any number
     assert not after("stroke-dashoffset", 57.5, '<path stroke-dashoffset="115">57.5</path>')      # an attribute's own value
     assert not after("stroke-dashoffset", 120, '<path stroke-dashoffset="57.5" d="M1"/>120<circle/>')
+
+
+def test_a_checked_svg_or_json_file_must_parse(tmp_path):
+    # Journey J11-G29: Blueprint wrote <rect ... stroke-width="1.5"<line .../> and its text checks passed.
+    from runesmith.app.acceptance_examples import HARNESS
+    import unittest
+    scope = {}
+    exec("import json\nimport re\n" + HARNESS[HARNESS.index("def read_checked"):HARNESS.index("def found")], scope)
+    read = scope["read_checked"]
+    case = unittest.TestCase()
+    good, broken, data = tmp_path / "good.svg", tmp_path / "bad.svg", tmp_path / "bad.json"
+    good.write_text('<svg xmlns="http://www.w3.org/2000/svg"><rect class="rs-dim"/></svg>', encoding="utf-8")
+    broken.write_text('<svg><rect x="1" stroke-width="1.5"<line class="rs-dim"/></svg>', encoding="utf-8")
+    data.write_text('{"a": 1,', encoding="utf-8")
+    assert 'rs-dim' in read(case, str(good), "good.svg")
+    for path, name in ((broken, "bad.svg"), (data, "bad.json")):
+        try:
+            read(case, str(path), name)
+        except AssertionError as error:
+            assert "not well-formed" in str(error) or "not valid JSON" in str(error)
+        else:
+            raise AssertionError(name + " was accepted")

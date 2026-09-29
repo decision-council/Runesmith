@@ -135,6 +135,12 @@ def reachable(spec: dict[str, Any], timeout: float = 3.0) -> tuple[bool, str]:
         return False, f"nothing answers at {base}: {hint}"
 
 
+# Full speed (J11-F21): the steps whose end starts the next one at once while models answer, and the wait when a
+# step had nothing to ask a model.
+FULL_SPEED_KINDS = frozenset({'build', 'mode', 'propose_acceptance'})
+FULL_SPEED_IDLE_S = 120.0
+
+
 class Worker:
     def __init__(self, ws: Workspace, bus: EventBus) -> None:
         self.ws, self.bus = ws, bus
@@ -457,11 +463,32 @@ class Worker:
     def _next_round_utc(self, settings: dict[str, Any]) -> str | None:
         if not settings["auto_work"] or not settings["onboarded"] or self.paused:
             return None
-        last = _read_json(self.ws.home / "WORK.json", {}).get("utc")
+        work = _read_json(self.ws.home / "WORK.json", {})
+        last = work.get("utc")
         if not last:
             return _now()
         ended = calendar.timegm(time.strptime(last, "%Y-%m-%dT%H:%M:%SZ"))
-        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ended + float(settings["interval_minutes"]) * 60))
+        wait = float(settings["interval_minutes"]) * 60
+        if settings.get("full_speed") and work.get("kind") in FULL_SPEED_KINDS:
+            # Full speed (J11-F21): the wait the last step earned; a round is paced by the interval as before.
+            earned = work.get("wait_s")
+            wait = min(wait, float(earned)) if isinstance(earned, (int, float)) and earned >= 0 else 0.0
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ended + wait))
+
+    def _full_speed_wait(self, before: dict[str, int], settings: dict[str, Any]) -> dict[str, Any]:
+        """How long full speed waits after a scheduled step: not at all when a model answered (well or badly: the
+        models are there, and the next step has the answer's feedback); 1, 2, 4 ... minutes, at most the interval,
+        when none answered; FULL_SPEED_IDLE_S when the step called no model, as when everything waits for the owner."""
+        tally = getattr(self.ws, "call_tally", None) or {}
+        answered = tally.get("answered", 0) - before.get("answered", 0)
+        unanswered = tally.get("unanswered", 0) - before.get("unanswered", 0)
+        longest = float(settings["interval_minutes"]) * 60
+        if answered > 0:
+            return {"wait_s": 0, "busy_streak": 0}
+        if unanswered > 0:
+            streak = int(_read_json(self.ws.home / "WORK.json", {}).get("busy_streak") or 0) + 1
+            return {"wait_s": min(longest, 60.0 * 2 ** min(streak - 1, 16)), "busy_streak": streak}
+        return {"wait_s": min(longest, FULL_SPEED_IDLE_S), "busy_streak": 0}
 
     def _due(self) -> float | None:
         """Seconds until the next scheduled round, or None when nothing is scheduled."""
@@ -554,6 +581,7 @@ class Worker:
             self._stop_after_step = False
         started = time.monotonic()
         outcome: dict[str, Any] = {}
+        calls_before = dict(getattr(self.ws, "call_tally", None) or {})
         try:
             from runesmith.app.work_modes import guard_job
             guard_job(self.ws, job['kind'])  # A switch may have changed since enqueue.
@@ -583,7 +611,14 @@ class Worker:
             # A scheduled check request moves the schedule on like a build (journey J11-B9: it did not, so while every
             # free model was busy the autopilot asked again as soon as the last request failed, six times in 2.5 min).
             if job['kind'] in {'build', 'mode'} or (job['kind'] == 'propose_acceptance' and job.get('by') == 'schedule'):
-                _write_json(self.ws.home / 'WORK.json', {'utc':_now(), 'kind':job['kind'], 'result':result})
+                work = {'utc':_now(), 'kind':job['kind'], 'result':result}
+                try:
+                    settings = self.ws.settings()
+                    if settings.get('full_speed'):
+                        work.update(self._full_speed_wait(calls_before, settings))
+                except Exception:                    # the schedule then keeps its interval (never stop the worker)
+                    pass
+                _write_json(self.ws.home / 'WORK.json', work)
             done = dict(job, finished=_now(), seconds=round(time.monotonic() - started, 1), result=result,
                         outcome={k: v for k, v in outcome.items() if k in ("summary", "error", "detail", "objects",
                                                                             "opportunities", "served", "accepted", "draft", "milestone", "advanced",

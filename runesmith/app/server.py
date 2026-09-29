@@ -1080,25 +1080,32 @@ def make_handler(studio: Studio):
         def do_DELETE(self):
             self._mutating("DELETE")
 
+        def _refuse_unread(self, status: int, message: str) -> None:
+            # The body was not read, so it is still in the connection: close it, or the next request on it is read
+            # from that body (journey J11-B14: a 401 after a restart turned the next save into "Bad request syntax").
+            self.close_connection = True
+            self._send(status, json.dumps({"error": message}).encode("utf-8"), "application/json; charset=utf-8",
+                       {"Cache-Control": "no-store", "Connection": "close"})
+
         def _mutating(self, method: str) -> None:
             if not self._host_ok():
-                return self._error(421, "this server only answers to 127.0.0.1")
+                return self._refuse_unread(421, "this server only answers to 127.0.0.1")
             parts = urlsplit(self.path)
             if not parts.path.startswith("/api/") or not self._authed():
-                return self._error(401, "open Runesmith from its launcher to get access")
+                return self._refuse_unread(401, "open Runesmith from its launcher to get access")
             if self.headers.get("X-Runesmith") != "1":
-                return self._error(403, "missing the X-Runesmith header")
+                return self._refuse_unread(403, "missing the X-Runesmith header")
             origin = self.headers.get("Origin")
             if origin and urlsplit(origin).netloc.lower() != (self.headers.get("Host") or "").lower():
-                return self._error(403, "cross-origin request refused")
+                return self._refuse_unread(403, "cross-origin request refused")
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
-                return self._error(400, "the Content-Length is not a number")
+                return self._refuse_unread(400, "the Content-Length is not a number")
             if length < 0:                                  # read(-1) would wait for the client to hang up
-                return self._error(400, "the Content-Length is negative")
+                return self._refuse_unread(400, "the Content-Length is negative")
             if length > MAX_BODY:
-                return self._error(413, "request too large")
+                return self._refuse_unread(413, "request too large")
             raw = self.rfile.read(length) if length else b""
             try:
                 body = json.loads(raw.decode("utf-8")) if raw else {}

@@ -568,7 +568,7 @@ async function operationsLens(body, ctx) {
       t ? h('div', h('p.small', `${t.candidate} challenges ${t.incumbent}. New work is split between them by a seeded coin; the result decides activation.`),
         h('div.grid.two', ['incumbent', 'candidate'].map((arm) => h('div.kpi', h('div.k', arm), h('div.v', `${t.counts[arm][0]}`, h('small', `/ ${t.counts[arm][1]}`)), h('div.bar.mt-8', h('i', { style: { width: `${Math.min(100, t.counts[arm][1] / t.max_per_arm * 100)}%` } })))))) : h('p.muted', 'No trial open. A candidate generation must win one before it can become active.'));
     const sched = h('div.card', h('div.card-head', h('h3', icon('clock'), 'Schedule')),
-      kv([['Autonomy', d.settings.autonomy === 'propose' ? 'Propose: works, then asks you' : 'Observe: maps and watches'], ['Scheduled rounds', d.settings.auto_work ? `every ${d.settings.interval_minutes} min` : 'off'],
+      kv([['Autonomy', d.settings.autonomy === 'propose' ? 'Propose: works, then asks you' : 'Observe: maps and watches'], ['Scheduled rounds', d.settings.auto_work ? (d.settings.full_speed ? `full speed (waits at most ${d.settings.interval_minutes} min)` : `every ${d.settings.interval_minutes} min`) : 'off'],
         ['Next round', w.next_round_utc ? `${clock(w.next_round_utc)} (${ago(w.next_round_utc)})` : '—'], ['Last round', d.round_utc ? `${ago(d.round_utc)}: ${humanize(d.last_round?.outcome)}` : 'never']]),
       h('div.row.mt-8', h('button.btn.sm', { onclick: () => ctx.navigate('settings') }, icon('sliders'), 'Change')));
     const consoleBox = h('div.console');

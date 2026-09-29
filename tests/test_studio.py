@@ -716,3 +716,16 @@ def test_the_internal_router_is_not_offered_to_the_public(tmp_path, monkeypatch)
     monkeypatch.setenv("RUNESMITH_INTERNAL", "1")
     (tmp_path / "other").mkdir()
     assert "milliner" in [p["id"] for p in Workspace(tmp_path / "other").inference()["presets"]]
+
+
+def test_a_write_refused_before_its_body_is_read_closes_the_connection(studio):
+    # Journey J11-B14: a 401 after a restart left the body in the connection, and the next request on it was read
+    # from that body and refused "Bad request syntax".
+    conn = http.client.HTTPConnection("127.0.0.1", studio.port, timeout=10)
+    conn.request("POST", "/api/plan/milestones", body=b'{"title": "x", "detail": "<rect stroke-width=\\"1.5\\"<line/>"}',
+                 headers={"Content-Type": "application/json", "X-Runesmith": "1"})
+    first = conn.getresponse()
+    assert first.status == 401 and (first.getheader("Connection") or "").lower() == "close"
+    first.read()
+    conn.request("GET", "/api/ping")                  # http.client reconnects after "Connection: close"
+    assert conn.getresponse().status == 200

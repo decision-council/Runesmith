@@ -70,6 +70,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "build_apply": False,          # only owner acceptance + unchanged source + a root-bound grant can apply
     "build_paths": [],
     "checks_autopilot": False,    # Runesmith approves proposed checks that pass every gate (acceptance_autopilot)
+    "full_speed": False,          # the next scheduled step starts as soon as one ends while models answer (J11-F21)
 }
 # Homes onboarded before the explicit choices existed keep the behaviour they were onboarded with, until their owner
 # chooses (``policy_chosen`` absent from the stored settings marks such a home).
@@ -78,7 +79,7 @@ SETTING_TYPES: dict[str, Any] = {
     "onboarded": bool, "workspace_name": str, "use_type": str, "autonomy": str, "auto_work": bool,
     "interval_minutes": (int, float), "probe_tests": bool, "exclude": list, "max_objects": int, "read_notes": bool,
     "kaizen": bool, "min_experience": int, "kaizen_every": int, "theme": str, "policy_chosen": bool,
-    "build_steps": bool, "build_apply": bool, "build_paths": list, "checks_autopilot": bool,
+    "build_steps": bool, "build_apply": bool, "build_paths": list, "checks_autopilot": bool, "full_speed": bool,
 }
 CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"},
            "use_type": {"", "improve", "build", "docs", "explore", "numbers"}}
@@ -168,6 +169,9 @@ class Workspace:
         self.ledger = Ledger(self.home / "ledger.jsonl")
         self._lock = threading.RLock()
         self._ops_lock = threading.Lock()
+        # Model calls since the Studio started: answered (an answer came back, usable or not) or unanswered (busy,
+        # limited, unreachable). Full speed reads it to tell a step the models answered from one they did not.
+        self.call_tally = {"answered": 0, "unanswered": 0}
         if created:
             # A Studio home starts with no instrument: the owner chooses where thinking comes from.
             config = self.config()
@@ -567,6 +571,7 @@ class Workspace:
             row = stats["instruments"].setdefault(name, {"calls": 0, "ok": 0, "errors": 0, "latency_s": 0.0})
             row["calls"] += 1
             row["ok" if event.get("ok") else "errors"] += 1
+            self.call_tally["answered" if event.get("ok") or event.get("error_kind") == "output" else "unanswered"] += 1
             row["latency_s"] = round(row["latency_s"] + float(event.get("latency_s") or 0), 3)
             row["last_utc"] = _now()
             row["model"] = event.get("model")

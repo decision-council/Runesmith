@@ -180,6 +180,28 @@ def _mentioned(word: str, text: str) -> bool:
     return re.search(r'(?<![A-Za-z0-9_])' + re.escape(word.lower()) + r'(?![A-Za-z0-9_])', text.lower()) is not None
 
 
+def _options(step) -> list[str]:
+    """The long options a run step passes its program ("--svg" in node motion.mjs a.json --svg out.svg)."""
+    words = step.get('run') or []
+    rest = words[3:] if len(words) > 2 and words[1] == '-m' else words[2:]
+    found = []
+    for word in rest:
+        name = str(word).partition('=')[0]
+        if re.fullmatch(r'--[A-Za-z][A-Za-z0-9_-]*', name) and name not in found:
+            found.append(name)
+    return found
+
+
+def _option_named(option: str, text: str) -> bool:
+    """The option itself ("--svg"), or its bare name as a word of its own ("PNG" for --png), is in the text; a piece
+    of another hyphenated name (a file export-png-helper.js, a class btn-export-png) does not count (review of
+    J11-G30: it let an invented --export-png through)."""
+    if _mentioned(option, text):
+        return True
+    bare = re.escape(option[2:].lower())
+    return re.search(r'(?<![A-Za-z0-9_-])' + bare + r'(?![A-Za-z0-9_-])', text.lower()) is not None
+
+
 def _relative(name, what):
     name = _plain(name, what, 200).replace('\\', '/')
     parts = name.split('/')
@@ -838,6 +860,16 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
                 # so its checks failed every correct build. The one revision is told the word.
                 raise WorkspaceError(f'{what}, step {n}: runs “{word}”, a command neither the milestone nor the program '
                                      'mentions. Use a command they name.')
+            invented = [o for o in _options(step) if not _option_named(o, milestone_text + ' ' + source_text)]
+            if invented and source_text and not refused_on_purpose:
+                # Journey J11-G30: for "export a PNG frame and a WebM clip from the browser canvas", the Checker ran
+                # --export-png and --export-webm, which nothing names; the autopilot's second model agreed with the
+                # commands as given, and a build would have had to invent the same options to pass.
+                raise WorkspaceError(f'{what}, step {n}: runs the program with ' + ', '.join(f'“{o}”' for o in invented)
+                                     + (', options' if len(invented) > 1 else ', an option')
+                                     + ' neither the milestone nor the program mentions. Use the options they name; if '
+                                     'they name none for this, check what the milestone does name, and say in '
+                                     '"not_checked" what cannot be checked.')
         for n, step in enumerate(example['steps'], 1):
             if not step.pop('unchecked_expect', False):
                 continue
@@ -945,6 +977,26 @@ except Exception as error:
     answer = {"raises": [kind.__name__ for kind in type(error).__mro__], "message": str(error)[:300]}
 print("RUNESMITH_CALL=" + json.dumps(answer))
 """
+
+
+def read_checked(case, path, name):
+    """A checked file's text; an .svg or .xml file must be well-formed and a .json file must parse, or the check
+    fails (journey J11-G29: Blueprint wrote an SVG whose rect tag never closed, and its text checks passed)."""
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    low = name.lower()
+    if low.endswith((".svg", ".xml")):
+        import xml.dom.minidom
+        try:
+            xml.dom.minidom.parseString(text.encode("utf-8"))
+        except Exception as error:
+            case.fail(name + " is not well-formed XML: " + str(error))
+    elif low.endswith(".json"):
+        try:
+            json.loads(text)
+        except ValueError as error:
+            case.fail(name + " is not valid JSON: " + str(error))
+    return text
 
 
 def found(text, output):
@@ -1213,22 +1265,19 @@ def run_example(case, example):
         for row in example.get("contains", []):
             path = os.path.join(copy, row["name"])
             case.assertTrue(os.path.isfile(path), row["name"] + " does not exist")
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                text = handle.read()
+            text = read_checked(case, path, row["name"])
             for wanted in row["texts"]:
                 case.assertTrue(found(wanted, text), row["name"] + " does not contain " + repr(wanted))
         for row in example.get("lacks", []):
             path = os.path.join(copy, row["name"])
             case.assertTrue(os.path.isfile(path), row["name"] + " does not exist")
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                text = handle.read()
+            text = read_checked(case, path, row["name"])
             for unwanted in row["texts"]:
                 case.assertFalse(found_whole(unwanted, text), row["name"] + " contains " + repr(unwanted))
         for row in example.get("file_lines", []):
             path = os.path.join(copy, row["name"])
             case.assertTrue(os.path.isfile(path), row["name"] + " does not exist")
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                text = handle.read()
+            text = read_checked(case, path, row["name"])
             case.assertTrue(number_after(row["has"], row["number"], text),
                             row["name"] + ": the first number after " + repr(row["has"]) + " is not " + repr(row["number"]))
         if example.get("links_resolve"):
