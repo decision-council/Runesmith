@@ -64,6 +64,16 @@ def gates(proposal) -> list[str]:
         # A file check reduced to "the file exists" checks far less than its sentence says (review of J11-G19).
         if isinstance(note, str) and 'checked instead that it exists' in note:
             found.append(f'{note}: only that the file exists is checked, not what it should or should not contain')
+    for example in proposal.get('examples') or []:
+        for step in example.get('steps') or []:
+            words, expect = step.get('run') or [], step.get('expect') or {}
+            written = _written(words)
+            if written and any(expect.get(k) for k in ('shows', 'hides', 'lines', 'order')):
+                # The command writes its result to a file and may print nothing: printed-output checks on it may
+                # fail every correct build (journey J11-G24: the Embers checks read the printed output of
+                # --svg out.svg, and the second model, not knowing it prints nothing, agreed).
+                found.append(f"{example.get('test')}: `{' '.join(words)}` writes {written}, and its checks read what "
+                             'it prints; check the file instead')
     revision = proposal.get('revision') or {}
     if revision.get('error') and revision.get('after') != 'unusable':
         found.append('the revision Runesmith asked for did not work')
@@ -85,6 +95,21 @@ def _command(step) -> str:
     return ' '.join(step.get('run') or [])
 
 
+OUTPUT_OPTIONS = ('--svg', '--out', '--output', '-o', '--png', '--save', '--to')
+
+
+def _written(words) -> str | None:
+    """The file a command names as its output ("--svg out.svg", "--svg=out.svg"), or None. "-o" counts only before a
+    file name with an extension: it has other meanings too (review of J11-G24)."""
+    for i, word in enumerate(words):
+        flag, sep, value = str(word).partition('=')
+        if flag in OUTPUT_OPTIONS and sep and value:
+            return value
+        if word in OUTPUT_OPTIONS and i + 1 < len(words):
+            target = str(words[i + 1])
+            if word != '-o' or re.search(r'\.[A-Za-z0-9]{1,5}$', target):
+                return target
+    return None
 DECOY_WORDS = ('violet walrus', 'paper comet', 'amber otter', 'silent tuba', 'velvet anchor', 'copper giraffe',
                'frozen trumpet', 'woolly lantern')
 
@@ -159,12 +184,16 @@ def questions(proposal, context: str = '') -> list[dict[str, Any]]:
                 decoy = decoy or (test, f'After the steps, must the file {files["name"]} contain')
                 both(test, f'After the steps, must the file {files["name"]} contain “{text}”?',
                      f'After the steps, must the file {files["name"]} leave out “{text}”?')
-        for line in example.get('file_lines') or []:      # journey J11-G21: the number, with its "add 7" twin
-            pair = f'p{len(units) + 1}'
-            asked_about = f'After the steps, in the file {line["name"]}, which number comes first after “{line["has"]}”?'
-            twins([row(test, 'number', asked_about + ' Answer with that number only.', line['number'], pair),
-                   row(test, 'number', asked_about + ' Add 7 to it and answer with the result only.',
-                       float(line['number']) + 7, pair, twin=True)])
+        for line in example.get('file_lines') or []:
+            # The check passes when some place has the text followed by the number, so the question asks exactly that,
+            # with its negation (journey J11-G25: "which number comes first after data-ember" was 0 of embers 0-8;
+            # verifier: a list question can always be parroted with a padded list).
+            number = int(line['number']) if float(line['number']).is_integer() else line['number']
+            decoy = decoy or (test, f'After the steps, must the file {line["name"]} contain')
+            both(test, f'After the steps, does the file {line["name"]} have “{line["has"]}” followed by the number '
+                       f'{number} somewhere?',
+                 f'After the steps, is every number that follows “{line["has"]}” in the file {line["name"]} different '
+                 f'from {number}?')
         for files in example.get('lacks') or []:          # journey J11-G19
             for text in files.get('texts') or []:
                 decoy = decoy or (test, f'After the steps, must the file {files["name"]} contain')

@@ -64,6 +64,8 @@ TASK = (
     "\"python\" followed by \"-m\" and a module, or by a script path, or with \"node\" and a script path. Use the "
     "command the milestone or README documents, with arguments the program accepts (see source_context). An empty "
     "word \"\" is an empty argument, as typed with two quotes.\n"
+    "- A command that writes its result to a file (for example --svg out.svg or -o out.txt) often prints nothing: "
+    "check that file with \"contains\", \"lacks\" or \"file_lines\", never with \"shows\" on the printed output.\n"
     "- A step without \"expect\" prepares the example and must succeed. On the step whose result matters, "
     "\"expect\" may say: \"exit\": \"ok\" or \"error\"; \"shows\": texts the output must contain; \"hides\": texts it "
     "must not contain; \"lines\": [{\"has\": text, \"number\": n}] for a line that shows that text together with "
@@ -301,6 +303,7 @@ def _inputs(example) -> str:
 
 TOKEN = re.compile(r"[^\W_](?:[\w.'-]*[^\W_])?")
 NUMBER_TOKEN = re.compile(r'\d+(?:\.\d+)?')
+WHOLE_ATTRIBUTE = re.compile(r'[A-Za-z][\w:.-]*\s*=\s*("[^"]*"|\'[^\']*\')')
 ATTRIBUTE_NUMBER = re.compile(r'\s*([A-Za-z][\w:.-]*)\s*[=:]\s*["\']?(-?\d+(?:\.\d+)?)(?:px|%|em|s|ms)?["\']?\s*;?\s*')
 
 
@@ -458,7 +461,9 @@ def _ground(example, milestone_text, source_text):
     for row in example.get('lacks', []):
         # A text to remove is often one only the project has now ("the leftover debug banner"): grounded like
         # "contains" (review of J11-G19).
-        kept = [text for text in row['texts'] if grounded(text, source_text.lower())]
+        # A single character is in almost every file: "lacks M" failed every correct build of the self-drawing
+        # rune, whose path starts with M (journey J11-G23). Two characters ("px", "<g") may be stated (review).
+        kept = [text for text in row['texts'] if len(text.strip()) > 1 and grounded(text, source_text.lower())]
         changed += [f'{row["name"]} leaves out “{text}”' for text in row['texts'] if text not in kept]
         row['texts'] = list(dict.fromkeys(kept))
         if not row['texts']:
@@ -798,8 +803,23 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
                     or len(line['has']) > 200 or isinstance(line.get('number'), bool)
                     or not isinstance(line.get('number'), (int, float))):
                 raise WorkspaceError(f'{what}: each of "file_lines" needs a file "name", a text "has" and a "number".')
-            example['file_lines'].append({'name': _relative(line.get('name'), f'{what}: "file_lines"'),
-                                          'has': line['has'].strip(), 'number': line['number']})
+            name, has = _relative(line.get('name'), f'{what}: "file_lines"'), line['has'].strip()
+            if WHOLE_ATTRIBUTE.fullmatch(has):
+                # A whole attribute with its value is a text the file contains, not a name a number follows
+                # (journey J11-G23: "the first number after stroke-dasharray=\"115\" is 0").
+                # `slot`, never `row`: that is the example being read (verifier of batch N2).
+                slot = next((r for r in example['contains'] if r['name'] == name), None)
+                if slot is None and len(example['contains']) < LIMITS['files']:
+                    slot = {'name': name, 'texts': []}
+                    example['contains'].append(slot)
+                if slot is not None and has not in slot['texts'] and len(slot['texts']) < LIMITS['texts']:
+                    slot['texts'].append(has)
+                if slot is not None and has in slot['texts']:
+                    dropped.append(f'{what}: "file_lines" for {has} (checked instead: {name} contains it)')
+                else:                              # the limits are full: said, never claimed (review)
+                    dropped.append(f'{what}: "file_lines" for {has} (not checked: too many texts for {name})')
+                continue
+            example['file_lines'].append({'name': name, 'has': has, 'number': line['number']})
         example['links_resolve'] = bool(row.get('links_resolve'))
         example['pages_reachable'] = bool(row.get('pages_reachable'))
         if not example['steps'] and not (example['exists'] or example['contains'] or example['lacks']

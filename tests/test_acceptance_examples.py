@@ -927,3 +927,49 @@ def test_checked_instead_that_it_exists_only_when_nothing_else_checks_the_file()
     assert example["exists"] == [] and not any("checked instead that it exists" in c for c in changed)
     alone = {"steps": [], "files": [], "exists": [], "unchanged": [], "contains": [{"name": "page.html", "texts": ["Welcome, friend"]}]}
     assert any("checked instead that it exists" in c for c in _ground(alone, "A page.", "")) and alone["exists"] == ["page.html"]
+
+
+def test_a_whole_attribute_under_file_lines_is_read_as_contains_and_a_one_letter_lacks_is_dropped():
+    # Journey J11-G23: "the first number after stroke-dasharray=\"115\" is 0", and "lacks M" for a path that starts with M.
+    milestone = ('node motion.mjs FILE --at 0 --svg out.svg writes out.svg with stroke-dasharray="115" and a line with '
+                 'stroke-dashoffset and 115; the rune has no second M.')
+    answer = {"examples": [{"name": "rune", "says": "At 0 s the rune is not drawn yet.",
+                            "files": [{"name": "r.motion.json", "text": "{}"}],
+                            "steps": [{"run": ["node", "motion.mjs", "r.motion.json", "--at", "0", "--svg", "out.svg"]}],
+                            "file_lines": [{"name": "out.svg", "has": "stroke-dashoffset=", "number": 115},
+                                           {"name": "out.svg", "has": 'stroke-dasharray="115"', "number": 0}],
+                            "lacks": [{"name": "out.svg", "texts": ["M"]}]}]}
+    shaped = validate_examples(answer, milestone)
+    example = shaped["examples"][0]
+    assert example["file_lines"] == [{"name": "out.svg", "has": "stroke-dashoffset=", "number": 115}]
+    assert example["contains"] == [{"name": "out.svg", "texts": ['stroke-dasharray="115"']}]
+    assert example.get("lacks") == [] and any("leaves out" in d and "“M”" in d for d in shaped["dropped"])
+
+
+def test_a_moved_attribute_is_said_only_when_it_is_checked_and_two_letter_lacks_stay():
+    # Review of J11-G23: "checked instead: contains it" was said when the per-file cap blocked the move.
+    milestone = 'out.svg has stroke-dasharray="115"; ' + " ".join(f'k{n}="{n}"' for n in range(12)) + '; no px left.'
+    full = [f'k{n}="{n}"' for n in range(12)]
+    answer = {"examples": [{"name": "e", "says": "It is drawn.", "files": [{"name": "r.json", "text": "{}"}],
+                            "steps": [{"run": ["node", "motion.mjs", "r.json", "--svg", "out.svg"]}],
+                            "contains": [{"name": "out.svg", "texts": full}],
+                            "file_lines": [{"name": "out.svg", "has": 'stroke-dasharray="115"', "number": 0}],
+                            "lacks": [{"name": "out.svg", "texts": ["px"]}]}]}
+    shaped = validate_examples(answer, milestone)
+    assert any("not checked: too many texts" in d for d in shaped["dropped"])
+    assert not any("checked instead: out.svg contains it" in d for d in shaped["dropped"])
+    assert shaped["examples"][0]["lacks"] == [{"name": "out.svg", "texts": ["px"]}]
+
+
+def test_moving_an_attribute_never_touches_the_example_s_own_settings():
+    # Verifier of batch N2: the move reused the name of the example being read; links_resolve was reset, and past the
+    # file cap validation crashed.
+    milestone = 'out.svg has stroke-dasharray="115"; ' + " ".join(f'f{n}.svg' for n in range(8))
+    answer = {"examples": [{"name": "e", "says": "It is drawn.", "files": [{"name": "r.json", "text": "{}"}],
+                            "steps": [{"run": ["node", "motion.mjs", "r.json", "--svg", "out.svg"]}],
+                            "contains": [{"name": f"f{n}.svg", "texts": [f"f{n}.svg"]} for n in range(8)],
+                            "file_lines": [{"name": "out.svg", "has": 'stroke-dasharray="115"', "number": 0}],
+                            "links_resolve": True}]}
+    shaped = validate_examples(answer, milestone)
+    assert shaped["examples"][0]["links_resolve"] is True
+    assert any("not checked: too many texts" in d for d in shaped["dropped"])

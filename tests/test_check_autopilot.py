@@ -406,14 +406,6 @@ def test_the_decoy_is_never_the_project_s_own_vocabulary_and_answers_are_kept(tm
     assert kept and all({"question", "expected", "answer"} <= set(r) for r in kept)
 
 
-def test_a_file_line_is_asked_as_a_number_with_its_twin():
-    checks = proposal(examples=[{"test": "t", "files": [], "steps": [{"run": ["node", "motion.mjs", "x.json"],
-                                                                        "expect": {"exit": "ok"}}],
-                                 "file_lines": [{"name": "out.svg", "has": "stroke-dashoffset", "number": 57.5}]}])
-    rows = [r for r in autopilot.questions(checks) if "stroke-dashoffset" in r["question"]]
-    assert sorted(r["expected"] for r in rows) == [57.5, 64.5] and all("57.5" not in r["question"] for r in rows)
-
-
 def test_a_file_check_reduced_to_the_file_existing_is_not_approved():
     reduced = proposal(dropped=["Example 1: report.txt leaves out “DEBUG”", "Example 1: report.txt: checked instead that it exists"])
     assert any("only that the file exists" in f for f in autopilot.gates(reduced))
@@ -424,3 +416,31 @@ def test_the_decoy_avoids_the_words_the_second_model_reads():
     every = " ".join(autopilot.DECOY_WORDS)
     decoy = next(r for r in autopilot.questions(checks, context=every.replace("tuba", "")) if r["about"] == "decoy")
     assert "silent tuba" in decoy["question"]              # the one pair the context leaves free
+
+
+def test_printed_output_checks_on_a_command_that_writes_a_file_wait_for_the_owner():
+    # Journey J11-G24: the Embers checks read the printed output of "--svg out.svg", which prints nothing.
+    printed = proposal(examples=[{"test": "t", "files": [], "steps": [
+        {"run": ["node", "motion.mjs", "e.json", "--at", "2", "--svg", "out.svg"], "expect": {"shows": ["data-ember"]}}]}])
+    assert any("writes out.svg" in f for f in autopilot.gates(printed))
+    in_file = proposal(examples=[{"test": "t", "files": [], "steps": [
+        {"run": ["node", "motion.mjs", "e.json", "--at", "2", "--svg", "out.svg"]}],
+        "contains": [{"name": "out.svg", "texts": ["data-ember"]}]}])
+    assert not any("writes out.svg" in f for f in autopilot.gates(in_file))
+
+
+def test_a_file_line_is_asked_as_a_claim_and_its_negation():
+    # Journey J11-G25: the check passes when some place has the text followed by the number (embers 0 to 8);
+    # verifier of batch N2: a list question could always be parroted with a padded list.
+    checks = proposal(examples=[{"test": "t", "files": [], "steps": [{"run": ["node", "motion.mjs", "x.json"],
+                                                                        "expect": {"exit": "ok"}}],
+                                 "file_lines": [{"name": "out.svg", "has": "data-ember", "number": 8}]}])
+    rows = [r for r in autopilot.questions(checks) if "data-ember" in r["question"]]
+    assert sorted(r["expected"] for r in rows) == ["no", "yes"] and len({r["pair"] for r in rows}) == 1
+    claim = next(r for r in rows if r["expected"] == "yes")
+    assert "followed by the number 8 somewhere" in claim["question"]
+
+
+def test_the_output_gate_reads_the_joined_form_and_minus_o_only_before_a_file_name():
+    assert autopilot._written(["node", "m.mjs", "--svg=out.svg"]) == "out.svg"
+    assert autopilot._written(["node", "m.mjs", "-o", "fast"]) is None and autopilot._written(["node", "m.mjs", "-o", "a.txt"]) == "a.txt"
