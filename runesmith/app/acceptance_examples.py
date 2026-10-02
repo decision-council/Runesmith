@@ -81,13 +81,16 @@ TASK = (
     "- \"other_milestones_checks\" lists the checks the owner already approved for other milestones of this "
     "project. Stay consistent with them: use the same file format, file names and commands, and never require "
     "what one of them forbids (if one says a file is refused, do not require the same file to be accepted).\n"
+    "- \"proven_inputs\" are input files from checks that pass on the program today: write new inputs in the same "
+    "format (field names, nesting, where a setting sits) unless the milestone itself changes that format.\n"
     "- \"fault\": \"interrupted_write\" on a python run step makes every file write inside the folder stop halfway, "
     "as if the power failed. Use it when the milestone promises safety against interruption, then check the result "
     "with a later step.\n"
     "- \"files\": [{\"name\", \"text\"}], on the example next to \"steps\", creates files before the steps (for "
     "example a damaged data file). A file "
     "a step hands the program must exist: create it with \"files\" or an earlier step, or use one the project "
-    "has (source_context lists them). "
+    "has (source_context lists them); another example's files are not there, so list every file an example runs "
+    "in that example's own \"files\". "
     "\"unchanged\": [names of files this example creates with \"files\"] checks that they are exactly the same "
     "afterwards (to check that a program leaves its data alone, create that data file with \"files\"); \"exists\": [names]; "
     "\"contains\": [{\"name\", \"texts\"}] checks a file's text afterwards (never use \"files\" to say what "
@@ -745,13 +748,16 @@ def _lifted(row, steps, what, dropped):
 INPUT_SUFFIXES = ('.json', '.jsonl', '.ndjson', '.csv', '.tsv', '.txt', '.yaml', '.yml', '.xml', '.toml', '.ini', '.md')
 
 
-def _missing_inputs(example, source_text) -> list[str]:
+def _missing_inputs(example, source_text, held=None) -> list[str]:
     """Files a run step hands its program that nothing creates: not "files", not the project, not another step.
 
     Journey J11-G10: a check ran "node motion.mjs position.motion.json --at 1" on a file no one made, so every correct
     build failed with ENOENT, and the trial on today's project read that failure as "fails, as expected". Only the
     first file name a step passes on its own counts (not one after an option such as --out, which the program may
     write), and a step that is expected to fail may name a missing file on purpose.
+
+    `held` says whether the project holds a file the source text does not list: the checks' copy of the project has
+    files a model is never shown (fixtures, shared documents), and a file that is there is not missing (J11-CC4).
     """
     named = ({f['name'] for f in example['files']} | set(example['exists']) | set(example['unchanged'])
              | {c['name'] for c in example['contains']} | {c['name'] for c in example.get('lacks', [])}
@@ -772,19 +778,37 @@ def _missing_inputs(example, source_text) -> list[str]:
         reads = bool(words) and words[0] == name
         others = ' '.join(' '.join(s.get('run', [])) + ' ' + s.get('input', '')
                           for m, s in enumerate(example['steps']) if (m < n if reads else m != n))
-        if rel not in named and rel not in source_text and rel not in others and rel not in missing:
+        if (rel not in named and rel not in source_text and rel not in others and rel not in missing
+                and not (held and held(rel))):
             missing.append(rel)
     return missing
 
 
-def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> dict[str, Any]:
-    """The examples as stored, the checks file rendered from them, and what Runesmith dropped; or a WorkspaceError."""
+RUNS_IN_ITS_OWN_COPY = ('; each example runs in its own fresh copy, so list every file it runs in that example\'s own '
+                        'files.')
+
+
+def _refusal(refused) -> str:
+    """What the Checker is told once: which example runs which file that neither it nor the project holds."""
+    return '; '.join(f'{what} runs {", ".join(missing)}, which neither that example\'s files nor the project hold'
+                     for what, missing in refused) + RUNS_IN_ITS_OWN_COPY
+
+
+def validate_examples(data: Any, milestone_text: str, source_text: str = '', *, refuse_missing: bool = True,
+                      held=None) -> dict[str, Any]:
+    """The examples as stored, the checks file rendered from them, and what Runesmith dropped; or a WorkspaceError.
+
+    An example that runs a file it does not list and the project does not hold is refused in plain words, so the
+    Checker is told once while it drafts (journey J11-CC4, after J11-G36: three of five drafts did, and the owner had
+    to find each by reading it). With `refuse_missing` off, the file is only named under its check (`missing_input`),
+    for a caller that cannot tell what the project holds. `held`: see _missing_inputs.
+    """
     if not isinstance(data, dict) or not isinstance(data.get('examples'), list):
         raise WorkspaceError('The answer needs "examples".')
     rows = data['examples']
     if not 1 <= len(rows) <= LIMITS['examples']:
         raise WorkspaceError(f'Give 1-{LIMITS["examples"]} examples.')
-    examples, checks, dropped, taken = [], [], [], set()
+    examples, checks, dropped, taken, refused = [], [], [], set(), []
     for index, row in enumerate(rows, 1):
         what = f'Example {index}'
         if not isinstance(row, dict):
@@ -907,10 +931,15 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
             dropped.append(f'{what}: what {_show(step)} shows while it is interrupted (a later check looks at what it left behind)')
         dropped += [f'{what}: {d}' for d in _ground(example, milestone_text, source_text)]
         check = {'test': example['test'], 'says': says, 'exact': exact(example)}
-        if source_text and (missing := _missing_inputs(example, source_text)):
-            check['missing_input'] = missing
+        if source_text and (missing := _missing_inputs(example, source_text, held)):
+            if refuse_missing:
+                refused.append((what, missing))
+            else:
+                check['missing_input'] = missing
         checks.append(check)
         examples.append(example)
+    if refused:                 # after every example was read, so one answer names all of them (J11-CC4)
+        raise WorkspaceError(_refusal(refused))
     not_checked = _notes(data.get('not_checked'))
     code = render(examples)
     return {'checks': checks, 'assumes': [], 'examples': examples, 'dropped': dropped[:20], 'not_checked': not_checked,

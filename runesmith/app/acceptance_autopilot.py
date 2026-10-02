@@ -8,8 +8,12 @@ So proposed checks are approved only when:
 1. their trial on the project as it is today ran, and fails as a milestone not yet built should;
 2. Runesmith's own findings are clean: no file nothing creates, no exact text the sentence does not say, no revision
    that failed;
-3. a different model, shown the milestone, the other milestones' approved checks and each example's input but not the
-   values the checks expect, works out the same values, and sees no contradiction with the other milestones' checks.
+3. the checks name every exact text the milestone's 'done when' names (journey J11-G40: Depth's checks left out the
+   parallax values its 'done when' spells out, and were approved);
+4. a different model, shown the milestone, the other milestones' approved checks, the inputs other checks proved and
+   each example's input but not the values the checks expect, works out the same values, sees no contradiction with
+   the other milestones' checks, and finds no field written under another name or in another place than the proven
+   inputs and the milestone use (journey J11-G38: "color" for "fill", "grade" beside "project").
 
 Checks that fail a gate are discarded with the reason, which the next Checker is told (J11-G14), and asked for again,
 at most MAX_ROUNDS times per milestone; after that they wait for the owner. When the autopilot cannot judge (checks
@@ -35,15 +39,109 @@ TASK = ("Each example below prepares its input files, then runs the program as s
         "number, the exact number (as digits, no units); otherwise \"yes\", \"no\", \"ok\" or \"error\" as the question "
         "asks. Then say whether any of these examples contradicts one of the checks already approved for the other "
         "milestones (for example a different file format, or accepting what another refuses): \"contradicts\" is true "
-        "or false, and when true, \"contradiction\" names it in one short sentence.")
+        "or false, and when true, \"contradiction\" names it in one short sentence. Last, \"proven_inputs\" are input "
+        "files from checks that pass on the program today, and \"documents\" are the owner's own rules: \"misplaced\" "
+        "is a list of short sentences naming any field an example writes under a different name or in a different "
+        "place than the proven inputs, the documents and the milestone use (for example a colour written as "
+        "\"color\" where they use \"fill\", or a setting written beside \"project\" that the milestone puts inside "
+        "it); an empty list when there is none.")
 SCHEMA = {'type': 'object', 'properties': {
     'answers': {'type': 'array', 'items': {'type': 'object', 'properties': {
         'id': {'type': 'string'}, 'answer': {'type': 'string'}}, 'required': ['id', 'answer']}},
-    'contradicts': {'type': 'boolean'}, 'contradiction': {'type': 'string'}}, 'required': ['answers', 'contradicts']}
+    'contradicts': {'type': 'boolean'}, 'contradiction': {'type': 'string'},
+    'misplaced': {'type': 'array', 'items': {'type': 'string'}}}, 'required': ['answers', 'contradicts']}
+DOCUMENTS = 4000                # characters of the owner's shared documents the second model reads (journey J11-G38)
+
+# The exact texts a 'done when' names (journey J11-G40), found in one pass so a text inside another is not named twice:
+# an attribute with its value (class="rs-layer", d="M 0 0 L 150 50": the value has no = < > and none of its edges is a
+# space, which keeps a stray pair of quotes such as `r=" and, separately, fill="` from reading as one), a call written
+# with numbers (translate(-510,-270), scale(1.5), url(#rs-clip-wipe1)), or a quoted phrase of two or more words.
+_ATTRIBUTE = r'(?<![\w:.-])[A-Za-z_][\w:.-]*="[^\s"=<>][^"=<>]{0,118}?(?<=\S)"'
+_ITEM = r'(?:[-+]?(?:\d+\.?\d*|\.\d+)[A-Za-z%]{0,4}|#[\w-]+)'
+_CALL = r'(?<![\w.-])[A-Za-z][\w-]*\((?=[^()]*\d)' + _ITEM + '(?:,' + _ITEM + r')*\)'
+_PHRASE = r'(?<![\w=])"(?=[^\s"])[^"=<>{};\n]{0,100}?(?<=[^\s"])"(?!\w)'
+NAMED = re.compile(f'(?P<attribute>{_ATTRIBUTE})|(?P<call>{_CALL})|(?P<phrase>{_PHRASE})')
+COVERAGE_ROOM = 380             # characters of texts the finding lists: the next Checker is told at most 600 of it
 
 
-def gates(proposal) -> list[str]:
-    """Why these checks cannot be approved without the owner, from what Runesmith itself found; empty when clean."""
+def named_texts(done_when) -> list[str]:
+    """The exact texts a milestone's 'done when' names, in the order it names them, each once: attribute pairs
+    (name="value"), calls written with numbers (translate(-510,-270)) and quoted phrases of two or more words
+    ("Invalid project structure"). A 'done when' in plain prose names none, so nothing is asked of its checks.
+
+    Journey J11-G40: Depth's checks required class="rs-layer" and data-depth="0.5" but none of the parallax values its
+    'done when' spells out (translate(-510,-270), translate(-480,-270), translate(-540,-270)), Masks' left out the
+    ids it names and Colour grade's the colours, and the autopilot approved all three; it never compared them.
+    """
+    found = []
+    for match in NAMED.finditer(str(done_when or '')):
+        text = match.group()
+        if match.lastgroup == 'phrase':
+            text = text[1:-1].rstrip('.,;:!?')
+            if len(text.split()) < 2:
+                continue
+        if text not in found:
+            found.append(text)
+    return found
+
+
+def _squash(text) -> str:
+    """Whitespace runs as one space, and no difference of case: the checks compare texts that way."""
+    return ' '.join(str(text).split()).lower()
+
+
+def _line_texts(has, number) -> list[str]:
+    """How a line check "has" + number looks in a file: has="3" and has 3 (the number without a trailing .0)."""
+    try:
+        shown = int(number) if float(number).is_integer() else number
+    except (TypeError, ValueError, OverflowError):
+        return []
+    return [f'{has}="{shown}"', f'{has} {shown}']
+
+
+def _required_texts(proposal) -> list[str]:
+    """Every text the proposed checks require or forbid, in the forms they are looked for."""
+    texts = []
+    for example in proposal.get('examples') or []:
+        for step in example.get('steps') or []:
+            expect = step.get('expect') or {}
+            for key in ('shows', 'hides', 'order'):
+                texts += [t for t in expect.get(key) or [] if isinstance(t, str)]
+            for line in expect.get('lines') or []:
+                texts += _line_texts(line.get('has'), line.get('number'))
+        for key in ('contains', 'lacks'):
+            for files in example.get(key) or []:
+                texts += [t for t in files.get('texts') or [] if isinstance(t, str)]
+        for line in example.get('file_lines') or []:
+            texts += _line_texts(line.get('has'), line.get('number'))
+    return texts
+
+
+def uncovered(proposal, done_when) -> list[str]:
+    """The texts the 'done when' names that none of the checks requires or forbids, inside any text they use (journey
+    J11-G40): `translate(-510,-270)` is covered by a check on `translate(480,270) scale(1) translate(-510,-270)`."""
+    needed = named_texts(done_when)
+    if not needed:
+        return []
+    held = [_squash(text) for text in _required_texts(proposal)]
+    return [text for text in needed if not any(_squash(text) in one for one in held)]
+
+
+def _coverage_finding(texts) -> str:
+    shown, size = [], 0
+    for text in texts:
+        if shown and size + len(text) > COVERAGE_ROOM:
+            break
+        shown.append(f'“{text}”')
+        size += len(text) + 4
+    more = len(texts) - len(shown)
+    return ("the checks leave out what the milestone's 'done when' names: " + ', '.join(shown)
+            + (f' and {more} more' if more else '') + '; check each of them')
+
+
+def gates(proposal, done_when=None) -> list[str]:
+    """Why these checks cannot be approved without the owner, from what Runesmith itself found; empty when clean.
+    `done_when` is the milestone's: the checks must name every exact text it names."""
     found = []
     verdict = (proposal.get('dry_run') or {}).get('verdict')
     if verdict == 'passes_now':
@@ -77,6 +175,8 @@ def gates(proposal) -> list[str]:
     revision = proposal.get('revision') or {}
     if revision.get('error') and revision.get('after') != 'unusable':
         found.append('the revision Runesmith asked for did not work')
+    if left_out := uncovered(proposal, done_when):
+        found.append(_coverage_finding(left_out))
     return found
 
 
@@ -283,22 +383,31 @@ def _family(model) -> str:
     return re.sub(r':free$', '', name)
 
 
-def second_model(ws, drafted_by) -> str | None:
-    """A usable instrument for the Checker's or the Planner's role that is not the model which wrote the checks."""
+def second_model(ws, drafted_by, skip=()) -> str | None:
+    """A usable instrument for the Checker's or the Planner's role that is not the model which wrote the checks, and
+    not one of `skip` (the ones already asked about these checks)."""
     config = ws.config()
     wrote = _family(drafted_by)
     for role in ('acceptance', 'plan'):
         for name in (config.get('roles') or {}).get(role) or []:
             spec = (config.get('instruments') or {}).get(name) or {}
             models = [spec.get('model')] + list(spec.get('fallback_models') or [])
-            if (spec.get('kind') != 'manual' and models[0] and ws._usable(name, spec)
+            if (name not in skip and spec.get('kind') != 'manual' and models[0] and ws._usable(name, spec)
                     and all(_family(m) != wrote for m in models)):
                 return name
     return None
 
 
+def _documents(ws) -> str:
+    """The documents the owner shared with models, at most DOCUMENTS characters of them."""
+    try:
+        return ws.blueprint_text(DOCUMENTS)[:DOCUMENTS]
+    except (OSError, WorkspaceError):
+        return ''
+
+
 def _packet(ws, milestone_id, proposal, asked) -> dict[str, Any]:
-    from runesmith.app.acceptance_proposals import _milestone, _other_checks
+    from runesmith.app.acceptance_proposals import _milestone, _other_checks, proven_inputs
     milestone = _milestone(ws, milestone_id)
     by_test = {}
     for row in asked:
@@ -306,17 +415,58 @@ def _packet(ws, milestone_id, proposal, asked) -> dict[str, Any]:
     return {'task': TASK,
             'milestone': {k: milestone.get(k) for k in ('title', 'detail', 'done_when')},
             'other_milestones_checks': _other_checks(ws, milestone_id),
+            # What the program reads, which the second model is never shown: input files of checks that pass today, and
+            # the owner's own documents (journey J11-G38: it "worked out the same 23 expected values" of examples whose
+            # camera was written as timeline elements, where the owner's HOUSE_RULES.md says a list of keyframes).
+            'proven_inputs': proven_inputs(ws, milestone_id),
+            'documents': _documents(ws),
             'examples': [{'name': e['test'], 'files': e.get('files') or [],
                           'steps': [_command(s) for s in e.get('steps') or [] if _command(s)],
                           'questions': by_test.get(e['test'], [])} for e in proposal.get('examples') or []]}
 
 
+def _misplaced(value) -> list[str]:
+    """The sentences the second model gave for fields written under another name or in another place; an empty list
+    for none, for "none", and for what is not text."""
+    found = []
+    for item in value if isinstance(value, list) else [value]:
+        if isinstance(item, str) and (said := _contradiction(item)):
+            found.append(' '.join(said.split())[:240])
+    return found[:5]
+
+
 def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
-    """Ask a second model; {'model', 'disagreements': [...], 'contradicts': str|None} or {'undecided': why}."""
-    from runesmith.config import build_router
+    """Ask a second model; {'model', 'disagreements': [...], 'misplaced': [...], 'contradicts': str|None} or
+    {'undecided': why}.
+
+    When that model gave no clear judgement (unclear answers, a pair answered the same both ways, a decoy it said yes
+    to), ONE more model is asked: a different instrument that is still not the drafter's family, its answer judged by
+    the same rules. Journey J11-CC5: the owner was away for 36 hours, and Envelope's sound checks waited for him
+    because one free model answered unclearly. Both attempts are kept under 'attempts'; only when the second is
+    undecided too do the checks wait for the owner. No second model, a model that did not answer, and a claimed
+    contradiction are not asked again.
+    """
     name = second_model(ws, proposal.get('drafted_by'))
     if name is None:
         return {'undecided': 'there is no second model to cross-check with (add another under Thinking power)'}
+    first = _ask_second(ws, milestone_id, proposal, name)
+    if not first.pop('retry', False):
+        return first
+    other = second_model(ws, proposal.get('drafted_by'), skip=(name,))
+    if other is None:
+        return first
+    second = _ask_second(ws, milestone_id, proposal, other, 'again-')
+    second.pop('retry', None)
+    second['attempts'] = [{k: attempt[k] for k in ('model', 'undecided', 'answers') if k in attempt}
+                          for attempt in (first, second)]
+    if second.get('undecided'):
+        second['undecided'] = f"{first['undecided']}; asked once more: {second['undecided']}"
+    return second
+
+
+def _ask_second(ws, milestone_id, proposal, name, key='') -> dict[str, Any]:
+    """One second model's cross-check; a dict with 'retry' when it gave no clear judgement, so another may be asked."""
+    from runesmith.config import build_router
     from runesmith.app.acceptance_proposals import _milestone, _other_checks
     try:
         context = json.dumps({'milestone': {k: _milestone(ws, milestone_id).get(k) for k in ('title', 'detail', 'done_when')},
@@ -334,7 +484,7 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
                               on_call=ws.record_call, backoff_s=())
         out = router.call('acceptance', prompt=json.dumps(_packet(ws, milestone_id, proposal, asked), ensure_ascii=False),
                           system=SYSTEM, schema=SCHEMA, max_tokens=VERIFY_TOKENS,
-                          key='autopilot-' + str(proposal.get('id')))
+                          key='autopilot-' + key + str(proposal.get('id')))
     except Exception as error:
         return {'undecided': f'the cross-check got no answer ({str(error)[:160]})', 'model': name}
     if not out.ok or not isinstance(out.data, dict):
@@ -362,7 +512,7 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
         return {'undecided': f'{model} gave no clear judgement ({len(unclear)} unclear answers, {len(blind)} questions '
                              'answered the same way as their opposite' + (', and it said yes to a text nothing asks for'
                                                                           if fooled else '') + ')', 'model': model,
-                'answers': record}
+                'answers': record, 'retry': True}
     disagreements = [f"{row['test']}: {row['question']} The checks expect {row['expected']}; {model} worked out "
                      f"{answers.get(row['id'])}." for row in asked
                      if judged[row['id']] is False and row['about'] != 'decoy' and not row['twin']]
@@ -370,7 +520,7 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
     contradicts = (str(out.data.get('contradiction') or 'yes, without saying which').strip()[:400] if said is True
                    else None if said is False else _contradiction(said))
     return {'model': model, 'asked': len(asked), 'disagreements': disagreements, 'contradicts': contradicts,
-            'answers': record}
+            'misplaced': _misplaced(out.data.get('misplaced')), 'answers': record}
 
 
 def rounds_used(ws, milestone_id) -> int:
@@ -391,24 +541,28 @@ def rounds_used(ws, milestone_id) -> int:
 
 def review(ws, milestone_id, proposal) -> dict[str, Any]:
     """Decide on one waiting proposal: {'decision': 'approve'|'turn_down'|'owner', 'reason': ..., ...}."""
-    from runesmith.app.acceptance_proposals import status
+    from runesmith.app.acceptance_proposals import _milestone, status
     approved = (status(ws).get(milestone_id) or {}).get('approved')
     if approved and approved.get('provenance') != 'model-proposed, autopilot-approved':
         return {'decision': 'owner', 'reason': 'you approved the checks now in force; only you replace them'}
     why = undecidable(proposal)
     if why:
         return {'decision': 'owner', 'reason': why}
-    found = gates(proposal)
+    found = gates(proposal, _milestone(ws, milestone_id).get('done_when'))
     if not found:
         check = cross_check(ws, milestone_id, proposal)
         if check.get('undecided'):
             return {'decision': 'owner', 'reason': check['undecided'], 'cross_check': check}
-        if check['contradicts'] and not check['disagreements']:
+        # A field written under another name or in another place than the program reads it (journey J11-G38) is a
+        # turn-down like a disagreement: the examples cannot pass a correct build.
+        misplaced = [f"{check['model']} found a field written differently from the proven inputs and the milestone: {s}"
+                     for s in check.get('misplaced') or []]
+        if check['contradicts'] and not (check['disagreements'] or misplaced):
             # A second model's claim of a contradiction may itself be wrong; it is the owner's call, never a turn-down
             # (final autopilot check: "Nope, these are consistent." once read as a contradiction).
             return {'decision': 'owner', 'reason': f"{check['model']} says these contradict another milestone's checks: "
                                                    f"{check['contradicts']}", 'cross_check': check}
-        found = check['disagreements']
+        found = check['disagreements'] + misplaced
         if not found:
             return {'decision': 'approve', 'reason': f"trial and findings clean; {check['model']} worked out the same "
                     f"{check['asked']} expected values", 'cross_check': check}
@@ -447,7 +601,8 @@ def act(ws, milestone_id, proposal, verdict) -> tuple[str, str]:
         return 'You decided about these checks meanwhile; the autopilot left them alone.', 'none'
     note = {k: verdict.get(k) for k in ('decision', 'reason', 'findings') if verdict.get(k)}
     if verdict.get('cross_check'):
-        note['cross_check'] = {k: verdict['cross_check'].get(k) for k in ('model', 'asked', 'contradicts', 'answers')
+        note['cross_check'] = {k: verdict['cross_check'].get(k) for k in ('model', 'asked', 'contradicts', 'misplaced',
+                                                                             'answers', 'attempts')
                                if k in verdict['cross_check']}
     note_autopilot(ws, milestone_id, proposal['id'], dict(note, decision={'approve': 'approved', 'turn_down': 'turned_down',
                                                                           'owner': 'left_for_owner'}[verdict['decision']], utc=_now()))
