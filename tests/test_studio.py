@@ -747,3 +747,34 @@ def test_milestone_text_over_its_limit_is_refused_never_cut(tmp_path):
     kept = next(m for m in ws.plan()["milestones"] if m["id"] == fits["id"])
     assert kept["detail"] == "d" * 1500 and kept["title"] == "Paths"        # a refused edit changes nothing
     assert ws.update_milestone(fits["id"], {"status": "doing"})["status"] == "doing"
+
+
+def test_owner_milestones_name_prerequisites_and_wait_for_them(tmp_path):
+    # Journey J11-G41: a plan loaded at once must wait for its prerequisites; the schedule honours depends_on, but
+    # only breakdown steps could name them, so the owner loaded a plan in waves by hand.
+    from runesmith.app.planner import milestone_ready, ready_milestones
+    from runesmith.app.workspace import Workspace, WorkspaceError
+    ws = Workspace(tmp_path)
+    tracks = ws.add_milestone("Animation tracks")
+    curves = ws.add_milestone("Custom easing", depends_on=[tracks["id"]])
+    assert curves["depends_on"] == [tracks["id"]]
+    plan = ws.plan()
+    assert [m["title"] for m in ready_milestones(plan)] == ["Animation tracks"]
+    ws.update_milestone(tracks["id"], {"status": "done"})
+    assert milestone_ready(ws.plan(), next(m for m in ws.plan()["milestones"] if m["id"] == curves["id"]))
+    for bad, word in (([curves["id"]], "cannot need itself"), (["m000000"], "names no milestone: m000000"),
+                      ("m1", "a list of milestone ids"), ([f"x{i}" for i in range(13)], "at most 12")):
+        with pytest.raises(WorkspaceError, match=word):
+            ws.update_milestone(curves["id"], {"depends_on": bad})
+    # A cycle through prerequisites is refused, and a refused edit changes nothing.
+    with pytest.raises(WorkspaceError, match="wait for itself"):
+        ws.update_milestone(tracks["id"], {"depends_on": [curves["id"]]})
+    assert "depends_on" not in next(m for m in ws.plan()["milestones"] if m["id"] == tracks["id"])
+    with pytest.raises(WorkspaceError, match="names no milestone"):
+        ws.add_milestone("Colour tracks", depends_on=["nope"])
+    assert len(ws.plan()["milestones"]) == 2
+    # An empty list removes them; editing other fields leaves them alone.
+    ws.update_milestone(curves["id"], {"title": "Custom easing curves"})
+    assert next(m for m in ws.plan()["milestones"] if m["id"] == curves["id"])["depends_on"] == [tracks["id"]]
+    ws.update_milestone(curves["id"], {"depends_on": []})
+    assert "depends_on" not in next(m for m in ws.plan()["milestones"] if m["id"] == curves["id"])

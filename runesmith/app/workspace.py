@@ -93,6 +93,35 @@ MILESTONE_WORDS = {"title": "The title", "detail": "What it should do", "track":
                    "done_when": "Done when"}
 
 
+MAX_PREREQUISITES = 12
+
+
+def _prerequisites(milestones: list[dict[str, Any]], milestone_id: str, value: Any) -> list[str]:
+    """An owner milestone's "Needs first": other milestones' ids, checked (journey J11-G41: a plan loaded at once must
+    wait for its prerequisites, which the schedule already honours, but only breakdown steps could name them)."""
+    if not isinstance(value, list) or any(not isinstance(key, str) for key in value):
+        raise WorkspaceError("Needs first is a list of milestone ids.")
+    wanted = list(dict.fromkeys(value))
+    if len(wanted) > MAX_PREREQUISITES:
+        raise WorkspaceError(f"A milestone can need at most {MAX_PREREQUISITES} others first.")
+    by_id = {m["id"]: m for m in milestones}
+    if milestone_id in wanted:
+        raise WorkspaceError("A milestone cannot need itself first.")
+    if unknown := [key for key in wanted if key not in by_id]:
+        raise WorkspaceError("Needs first names no milestone: " + ", ".join(unknown))
+    # A cycle would leave every milestone in it waiting for ever: follow each prerequisite's own.
+    seen, todo = set(), list(wanted)
+    while todo:
+        key = todo.pop()
+        if key == milestone_id:
+            raise WorkspaceError(f"That would make “{by_id[milestone_id]['title']}” wait for itself through its "
+                                 "prerequisites; nothing was saved.")
+        if key not in seen:
+            seen.add(key)
+            todo.extend(by_id.get(key, {}).get("depends_on") or [])
+    return wanted
+
+
 def _milestone_text_fits(fields: dict[str, Any]) -> None:
     for key, limit in MILESTONE_LIMITS.items():
         text = fields.get(key)
@@ -770,6 +799,12 @@ class Workspace:
                     _milestone_text_fits(patch)
                     if patch.get("status") in MILESTONE_STATES:
                         m["status"] = patch["status"]
+                    if "depends_on" in patch:
+                        needs = _prerequisites(plan["milestones"], milestone_id, patch["depends_on"])
+                        if needs:
+                            m["depends_on"] = needs
+                        else:
+                            m.pop("depends_on", None)
                     for key, limit in (("title", 200), ("detail", 1500), ("track", 60), ("done_when", 400)):
                         if isinstance(patch.get(key), str) and (key != "title" or patch[key].strip()):
                             m[key] = patch[key].strip()[:limit]
@@ -778,7 +813,8 @@ class Workspace:
                     return m
         raise KeyError(milestone_id)
 
-    def add_milestone(self, title: str, detail: str = "", track: str = "", done_when: str = "") -> dict[str, Any]:
+    def add_milestone(self, title: str, detail: str = "", track: str = "", done_when: str = "",
+                      depends_on: list[str] | None = None) -> dict[str, Any]:
         title = (title or "").strip()
         if not title:
             raise WorkspaceError("a milestone needs a title")
@@ -790,6 +826,8 @@ class Workspace:
                                    "drafted_by": "owner", "utc": _now(), "version": 1}
             milestone = {"id": "m" + uuid.uuid4().hex[:6], "title": title[:200], "detail": (detail or "").strip()[:1500],
                          "track": (track or "").strip()[:60], "done_when": str(done_when or "").strip()[:400], "status": "open"}
+            if depends_on:
+                milestone["depends_on"] = _prerequisites(plan["milestones"], milestone["id"], depends_on)
             plan["milestones"].append(milestone)
             _write_json(self.home / "PLAN.json", plan)
         self.ledger.append("milestone.added", {"id": milestone["id"]})
