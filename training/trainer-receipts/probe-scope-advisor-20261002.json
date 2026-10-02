@@ -1,0 +1,24 @@
+{
+  "schema": "runesmith.trainer_advisor.v1",
+  "consultation_window_utc": "2026-10-02T02:28:00Z/2026-10-02T02:35:00Z",
+  "time_precision": "bounded window; dispatch and reply timestamps were not retained to the second",
+  "agent": "/root/runesmith_probe_advisor",
+  "model": "gpt-6-astra",
+  "mode": "read-only advice; no code edits, tests, inference dispatch, Studio launch or corpus reads",
+  "question": "Preserve the newer unittest fallback while preventing missing-runner ambiguity, subset green and stale WORK green. Is a scope label sufficient or is mixed-test static detection required?",
+  "findings": [
+    "Preserve fallback; do not use unreliable AST/filename scanning to claim complete test discovery.",
+    "Scope must affect statuses, objectives, rungs and accessible Map node labels, not merely a note under a green result.",
+    "Require the exact failed interpreter launcher diagnostic for missing pytest; ambiguous collection errors stay pytest errors.",
+    "Keep fallback runner and reason on every outcome; distinguish failed discovery from zero discovery.",
+    "New unavailable and timed-out evidence must supersede older green while respecting newer work and applied changes.",
+    "Raw fallback counts and time remain scoped evidence; whole-suite collection/pass/rate/time stay unknown on successful fallback.",
+    "Doctor should distinguish pytest repair observation from Build's separate unittest checks; advisor did not inspect Build or doctor."
+  ],
+  "trainer_follow_up": "Confirmed Build's unittest runner in runesmith/app/building.py; implemented scoped evidence and regression/UI fixtures. Validation is recorded separately.",
+  "new_milliner_job_ids": [],
+  "new_project_instrument_calls": 0,
+  "advisor_cost": null,
+  "cost_coverage": "Codex trainer/advisor allowance unpriced; no provider-spend estimate attributed to this consultation",
+  "next_consultation_not_before_utc": "2026-10-02T03:35:00Z"
+}

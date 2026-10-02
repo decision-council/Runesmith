@@ -1,0 +1,704 @@
+{
+  "schema": "runesmith.trainer_validation.v1",
+  "utc": "2026-10-02T02:59:24.0707031Z",
+  "topic": "B27: scope-correct test probes and current installed-artifact journey",
+  "authorship": {
+    "implementation": "External Codex trainer authored reusable runtime/UI/tests; no Hat implementation authored or applied.",
+    "advisor": "Read-only gpt-6-astra; see probe-scope-advisor-20261002.json.",
+    "fixture_author": "offline-installed-fixture: three trainer-written deterministic replies, not a live model or configured Hat author.",
+    "prior_dirty_work": "Preserved other agent changes. Browser harness B1-B26 and newer unittest fallback pre-existed; this turn adds B27/scoped evidence and updates installed fixture assumptions."
+  },
+  "changes": [
+    "Exact nonzero interpreter missing-pytest diagnostic with no collection output gates fallback.",
+    "Unittest fallback retains runner, missing-pytest reason and limited discovery scope on every outcome.",
+    "Zero discovery (including Python exit 5), missing summary, discovery error and timeout remain distinct from a passing suite.",
+    "Unittest counts and runtime are raw scoped observations; whole-suite objectives and collect/pass/time rungs remain unknown on successful fallback; real failures still fail.",
+    "New unavailable/timeout/subset results replace stale green, without overriding newer work/application evidence; same-second pytest success cannot promote a round failure.",
+    "Retained measurements are re-scoped on remap without re-running tests. Map/Development render legacy scope conservatively without rewriting historical records.",
+    "Actual Map details and accessible node labels explain subset evidence, probe attempts and failures; doctor distinguishes repair pytest from Build's unittest runner."
+  ],
+  "custody": {
+    "initial_utc": "2026-10-02T02:27:55Z",
+    "final_receipt": "probe-scope-audit-20261002T025814Z.json",
+    "initial_final_support_source_equal": true,
+    "initial_final_growth_source_equal": true,
+    "protected_support": 53,
+    "protected_growth": 106,
+    "all_home_locks_available": true,
+    "all_residents_absent": true,
+    "field_project_mutations": 0,
+    "live_PRHat_scanned": false
+  },
+  "accounting": {
+    "new_milliner_calls": 0,
+    "new_milliner_job_ids": [],
+    "new_paid_provider_spend_usd": 0,
+    "estimate_coverage": "N/A for new external inference (none). Codex trainer/advisor allowance unpriced.",
+    "scripted_requests_in_failed_trial_b": 3,
+    "scripted_requests_in_final_trial_c": 3,
+    "scripted_requests_are_not_model_inference": true,
+    "historical_support": {
+      "requests": 6,
+      "costed": 4,
+      "estimated_subtotal_usd": 0.32907398
+    },
+    "historical_growth": {
+      "requests": 13,
+      "costed": 12,
+      "estimated_subtotal_usd": 0.78811
+    },
+    "historical_PRHat": "No retained rows; historical spend unknown, not zero.",
+    "unresolved_cost": "mj_3514978f176848a89e60 remains terminal failed; aggregate_mismatch; est_usd null despite reported zero. Not replayed.",
+    "provider_credit_or_capacity_refreshed": false
+  },
+  "tests": {
+    "backend_xml": "../.tmp/probe-scope-final-20261002.xml",
+    "backend_scope": "test_probe_scope.py, test_maps_and_cli.py, test_overview_health.py; retained-measurement and real worker-round tests from test_studio.py. Not the full repository suite.",
+    "initial_red": {
+      "tests": 15,
+      "failures": 11,
+      "passes": 4,
+      "xml": "../.tmp/probe-scope-red-20261002.xml"
+    },
+    "intermediate": {
+      "tests": 47,
+      "failures": 2,
+      "passes": 45,
+      "xml": "../.tmp/probe-scope-targeted-20261002.xml"
+    },
+    "correction": {
+      "passes": 24,
+      "seconds": 4.53,
+      "xml": "../.tmp/probe-scope-correction-20261002.xml",
+      "overlaps_final": true
+    },
+    "frontend_combined": "../.tmp/studio-use-loops-2026-10-02T02-44-02-459Z/receipt.json",
+    "frontend_final": "../.tmp/studio-use-loops-2026-10-02T02-53-29-726Z/receipt.json",
+    "frontend_scope": "Actual frontend/CSS, intercepted in-memory API. 22 combined B19/B27 loops; final 7-loop B27 rerun is not additive. Not a live field Studio.",
+    "screenshots_inspected": [
+      "B27-subset-1440.png",
+      "B27-subset-390.png"
+    ],
+    "viewport_widths": [
+      1440,
+      800,
+      390
+    ],
+    "syntax_and_diff_whitespace": "node --check both modified JS files and scoped git diff --check passed"
+  },
+  "failures_and_assistance": [
+    "The initial red regressions intentionally exposed broad fallback detection, unscoped fallback success and stale green statuses.",
+    "First expanded run: new cache fixture lacked a Python classification marker; corrected test fixture. Runtime zero-discovery handling initially treated this Python's exit 5 / NO TESTS RAN as discovery error; corrected and tested.",
+    "Installed trial A built/installed but failed a removed Overview phrase before author dispatch. Disposable fixture closed; assertion updated to the stable Setup and work policy label.",
+    "Installed trial B checked m1, then generic Build skipped its grant-blocked draft and attempted eligible m2. Scripted exact edit failed because app.py was not yet applied. Newer Build intentionally supports independent ready milestones; no Build code changed.",
+    "Final trial C explicitly selects m1/m2, retaining generic no-unfinished-work and queue-based map checks. This additional operator assistance is recorded; it is not qualification of automatic milestone selection.",
+    "No failed paid call was retried. Failed fixture trials and diagnostics retained; no deletion or overwrite.",
+    "Closure tooling: one PowerShell read/check command had invalid foreach-to-pipeline syntax and executed no checks; corrected. Default git whitespace checks flag CR at the appended log line endings; the existing four logs are -text/mixed-EOL. Preserved historical bytes instead of normalizing logs; CRLF-aware whitespace check passed (13/8/8/8 appended lines, no removals). All three JSON receipts parsed successfully."
+  ],
+  "limitations": [
+    "Installed Windows artifact on this machine, not clean-machine/double-click-launcher qualification.",
+    "Scripted author, preseeded trainer-authored private acceptance fixtures, explicit milestone selection, scheduling and Kaizen off; not unattended or real-model author competence.",
+    "No new SupportHat/GrowthHat/PRHat owner acceptance or scientific confirmation.",
+    "SupportHat m7 still has one known ordinary opportunity; no new draft. GrowthHat m5 remains needs_revision and lacks unambiguous ordinary allowance.",
+    "No claims of a resident Studio. No denied launch retry, PRHat operation, existing product-document/paper/site/presentation edits.",
+    "Raw older stored map receipts remain historical; viewing normalizes their scope without rewriting them.",
+    "Full repository suite and long unattended soak remain unqualified."
+  ],
+  "evidence": {
+    "captured_utc": "2026-10-02T02:59:24.0707031Z",
+    "git_head": "4b396c4be106274c5e46204165d654bbf6e74211",
+    "code_hashes": [
+      {
+        "path": "runesmith/envmap.py",
+        "sha256": "26e89ef4d6f904000a3c38eea071ee8e80300101ef6e3c0dc0bc6caba83b88d3"
+      },
+      {
+        "path": "runesmith/app/workspace.py",
+        "sha256": "314d7a696c5b3525504a1cc7c0d337069c36a543061c95a6e7ab1f68d388597b"
+      },
+      {
+        "path": "runesmith/doctor.py",
+        "sha256": "351cf7f6d746cbeb97494d3db583a0b05e9098a55e6ebe6fc3e41a24ba99e6ab"
+      },
+      {
+        "path": "runesmith/app/static/js/views/map.js",
+        "sha256": "90131d21d2d1b4642332529b35822c2a8b7a26707728987dc339111f19e52c8a"
+      },
+      {
+        "path": "tests/test_probe_scope.py",
+        "sha256": "2c36b4bd1eb7c71b39bae280c139021a9e49da88d2a1fb025575c2d8b996d9b4"
+      },
+      {
+        "path": "tests/test_maps_and_cli.py",
+        "sha256": "ff837c51fe632cc3d440bebeef86393ca2ff94aef5865ee4251b472ac495fbce"
+      },
+      {
+        "path": "tests/test_overview_health.py",
+        "sha256": "87f36bb3a3d6aaa63a4fd2f07e527ed8fcd29e25071b57387585174232b27cad"
+      },
+      {
+        "path": "tests/installed_journey_smoke.py",
+        "sha256": "54ffd0b7f8ceaf60decdda7b6a80e6d3d57a8fff90e818b28f863f0646cc6339"
+      },
+      {
+        "path": "tests/studio_use_loops_browser.mjs",
+        "sha256": "e7a34710fab903eda50fa3cbcd303b5b93bc58125b90cdc294207923a1093069"
+      }
+    ],
+    "installed_source_matches": [
+      {
+        "path": "runesmith/envmap.py",
+        "equal": true
+      },
+      {
+        "path": "runesmith/app/workspace.py",
+        "equal": true
+      },
+      {
+        "path": "runesmith/doctor.py",
+        "equal": true
+      },
+      {
+        "path": "runesmith/app/static/js/views/map.js",
+        "equal": true
+      }
+    ],
+    "backend": {
+      "tests": 51,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 138.329
+    },
+    "frontend": {
+      "final_loops": [
+        {
+          "id": "B27.01",
+          "case": "Legacy unittest measurements show scoped success in Map node/accessibility and details, with unknown whole-suite objectives and rungs",
+          "result": "passed"
+        },
+        {
+          "id": "B27.02",
+          "case": "Scoped Map evidence fits desktop, tablet and phone",
+          "result": "passed"
+        },
+        {
+          "id": "B27.03",
+          "case": "Unavailable probe is not shown as measured/pass and diagnostics remain inert text",
+          "result": "passed"
+        },
+        {
+          "id": "B27.04",
+          "case": "Timeout and real fallback failure retain their outcomes without full-suite green",
+          "result": "passed"
+        },
+        {
+          "id": "B27.05",
+          "case": "Normal pytest success remains green",
+          "result": "passed"
+        },
+        {
+          "id": "B27.06",
+          "case": "Development tracks also remove legacy whole-suite achievements for fallback evidence",
+          "result": "passed"
+        },
+        {
+          "id": "B27.07",
+          "case": "Viewing and resizing evidence submits no worker job, model request or write",
+          "result": "passed"
+        }
+      ],
+      "final_requests": 10,
+      "final_posts": 0,
+      "final_errors": [],
+      "combined_loops": 22,
+      "combined_requests": 151,
+      "combined_errors": []
+    },
+    "installed": {
+      "state": "passed",
+      "output_dir": "D:\\Runesmith\\training\\.tmp\\installed-journey-20261002c",
+      "commands": [
+        {
+          "name": "wheel",
+          "exit_code": 0
+        },
+        {
+          "name": "install",
+          "exit_code": 0
+        },
+        {
+          "name": "probe",
+          "exit_code": 0
+        },
+        {
+          "name": "first",
+          "exit_code": 0
+        },
+        {
+          "name": "continue",
+          "exit_code": 0
+        },
+        {
+          "name": "inspect",
+          "exit_code": 0
+        }
+      ],
+      "new_external_inference_calls": 0,
+      "scope": "Installed Windows artifact + disposable HTTP fixtures, not live-model or human GUI qualification",
+      "operator_assistance": [
+        "Harness supplies three deterministic author answers, not a real model",
+        "Owner acceptance unittest files prepared before launch outside the UI",
+        "Scheduling and Kaizen explicitly disabled; each bounded action submitted by harness",
+        "Harness explicitly selects m1/m2; grant refusal does not test automatic independent-milestone selection",
+        "Runtime is created through an ephemeral test fixture, not the double-click launcher"
+      ],
+      "wheel": {
+        "path": "D:\\Runesmith\\training\\.tmp\\installed-journey-20261002c\\wheel\\runesmith-0.1.0-py3-none-any.whl",
+        "sha256": "c9658456f3d21902a7ef102af6fe9883cf1259fdc178964c45c0d54dfc281f72",
+        "bytes": 577481
+      },
+      "owner_fixture_hashes": {
+        "m1.py": "8136f63b28f7848a6aca2b3bf32dafad6378e2f9609908fcf1b6a38d6e61ade4",
+        "m2.py": "718783860b8628198e322b6f50469efbbb6fb22c10cd4a63d1f091b30b514200"
+      },
+      "scripted_local_requests": [
+        {
+          "index": 0,
+          "path": "/v1/chat/completions",
+          "model": "offline-installed-fixture",
+          "request_sha256": "6f56a98f8a3741905e48e2209e1fa351723e5e94814855040d7fd7acc8b203dc",
+          "bytes": 4511,
+          "owner_fixture_marker_exposed": false
+        },
+        {
+          "index": 1,
+          "path": "/v1/chat/completions",
+          "model": "offline-installed-fixture",
+          "request_sha256": "a34a641b4787863b59d21374d28835d79ac4e7e23d7b3b7545bbc3c642e62602",
+          "bytes": 7167,
+          "owner_fixture_marker_exposed": false
+        },
+        {
+          "index": 2,
+          "path": "/v1/chat/completions",
+          "model": "offline-installed-fixture",
+          "request_sha256": "4ee77f7aefb377e25adff0505f88a5e6bfebc2b485fb06513abee6d88a6e7e41",
+          "bytes": 9613,
+          "owner_fixture_marker_exposed": false
+        }
+      ],
+      "separate_processes": [
+        15968,
+        9940,
+        1444
+      ]
+    },
+    "installed_probe": {
+      "state": "passed",
+      "pid": 10640,
+      "installed_from": "D:\\Runesmith\\training\\.tmp\\installed-journey-20261002c\\venv\\Lib\\site-packages\\runesmith\\__init__.py",
+      "pytest_installed": false,
+      "studio_opened": false,
+      "home_opened": false,
+      "external_inference_calls": 0,
+      "cases": [
+        {
+          "name": "unittest_only",
+          "probe": {
+            "runner": "unittest",
+            "pytest_available": false,
+            "fallback_reason": "pytest_missing",
+            "suite_scope": "unittest_discovery_only",
+            "collected": 1,
+            "collect_exit": 0,
+            "suite_seconds": 0.57,
+            "exit_code": 0,
+            "passed": 1,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0
+          },
+          "rungs": {
+            "source_present": "achieved",
+            "tests_present": "achieved",
+            "tests_collect": "unknown",
+            "tests_pass": "unknown",
+            "fast_suite": "unknown",
+            "coverage_measured": "unknown",
+            "mutation_tested": "unknown"
+          },
+          "source_unchanged": true
+        },
+        {
+          "name": "mixed",
+          "probe": {
+            "runner": "unittest",
+            "pytest_available": false,
+            "fallback_reason": "pytest_missing",
+            "suite_scope": "unittest_discovery_only",
+            "collected": 1,
+            "collect_exit": 0,
+            "suite_seconds": 0.54,
+            "exit_code": 0,
+            "passed": 1,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0
+          },
+          "rungs": {
+            "source_present": "achieved",
+            "tests_present": "achieved",
+            "tests_collect": "unknown",
+            "tests_pass": "unknown",
+            "fast_suite": "unknown",
+            "coverage_measured": "unknown",
+            "mutation_tested": "unknown"
+          },
+          "source_unchanged": true
+        },
+        {
+          "name": "pytest_only",
+          "probe": {
+            "runner": "unittest",
+            "pytest_available": false,
+            "fallback_reason": "pytest_missing",
+            "suite_scope": "unittest_discovery_only",
+            "collected": null,
+            "unavailable": "pytest is not installed in this Python, and unittest found no tests to run"
+          },
+          "rungs": {
+            "source_present": "achieved",
+            "tests_present": "achieved",
+            "tests_collect": "unknown",
+            "tests_pass": "unknown",
+            "fast_suite": "unknown",
+            "coverage_measured": "unknown",
+            "mutation_tested": "unknown"
+          },
+          "source_unchanged": true
+        },
+        {
+          "name": "unittest_failure",
+          "probe": {
+            "runner": "unittest",
+            "pytest_available": false,
+            "fallback_reason": "pytest_missing",
+            "suite_scope": "unittest_discovery_only",
+            "collected": 1,
+            "collect_exit": 0,
+            "suite_seconds": 0.57,
+            "exit_code": 1,
+            "passed": 0,
+            "failed": 1,
+            "errors": 0,
+            "skipped": 0
+          },
+          "rungs": {
+            "source_present": "achieved",
+            "tests_present": "achieved",
+            "tests_collect": "unknown",
+            "tests_pass": "not_achieved",
+            "fast_suite": "unknown",
+            "coverage_measured": "unknown",
+            "mutation_tested": "unknown"
+          },
+          "source_unchanged": true
+        }
+      ],
+      "scope": "Trainer-authored synthetic tests; installed probe evidence only, not Build continuation or owner acceptance"
+    },
+    "phases": [
+      {
+        "phase": "first",
+        "state": "passed",
+        "pid": 15968,
+        "closed": true,
+        "ordinary_attempts": 1,
+        "ledger_ok": true,
+        "jobs": [
+          {
+            "id": "43b1065623ad4332a23557cbceb37d74",
+            "kind": "plan",
+            "params": {},
+            "queued": "2026-10-02T02:56:46Z",
+            "by": "owner",
+            "finished": "2026-10-02T02:56:49Z",
+            "seconds": 1.3,
+            "result": "done",
+            "outcome": {
+              "summary": "2 milestones"
+            }
+          },
+          {
+            "id": "4b6a2aa86e18424f86069b8920f1e1ae",
+            "kind": "build",
+            "params": {
+              "milestone_id": "m1"
+            },
+            "queued": "2026-10-02T02:56:51Z",
+            "by": "owner",
+            "finished": "2026-10-02T02:56:56Z",
+            "seconds": 3.8,
+            "result": "done",
+            "outcome": {
+              "draft": "d202610020256523d5d",
+              "milestone": "m1",
+              "summary": "Draft “First bounded fixture”: your acceptance checks passed. Nothing was written."
+            }
+          },
+          {
+            "id": "fb6278cf55224f3d869a46b71ca8fe00",
+            "kind": "build",
+            "params": {
+              "milestone_id": "m1"
+            },
+            "queued": "2026-10-02T02:56:57Z",
+            "by": "owner",
+            "finished": "2026-10-02T02:56:57Z",
+            "seconds": 0,
+            "result": "done",
+            "outcome": {
+              "draft": "d202610020256523d5d",
+              "milestone": "m1",
+              "summary": "Draft “First bounded fixture” is unchanged since its last check. Nothing applied."
+            }
+          },
+          {
+            "id": "8ddfee2b022b4411b1acbe04c8b4ad17",
+            "kind": "build",
+            "params": {
+              "milestone_id": "m1"
+            },
+            "queued": "2026-10-02T02:56:58Z",
+            "by": "owner",
+            "finished": "2026-10-02T02:56:59Z",
+            "seconds": 0.9,
+            "result": "done",
+            "outcome": {
+              "draft": "d202610020256523d5d",
+              "milestone": "m1",
+              "summary": "Applied d202610020256523d5d; acceptance passed; m1 complete.",
+              "advanced": true
+            }
+          }
+        ],
+        "installed_probe": null
+      },
+      {
+        "phase": "continue",
+        "state": "passed",
+        "pid": 9940,
+        "closed": true,
+        "ordinary_attempts": 2,
+        "ledger_ok": true,
+        "jobs": [
+          {
+            "id": "541c2ac383b1451bb1ef0781e66be68f",
+            "kind": "build",
+            "params": {
+              "milestone_id": "m2"
+            },
+            "queued": "2026-10-02T02:57:04Z",
+            "by": "owner",
+            "finished": "2026-10-02T02:57:11Z",
+            "seconds": 6.4,
+            "result": "done",
+            "outcome": {
+              "draft": "d202610020257054a78",
+              "milestone": "m2",
+              "summary": "Applied d202610020257054a78; acceptance passed; m2 complete.",
+              "advanced": true
+            }
+          }
+        ],
+        "installed_probe": null
+      },
+      {
+        "phase": "inspect",
+        "state": "passed",
+        "pid": 1444,
+        "closed": true,
+        "ordinary_attempts": 2,
+        "ledger_ok": true,
+        "jobs": [
+          {
+            "id": "cbfebb166cf84e93b8182651bb56f803",
+            "kind": "build",
+            "params": {},
+            "queued": "2026-10-02T02:57:14Z",
+            "by": "owner",
+            "finished": "2026-10-02T02:57:15Z",
+            "seconds": 0,
+            "result": "done",
+            "outcome": {
+              "summary": "No unfinished milestones. Review goals before starting another plan."
+            }
+          },
+          {
+            "id": "937ae446dfe14e5eab4f9675e918a53e",
+            "kind": "map",
+            "params": {
+              "probe": true
+            },
+            "queued": "2026-10-02T02:57:16Z",
+            "by": "owner",
+            "finished": "2026-10-02T02:57:19Z",
+            "seconds": 2.8,
+            "result": "done",
+            "outcome": {
+              "objects": 1,
+              "summary": "1 Python project"
+            }
+          }
+        ],
+        "installed_probe": {
+          "probe": {
+            "runner": "unittest",
+            "pytest_available": false,
+            "fallback_reason": "pytest_missing",
+            "suite_scope": "unittest_discovery_only",
+            "collected": 2,
+            "collect_exit": 0,
+            "suite_seconds": 0.77,
+            "exit_code": 0,
+            "passed": 2,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0
+          },
+          "ladder": [
+            {
+              "rung": "source_present",
+              "status": "achieved"
+            },
+            {
+              "rung": "tests_present",
+              "status": "achieved"
+            },
+            {
+              "rung": "tests_collect",
+              "status": "unknown"
+            },
+            {
+              "rung": "tests_pass",
+              "status": "unknown"
+            },
+            {
+              "rung": "fast_suite",
+              "status": "unknown"
+            },
+            {
+              "rung": "coverage_measured",
+              "status": "unknown"
+            },
+            {
+              "rung": "mutation_tested",
+              "status": "unknown"
+            }
+          ],
+          "status": "unittest_passed"
+        }
+      }
+    ],
+    "earlier_trial_a": {
+      "state": "failed",
+      "output_dir": "D:\\Runesmith\\training\\.tmp\\installed-journey-20261002a",
+      "commands": [
+        {
+          "name": "wheel",
+          "exit_code": 0
+        },
+        {
+          "name": "install",
+          "exit_code": 0
+        },
+        {
+          "name": "first",
+          "exit_code": 1
+        }
+      ],
+      "new_external_inference_calls": 0,
+      "scope": "Installed Windows artifact + disposable HTTP fixtures, not live-model or human GUI qualification",
+      "operator_assistance": [
+        "Harness supplies three deterministic author answers, not a real model",
+        "Owner acceptance unittest files prepared before launch outside the UI",
+        "Scheduling and Kaizen explicitly disabled; each bounded action submitted by harness",
+        "Runtime is created through an ephemeral test fixture, not the double-click launcher"
+      ],
+      "wheel": {
+        "path": "D:\\Runesmith\\training\\.tmp\\installed-journey-20261002a\\wheel\\runesmith-0.1.0-py3-none-any.whl",
+        "sha256": "efe0f730d72cff5a987cdaa31fb180c5c5e8273280b23c460f891b76197ad85a",
+        "bytes": 577481
+      },
+      "owner_fixture_hashes": {
+        "m1.py": "8136f63b28f7848a6aca2b3bf32dafad6378e2f9609908fcf1b6a38d6e61ade4",
+        "m2.py": "718783860b8628198e322b6f50469efbbb6fb22c10cd4a63d1f091b30b514200"
+      },
+      "scripted_local_requests": [],
+      "error": "RuntimeError: first failed; retained log: D:\\Runesmith\\training\\.tmp\\installed-journey-20261002a\\first.log"
+    },
+    "earlier_trial_b": {
+      "state": "failed",
+      "output_dir": "D:\\Runesmith\\training\\.tmp\\installed-journey-20261002b",
+      "commands": [
+        {
+          "name": "wheel",
+          "exit_code": 0
+        },
+        {
+          "name": "install",
+          "exit_code": 0
+        },
+        {
+          "name": "first",
+          "exit_code": 1
+        }
+      ],
+      "new_external_inference_calls": 0,
+      "scope": "Installed Windows artifact + disposable HTTP fixtures, not live-model or human GUI qualification",
+      "operator_assistance": [
+        "Harness supplies three deterministic author answers, not a real model",
+        "Owner acceptance unittest files prepared before launch outside the UI",
+        "Scheduling and Kaizen explicitly disabled; each bounded action submitted by harness",
+        "Runtime is created through an ephemeral test fixture, not the double-click launcher"
+      ],
+      "wheel": {
+        "path": "D:\\Runesmith\\training\\.tmp\\installed-journey-20261002b\\wheel\\runesmith-0.1.0-py3-none-any.whl",
+        "sha256": "a3cc667e1c6ff9b9a4c90219a3d802f9b5b7ec54a7222cd371b14de01344a8fe",
+        "bytes": 577481
+      },
+      "owner_fixture_hashes": {
+        "m1.py": "8136f63b28f7848a6aca2b3bf32dafad6378e2f9609908fcf1b6a38d6e61ade4",
+        "m2.py": "718783860b8628198e322b6f50469efbbb6fb22c10cd4a63d1f091b30b514200"
+      },
+      "scripted_local_requests": [
+        {
+          "index": 0,
+          "path": "/v1/chat/completions",
+          "model": "offline-installed-fixture",
+          "request_sha256": "3568525537560014a6b613461a6b48da06c7f94fcedaf33b273c82d9f072465a",
+          "bytes": 4511,
+          "owner_fixture_marker_exposed": false
+        },
+        {
+          "index": 1,
+          "path": "/v1/chat/completions",
+          "model": "offline-installed-fixture",
+          "request_sha256": "0f154cf129eb8566675afcf020eaf27112f3e9c499b2570fc9a084305b495095",
+          "bytes": 7167,
+          "owner_fixture_marker_exposed": false
+        },
+        {
+          "index": 2,
+          "path": "/v1/chat/completions",
+          "model": "offline-installed-fixture",
+          "request_sha256": "5cba8a1df2a5db3c2a2f7ef1307eb5d5c55aa19ebb272f92c67ab29757bf7157",
+          "bytes": 8966,
+          "owner_fixture_marker_exposed": false
+        }
+      ],
+      "error": "RuntimeError: first failed; retained log: D:\\Runesmith\\training\\.tmp\\installed-journey-20261002b\\first.log"
+    }
+  }
+}
+

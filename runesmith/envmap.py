@@ -207,19 +207,21 @@ def probe_pytest(path: Path, *, timeout_s: int = 900, python: str = sys.executab
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     src = path / "src"
     env["PYTHONPATH"] = os.pathsep.join(p for p in [str(src) if src.is_dir() else "", str(path)] if p)
-    out: dict[str, Any] = {}
+    out: dict[str, Any] = {"runner": "pytest", "suite_scope": "pytest_discovery"}
     started = time.monotonic()
     try:
         collect = subprocess.run([python, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
                                  cwd=str(path), env=env, capture_output=True, text=True, timeout=timeout_s, errors="replace")
-        if "No module named pytest" in collect.stderr:
+        missing_runner = re.fullmatch(re.escape(str(python)) + r": No module named (?:pytest|'pytest'|\"pytest\")",
+                                      collect.stderr.strip())
+        if collect.returncode != 0 and not collect.stdout.strip() and missing_runner:
             # Journey J2-B3: without pytest this read as "tests do not collect or pass" for 16 passing tests.
             return _probe_unittest(path, env, timeout_s=timeout_s, python=python)
         match = re.search(r"(\d+) tests? collected", collect.stdout + collect.stderr)
         out["collected"] = int(match.group(1)) if match else None
         out["collect_exit"] = collect.returncode
     except subprocess.TimeoutExpired:
-        return {"collected": None, "error": "collection timed out"}
+        return {**out, "collected": None, "error": "collection timed out"}
     remaining = max(30, timeout_s - int(time.monotonic() - started))
     run_started = time.monotonic()
     try:
@@ -243,21 +245,32 @@ def _probe_unittest(path: Path, env: dict[str, str], *, timeout_s: int, python: 
     reporting tests that do not collect.
     """
     where = ["-s", "tests", "-t", "."] if (path / "tests").is_dir() else ["-s", ".", "-t", "."]
+    scope = {"runner": "unittest", "pytest_available": False, "fallback_reason": "pytest_missing",
+             "suite_scope": "unittest_discovery_only"}
     started = time.monotonic()
     try:
         run = subprocess.run([python, "-m", "unittest", "discover", *where], cwd=str(path), env=env,
                              capture_output=True, text=True, timeout=timeout_s, errors="replace")
     except subprocess.TimeoutExpired:
-        return {"collected": None, "runner": "unittest", "error": "test run timed out", "suite_seconds": None}
+        return {**scope, "collected": None, "error": "test run timed out", "suite_seconds": None}
     text = run.stdout + run.stderr
     ran = re.search(r"Ran (\d+) tests?", text)
     if not ran or int(ran.group(1)) == 0:
-        return {"collected": None, "runner": None,
+        # Some Python versions use exit 5 for an otherwise successful empty discovery.
+        empty_discovery = (ran and int(ran.group(1)) == 0 and run.returncode == 5
+                           and text.rstrip().endswith("NO TESTS RAN") and "Traceback" not in text)
+        if run.returncode != 0 and not empty_discovery:
+            return {**scope, "collected": None, "exit_code": run.returncode,
+                    "error": "unittest discovery could not run", "diagnostic": text[-4000:]}
+        if not ran:
+            return {**scope, "collected": None, "unavailable": "unittest did not report a test count",
+                    "diagnostic": text[-4000:]}
+        return {**scope, "collected": None,
                 "unavailable": "pytest is not installed in this Python, and unittest found no tests to run"}
     counts = {kind: int(n) for kind, n in re.findall(r"(failures|errors|skipped)=(\d+)", text)}
     total = int(ran.group(1))
     failed, errors, skipped = counts.get("failures", 0), counts.get("errors", 0), counts.get("skipped", 0)
-    return {"collected": total, "collect_exit": 0, "runner": "unittest",
+    return {**scope, "collected": total, "collect_exit": 0,
             "suite_seconds": round(time.monotonic() - started, 2), "exit_code": run.returncode,
             "passed": total - failed - errors - skipped, "failed": failed, "errors": errors, "skipped": skipped}
 
@@ -290,8 +303,33 @@ def python_object(path: Path, *, probe: bool, scratch: Path | None = None) -> di
     ladder = [{"rung": name, "status": {True: "achieved", False: "not_achieved", None: "unknown"}[rungs[name]]}
               for name in PYTHON_LADDER]
     next_rung = next((r["rung"] for r in ladder if r["status"] != "achieved"), None)
-    return {"kind": "python_repository", "facts": facts, "probe": probe_result, "objectives": objectives,
-            "ladder": ladder, "next_rung": next_rung}
+    return scope_python_probe({"kind": "python_repository", "facts": facts, "probe": probe_result,
+                               "objectives": objectives, "ladder": ladder, "next_rung": next_rung})
+
+
+def scope_python_probe(obj: dict[str, Any]) -> dict[str, Any]:
+    """Keep limited or unavailable measurements from asserting whole-suite evidence.
+
+    Also applies to retained maps: unchanged source does not make an older scope claim correct.
+    Raw counts/timing remain available in the probe, without rerunning any tests.
+    """
+    probe = obj.get("probe") or {}
+    limited = probe.get("runner") == "unittest"
+    unavailable = bool(probe.get("unavailable") or probe.get("error"))
+    if not limited and not unavailable:
+        return obj
+    objectives = [dict(row, value=None, band="unknown", evidence="unknown")
+                  if row.get("metric") in ("test_pass_rate", "test_suite_seconds") else row
+                  for row in obj.get("objectives", [])]
+    ladder = []
+    for row in obj.get("ladder", []):
+        if row["rung"] in ("tests_collect", "tests_pass", "fast_suite"):
+            failed = (row["rung"] == "tests_pass" and not unavailable
+                      and probe.get("exit_code") not in (None, 0))
+            row = dict(row, status="not_achieved" if failed else "unknown")
+        ladder.append(row)
+    return dict(obj, objectives=objectives, ladder=ladder,
+                next_rung=next((r["rung"] for r in ladder if r["status"] != "achieved"), None))
 
 
 NODE_LADDER = ["package_manifest", "source_present", "tests_present", "test_script_declared", "tests_pass",
@@ -357,7 +395,8 @@ _TODO = re.compile(r"\b(TODO|FIXME|XXX)\b")
 # Raised whenever a map starts to record something new, so a map from an earlier version is known to be incomplete.
 # 2: pages nothing links to, notes still to do, the index's real name (journey J4).
 # 3: tests run with unittest when pytest is missing, and a probe that ran nothing is unknown (journey J2-B3).
-MAPPER_REVISION = 4
+# 5: unittest fallback is subset evidence, not whole-suite completion.
+MAPPER_REVISION = 5
 
 
 def exists_exactly(path: Path, _listing: dict[str, set[str]] | None = None) -> bool:
@@ -685,7 +724,8 @@ def build_environment_map(workspace: Path, *, probe: bool = False, max_objects: 
                 measured["measured_utc"] = now
             elif (before.get("kind") == kind and before.get("probe") and before.get("measured_utc")
                   and (before.get("facts") or {}).get("fingerprint") == measured["facts"]["fingerprint"]):
-                measured = {k: before[k] for k in ("facts", "probe", "objectives", "ladder", "next_rung", "measured_utc")}
+                measured = scope_python_probe({k: before[k] for k in
+                                               ("facts", "probe", "objectives", "ladder", "next_rung", "measured_utc")})
                 kept += 1
             entry.update(measured)
         elif kind == "node_repository":

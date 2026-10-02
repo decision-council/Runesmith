@@ -7,6 +7,18 @@ import { bandPosition, fmtCap } from './home.js';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hubSize = (name) => { const n = String(name || 'Workspace').length; return n <= 9 ? 15 : n <= 12 ? 13.5 : n <= 15 ? 12 : 10.5; };
 const trunc = (s, n) => (String(s).length > n ? String(s).slice(0, n - 1) + '…' : String(s));
+// Old maps stay on disk until the owner re-maps. Render their retained probe with
+// current evidence semantics, without starting tests or rewriting the receipt.
+function scopedObject(obj) {
+  const probe = obj.probe || {}, unavailable = !!(probe.unavailable || probe.error);
+  if (probe.runner !== 'unittest' && !unavailable) return obj;
+  const objectives = (obj.objectives || []).map(row => ['test_pass_rate', 'test_suite_seconds'].includes(row.metric)
+    ? {...row, value: null, band: 'unknown', evidence: 'unknown'} : row);
+  const ladder = (obj.ladder || []).map(row => ['tests_collect', 'tests_pass', 'fast_suite'].includes(row.rung)
+    ? {...row, status: row.rung === 'tests_pass' && !unavailable && probe.exit_code != null && probe.exit_code !== 0
+      ? 'not_achieved' : 'unknown'} : row);
+  return {...obj, objectives, ladder, next_rung: ladder.find(row => row.status !== 'achieved')?.rung || null};
+}
 // A long workspace name wraps onto two balanced lines inside the hub instead of being cut.
 const hubLines = (name) => {
   const text = String(name || 'Workspace').trim(), words = text.split(/\s+/);
@@ -136,7 +148,7 @@ async function environmentLens(body, ctx) {
     const env = data.map;
     if (!env) { wrap.append(h('div.empty', icon('map', 'big'), h('h4', 'Mapping…'), h('p', 'The first map takes a few seconds.'))); return; }
     const statuses = data.round.objects || {};
-    const objects = env.objects || [];
+    const objects = (env.objects || []).map(scopedObject);
     const rootObj = objects.find((o) => o.root);
     const others = objects.filter((o) => !o.root);
     const facts = env.workspace_facts || {};
@@ -216,8 +228,8 @@ async function environmentLens(body, ctx) {
   return () => offs.forEach((f) => f());
 }
 
-function nodeMarkup(p, status, sel) {
-  const o = p.o, k = KIND[o.kind] || KIND.unknown;
+export function nodeMarkup(p, status, sel) {
+  const o = scopedObject(p.o), k = KIND[o.kind] || KIND.unknown;
   const band = worstBand((o.objectives || []).map((x) => x.band));
   const color = BAND_COLOR[band];
   const w = 196, hgt = 66;
@@ -229,6 +241,8 @@ function nodeMarkup(p, status, sel) {
   const sub = where + (o.kind === 'excluded' ? (o.reason === 'link' ? 'a link: not followed' : 'never touched')
     : o.next_rung ? `next: ${humanize(o.next_rung)}` : ladder.length ? 'every rung achieved' : k.label);
   const stat = { green: ['#22c55e', 'tests pass'], failing: ['#ef4444', 'tests failing'], timed_out: ['#f5a524', 'tests timed out'],
+    unittest_passed: ['#f5a524', 'unittest subset passes'], probe_unavailable: ['#f5a524', 'test probe unavailable'],
+    error_without_failures: ['#f5a524', 'tests could not run'],
     fix_applied: ['#22d3c5', 'a fix was applied: measure the tests to confirm'] }[status];
   let seg = '';
   const segW = ladder.length ? (w - 64) / ladder.length : 0;
@@ -295,14 +309,18 @@ function sidePanel(obj, env, data, close, ctx, rootObj) {
   return panel;
 }
 
-function objectDetails(obj, env, data) {
+export function objectDetails(obj, env, data) {
+  obj = scopedObject(obj);
   const out = [];
+  const probe = obj.probe || {}, limited = probe.runner === 'unittest', unavailable = !!(probe.unavailable || probe.error);
   const status = (data.round.objects || {})[obj.name];
   const badges = h('div.row.wrap.mt-8');
   const words = { green: 'tests pass', failing: 'tests failing', timed_out: 'tests timed out', error_without_failures: 'tests could not run',
+    unittest_passed: 'unittest subset passes', probe_unavailable: 'test probe unavailable',
     fix_applied: 'fix applied · measure to confirm' }[status] || (status ? `last round: ${humanize(status)}` : '');
   if (status) badges.append(h('span', { class: `badge ${status === 'green' ? 'good' : status === 'failing' ? 'bad' : status === 'fix_applied' ? 'rune' : 'warn'}` }, words));
-  if (obj.measured_utc) badges.append(h('span.badge.rune', { title: 'Kept while the files stay unchanged' }, `tests measured ${ago(obj.measured_utc)}`));
+  if (obj.measured_utc) badges.append(h('span.badge.rune', { title: 'Kept while the files stay unchanged' },
+    `${unavailable ? 'probe attempted' : limited ? 'unittest subset measured' : 'tests measured'} ${ago(obj.measured_utc)}`));
   else if (obj.kind === 'python_repository') badges.append(h('button.btn.sm', { onclick: (e) => withBusy(e.currentTarget, async () => { await post('/api/worker/run', { job: 'map', params: { probe: true } }); toast('Measuring: the tests run on throwaway copies.', 'good'); }) }, icon('gauge'), 'Measure its tests'));
   const broken = (obj.facts && (obj.facts.broken_links || obj.facts.broken_references)) || 0;
   if (broken) badges.append(h('button.btn.sm.primary', { title: 'Runesmith points each broken link at the existing file with the closest name: a draft you review, no model needed',
@@ -312,6 +330,12 @@ function objectDetails(obj, env, data) {
       else toast(r.detail || 'Nothing to fix.', r.unresolved?.length ? 'warn' : 'good', 7000);
     }) }, icon('wand'), `Suggest fixes for ${plural(broken, 'broken link')}`));
   if (badges.children.length) out.push(badges);
+  if (limited) out.push(h('div.callout.warn.mt-8', icon('alert'), h('div',
+    h('b', 'Limited test scope. '), 'Pytest is missing in this Python. ',
+    probe.collected != null ? `Unittest discovery ran ${plural(probe.collected, 'test')}. ` : 'Unittest discovery was attempted. ',
+    'Pytest-style tests may be omitted; whole-suite coverage is unknown. Build’s unittest checks are separate.')));
+  if (unavailable) out.push(h('div.callout.warn.mt-8', icon('alert'), h('div',
+    h('b', 'No passing test result was established. '), probe.unavailable || probe.error)));
   const why = (data.round.details || {})[obj.name];
   if (why) out.push(h('div.callout.warn.mt-8', icon('alert'), h('div', h('b', 'The tests could not run. '), why.detail,
     why.triage ? h('div.small.mt-8', why.triage.reason) : null)));
@@ -338,7 +362,8 @@ function objectDetails(obj, env, data) {
     if (obj.facts.todo_examples?.length) out.push(h('div.label-text.mt-16', 'Notes still to do (TODO, FIXME)'),
       h('ul.small', { style: { paddingLeft: '18px' } }, obj.facts.todo_examples.map((t) => h('li', h('span.mono', `${t.document}:${t.line}`), ' ', t.text))));
   }
-  if (obj.probe) out.push(h('div.divider'), h('div.label-text', 'Last measured test run (throwaway copy)'),
+  if (obj.probe) out.push(h('div.divider'), h('div.label-text',
+    unavailable ? 'Last probe attempt (throwaway copy)' : limited ? 'Last unittest subset run (throwaway copy)' : 'Last measured test run (throwaway copy)'),
     kv(Object.entries(obj.probe).map(([k, v]) => [humanize(k), v])));
   const unknown = (env.unknowns || []).filter((u) => u.startsWith(obj.name + ':'));
   if (unknown.length) out.push(h('div.divider'), h('div.label-text', 'Unknown'), h('ul.small.muted', { style: { paddingLeft: '18px' } }, unknown.map((u) => h('li', u.slice(obj.name.length + 1).trim()))));
@@ -481,7 +506,7 @@ async function developmentLens(body, ctx) {
     for (const m of plan.milestones) { const t = m.track || 'Plan'; if (!byTrack.has(t)) byTrack.set(t, []); byTrack.get(t).push(m); }
     for (const [t, ms] of byTrack) lanes.push({ kind: 'plan', label: t, sub: 'plan track', stations: ms.map((m) => ({ id: m.id, label: m.title, status: m.status === 'done' ? 'achieved' : m.status === 'doing' ? 'doing' : m.status === 'dropped' ? 'dropped' : 'open', note: ['milestone', m.id, m.title] })) });
   }
-  for (const o of data.objects) if (o.ladder?.length) lanes.push({ kind: 'object', label: o.name, sub: KIND[o.kind]?.label || o.kind, stations: o.ladder.map((r) => ({ id: r.rung, label: humanize(r.rung), status: r.status, next: o.next_rung === r.rung, note: ['rung', `${o.name}/${r.rung}`, `${o.name}: ${humanize(r.rung)}`] })) });
+  for (const o of data.objects.map(scopedObject)) if (o.ladder?.length) lanes.push({ kind: 'object', label: o.name, sub: KIND[o.kind]?.label || o.kind, stations: o.ladder.map((r) => ({ id: r.rung, label: humanize(r.rung), status: r.status, next: o.next_rung === r.rung, note: ['rung', `${o.name}/${r.rung}`, `${o.name}: ${humanize(r.rung)}`] })) });
   if (data.lineage?.length) lanes.push({ kind: 'self', label: 'Runesmith itself', sub: 'generations', stations: data.lineage.map((g) => ({ id: g.id, label: g.id.replace('gen-', ''), status: g.active ? 'active' : 'achieved', note: ['generation', g.id, g.id], title: g.label })) });
   const goalsCard = h('div.card', h('div.card-head', h('h3', icon('target'), 'Operating toward'), h('div.actions', h('button.btn.sm', { onclick: () => ctx.navigate('goals') }, icon('plus'), 'Goals & plan'))),
     goals.length ? h('div.pillbox', goals.map((g) => { const c = h('span', { class: `chip${g.status === 'done' ? ' on' : ''}` }, icon(g.status === 'done' ? 'check' : 'target'), g.text); commentable(c, 'goal', g.id, g.text); c.querySelector('.note-btn').style.top = '-10px'; return c; }))

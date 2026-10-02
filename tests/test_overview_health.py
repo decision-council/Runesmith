@@ -36,6 +36,8 @@ def test_overview_health_is_offline_and_read_only(studio, monkeypatch, url):
     by_check = {row["check"]: row for row in body["checks"]}
     assert by_check["pytest"]["ok"] is False
     assert by_check["pytest"]["fix"] == "pip install pytest"
+    assert "pytest-based repair observation" in by_check["pytest"]["detail"]
+    assert "Build's unittest checks" in by_check["pytest"]["detail"]
     assert by_check["instrument unprobed-author (plan)"]["ok"] is None
     assert by_check["instrument unprobed-author (plan)"]["detail"] == "not probed (offline)"
     assert snapshot() == before

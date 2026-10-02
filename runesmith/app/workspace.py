@@ -869,7 +869,7 @@ class Workspace:
         """Each code object's test status now: the last round's, unless something happened since.
 
         A fix applied after the round makes it ``fix_applied`` until the tests are measured again; a measurement
-        taken after both says ``green`` or ``failing`` from the tests themselves.
+        taken after both supersedes it, including unavailable and limited-scope observations.
         """
         from runesmith.proposals import list_proposals
         work = work if work is not None else _read_json(self.home / "WORK.json", {})
@@ -885,8 +885,19 @@ class Workspace:
                 applied[label] = max(applied.get(label, ""), s["utc"])
         for o in env_map.get("objects", []):
             probe, when = o.get("probe") or {}, o.get("measured_utc") or ""
-            if "exit_code" in probe and when > since and when >= applied.get(o["name"], ""):
-                statuses[o["name"]] = "green" if probe["exit_code"] == 0 else "failing"
+            # Timestamps have second precision. At a tie, never retain a stronger green
+            # claim over incomplete evidence; an older probe cannot override newer work.
+            terminal = "exit_code" in probe or probe.get("error") or probe.get("unavailable")
+            if terminal and when and when >= since and when >= applied.get(o["name"], ""):
+                if probe.get("error"):
+                    statuses[o["name"]] = ("timed_out" if "timed out" in probe["error"]
+                                            else "error_without_failures")
+                elif probe.get("unavailable"):
+                    statuses[o["name"]] = "probe_unavailable"
+                elif "exit_code" in probe and (when > since or probe["exit_code"] != 0
+                                               or probe.get("runner") == "unittest"):
+                    statuses[o["name"]] = ("failing" if probe["exit_code"] != 0 else
+                                            "unittest_passed" if probe.get("runner") == "unittest" else "green")
             elif o["name"] in applied:
                 statuses[o["name"]] = "fix_applied"
         return statuses

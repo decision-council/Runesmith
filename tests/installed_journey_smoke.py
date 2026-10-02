@@ -53,6 +53,59 @@ def save(path, value):
     Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
+def probe_installed(args):
+    """Independent installed-package diagnostic; opens no Studio or retained home."""
+    import runesmith
+    from runesmith.envmap import python_object
+    installed = Path(runesmith.__file__).resolve()
+    assert installed.is_relative_to(Path(sys.prefix).resolve()), str(installed)
+    assert importlib.util.find_spec("pytest") is None
+    base = Path(args.output_dir).resolve()
+    root = base / "probe-scope-fixtures"
+    root.mkdir()  # refuse to overwrite an earlier diagnostic
+    def no_network(event, values):
+        if event == "socket.connect":
+            raise RuntimeError("Installed probe diagnostic forbids network connections")
+    sys.addaudithook(no_network)
+    result = {"state": "running", "pid": os.getpid(), "installed_from": str(installed),
+              "pytest_installed": False, "studio_opened": False, "home_opened": False,
+              "external_inference_calls": 0, "cases": [],
+              "scope": "Trainer-authored synthetic tests; installed probe evidence only, not Build continuation or owner acceptance"}
+    cases = {"unittest_only": TEST1, "mixed": TEST1 + "\ndef test_pytest_only():\n    assert False\n",
+             "pytest_only": "def test_pytest_only():\n    assert False\n", "unittest_failure": TEST1.replace("42", "43")}
+    try:
+        for name, test in cases.items():
+            folder = root / name
+            (folder / "tests").mkdir(parents=True)
+            (folder / "app.py").write_text(APP1, encoding="utf-8")
+            (folder / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (folder / "tests" / "test_answer.py").write_text(test, encoding="utf-8")
+            before = {p.relative_to(folder).as_posix(): digest(p) for p in folder.rglob("*") if p.is_file()}
+            observed = python_object(folder, probe=True, scratch=base / "probe-scratch")
+            probe = observed["probe"]
+            assert probe["runner"] == "unittest" and probe["suite_scope"] == "unittest_discovery_only"
+            rungs = {r["rung"]: r["status"] for r in observed["ladder"]}
+            assert rungs["tests_collect"] == rungs["fast_suite"] == "unknown"
+            assert rungs["tests_pass"] == ("not_achieved" if name == "unittest_failure" else "unknown")
+            if name == "pytest_only":
+                assert probe["unavailable"]
+            else:
+                assert probe["collected"] == 1
+                assert probe["exit_code"] == (1 if name == "unittest_failure" else 0)
+            assert all(r["value"] is None for r in observed["objectives"]
+                       if r["metric"] in ("test_pass_rate", "test_suite_seconds"))
+            after = {p.relative_to(folder).as_posix(): digest(p) for p in folder.rglob("*") if p.is_file()}
+            assert before == after
+            result["cases"].append({"name": name, "probe": probe, "rungs": rungs, "source_unchanged": True})
+        result["state"] = "passed"
+    except Exception as error:
+        result.update(state="failed", error=f"{type(error).__name__}: {error}")
+        raise
+    finally:
+        save(base / "probe.json", result)
+        print(json.dumps({"probe_state": result["state"], "receipt": str(base / "probe.json")}), flush=True)
+
+
 @contextmanager
 def fixture_provider():
     """Three deterministic completions, independent of the installed runtime."""
@@ -174,9 +227,10 @@ def phase(args):
         request("GET", "/api/state", cookie=False, expected=401)
         initial = request("GET", "/api/state")
         assert initial["workspace"]["home"] == str(home)
-        assert b"Before you leave it working" in request("GET", "/static/js/views/home.js", raw=True)
+        assert b"Setup and work policy" in request("GET", "/static/js/views/home.js", raw=True)
         health = request("GET", "/api/health?network=0")
         assert any(r["check"] == "pytest" and r["ok"] is False for r in health["checks"])
+        assert any(r["check"] == "pytest" and "Build's unittest checks" in r["detail"] for r in health["checks"])
         result["initial_settings"] = {k: initial["settings"][k] for k in
                                       ("onboarded", "auto_work", "kaizen", "build_steps", "build_apply")}
         if args.phase == "first":
@@ -196,18 +250,20 @@ def phase(args):
             request("POST", "/api/settings", {"build_steps": True, "build_apply": False,
                                                "build_paths": ["app.py", "tests"]})
             before_source = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
-            checked = job("build")
+            # Current Build may skip a blocked milestone and try another ready one.
+            # Pin m1 while testing its grant; this is not a test of unattended selection.
+            checked = job("build", milestone_id="m1")
             assert checked["verification"]["status"] == "acceptance_passed", checked
             assert not checked.get("advanced") and not (root / "app.py").exists()
             assert before_source == {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
             request("POST", "/api/settings", {"build_apply": True, "build_paths": ["tests"]})
-            refused = job("build")
+            refused = job("build", milestone_id="m1")
             assert refused["draft"] == checked["draft"] and not refused.get("advanced")
             assert refused["verification"]["status"] == "acceptance_passed"
             assert before_source == {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
             result["out_of_scope_apply_wrote_nothing"] = True
             request("POST", "/api/settings", {"build_paths": ["app.py", "tests"]})
-            applied = job("build")
+            applied = job("build", milestone_id="m1")
             assert applied["draft"] == checked["draft"] and applied["advanced"], applied
             assert (root / "app.py").read_text(encoding="utf-8") == APP1
             result["first_draft"] = applied["draft"]
@@ -226,7 +282,7 @@ def phase(args):
             prior = next(d for d in first["drafts"] if d["id"] == retained["id"])
             assert retained["verification"] == prior["verification"]
             assert request("GET", "/api/build")["grant"] == first["final_grant"]["grant"]
-            applied = job("build")
+            applied = job("build", milestone_id="m2")
             assert applied["advanced"] and applied["milestone"] == "m2", applied
             assert applied["verification"]["project_checks"]["ran"] == 2
             assert applied["verification"]["acceptance"]["ran"] == 2
@@ -241,6 +297,17 @@ def phase(args):
             assert request("GET", "/api/build")["grant"] == prior["final_grant"]["grant"]
             outcome = job("build")
             assert "No unfinished milestones" in outcome["summary"]
+            # Use the resident fixture's queue, never a concurrent direct writer.
+            job("map", probe=True)
+            mapped = request("GET", "/api/map/environment")
+            observed = next(o for o in mapped["map"]["objects"] if o["root"])
+            assert observed["probe"]["runner"] == "unittest" and observed["probe"]["passed"] == 2
+            assert observed["probe"]["suite_scope"] == "unittest_discovery_only"
+            assert mapped["round"]["objects"][observed["name"]] == "unittest_passed"
+            assert all(row["status"] == "unknown" for row in observed["ladder"]
+                       if row["rung"] in ("tests_collect", "tests_pass", "fast_suite"))
+            result["installed_probe"] = {"probe": observed["probe"], "ladder": observed["ladder"],
+                                         "status": mapped["round"]["objects"][observed["name"]]}
         idle()
         result["ledger"] = studio.ws.ledger.verify()
         assert result["ledger"]["ok"]
@@ -287,6 +354,7 @@ def orchestrate(args):
                "operator_assistance": ["Harness supplies three deterministic author answers, not a real model",
                                        "Owner acceptance unittest files prepared before launch outside the UI",
                                        "Scheduling and Kaizen explicitly disabled; each bounded action submitted by harness",
+                                       "Harness explicitly selects m1/m2; grant refusal does not test automatic independent-milestone selection",
                                        "Runtime is created through an ephemeral test fixture, not the double-click launcher"]}
 
     def run(name, command, cwd=base, timeout=180):
@@ -305,6 +373,7 @@ def orchestrate(args):
         venv.EnvBuilder(with_pip=True, symlinks=False).create(base / "venv")
         python = base / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         run("install", [str(python), "-m", "pip", "install", "--no-index", "--no-deps", "--no-cache-dir", str(wheel)])
+        run("probe", [str(python), "-I", str(Path(__file__).resolve()), "--phase", "probe", "--output-dir", str(base)])
         (base / "project with spaces å").mkdir()
         acceptance = base / "isolated home ø" / ".runesmith" / "acceptance"
         acceptance.mkdir(parents=True)
@@ -337,7 +406,12 @@ def orchestrate(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--phase", choices=("first", "continue", "inspect"))
+    parser.add_argument("--phase", choices=("first", "continue", "inspect", "probe"))
     parser.add_argument("--provider")
     args = parser.parse_args()
-    phase(args) if args.phase else orchestrate(args)
+    if args.phase == "probe":
+        probe_installed(args)
+    elif args.phase:
+        phase(args)
+    else:
+        orchestrate(args)

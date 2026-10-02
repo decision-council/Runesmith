@@ -260,10 +260,11 @@ def test_without_pytest_the_tests_run_with_unittest_or_stay_unknown(tmp_path, mo
     unit = ("import unittest\nfrom shop import total\n\n\nclass T(unittest.TestCase):\n"
             "    def test_total(self):\n        self.assertEqual(total(2, 3), 5)\n")
     rungs, probe = shop(tmp_path / "good", "def total(a, b):\n    return a + b\n", unit)
-    assert rungs["tests_collect"] == rungs["tests_pass"] == "achieved"
+    # Unittest discovery succeeds, but cannot establish that pytest-style tests were collected.
+    assert rungs["tests_collect"] == rungs["tests_pass"] == rungs["fast_suite"] == "unknown"
     assert probe["runner"] == "unittest" and probe["passed"] == 1
     rungs, probe = shop(tmp_path / "bad", "def total(a, b):\n    return a - b\n", unit)
-    assert rungs["tests_collect"] == "achieved" and rungs["tests_pass"] == "not_achieved" and probe["failed"] == 1
+    assert rungs["tests_collect"] == "unknown" and rungs["tests_pass"] == "not_achieved" and probe["failed"] == 1
     rungs, probe = shop(tmp_path / "pytest_style", "def total(a, b):\n    return a + b\n",
                         "from shop import total\n\n\ndef test_total():\n    assert total(2, 3) == 5\n")
     assert rungs["tests_collect"] == rungs["tests_pass"] == rungs["fast_suite"] == "unknown"

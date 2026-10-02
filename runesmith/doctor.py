@@ -49,7 +49,8 @@ def diagnose_home(home: Path, *, network: bool = True, timeout_s: float = 5.0) -
         rows.append({"check": check, "ok": ok, "detail": detail, "fix": None if ok else fix})
 
     add("python", sys.version_info >= (3, 11), platform.python_version(), "install Python 3.11 or newer")
-    add("pytest", importlib.util.find_spec("pytest") is not None, "needed to observe code objects",
+    add("pytest", importlib.util.find_spec("pytest") is not None,
+        "needed for pytest-based repair observation; Build's unittest checks and limited unittest mapping can run without it",
         "pip install pytest")
     home = Path(home)
     if not (home / "ACTIVE").exists():

@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const dependencies=process.env.RUNESMITH_TEST_NODE_MODULES;
 const {chromium}=require(dependencies?path.join(dependencies,'playwright'):'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23,B24,B25,B26').split(','));
+const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23,B24,B25,B26,B27').split(','));
 const artifacts=path.join(root,'training','.tmp','studio-use-loops-'+new Date().toISOString().replace(/[:.]/g,'-'));
 mkdirSync(artifacts,{recursive:true});
 const executable=[chromium.executablePath(),'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -50,7 +50,7 @@ const fixtureWork={counts:{},draft_counts:{waiting:1},proposals:[],drafts:[recov
   build_memory:{total:0,items:[]},pending_authors:[],build_corrections:[],
   build_escalation:{eligible:false,milestone:'m1',attempts:1,used:false,
     allowance:{known:true,can_draft:true,used:1,remaining:2,limit:3,blockers:[]}}};
-let fixtureBreakdowns=[],fixtureMapObjects=null;
+let fixtureBreakdowns=[],fixtureMapObjects=null,fixtureProbeMap=null;
 let briefCandidates=[],ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30},fixFixture={offer:null};
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
@@ -235,7 +235,8 @@ await context.route('**/*',async route=>{
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
   else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false,autonomy:'propose',
     exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark'};
-  else if(p==='/api/map/environment')data={map:{objects:fixtureMapObjects||[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
+  else if(p==='/api/map/environment')data=fixtureProbeMap||{map:{objects:fixtureMapObjects||[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
+  else if(p==='/api/map/development')data={objects:fixtureProbeMap?.map.objects||[],goals:[],plan:null,lineage:[],campaigns:[]};
   else if(p==='/api/build')data={apply:false,acceptance_folder:'.runesmith/acceptance',last:null};
   else if(p==='/api/author-context'&&req.method()==='GET')data={focus:{paths:[],reason:'',utc:null},focus_errors:authorFocusErrors,settings_error:null,
     truncated_inventory:false,snapshot_digest:'a'.repeat(64),included_count:1,omitted_count:0,used_chars:20316,budget_chars:48000,
@@ -2475,6 +2476,73 @@ try{
     fixtureWork.build_escalation=oldEscalation;
     loops.push({id:'B26.05',case:'The one more try’s refused answer is kept and “Check it again” queues it with no model call',result:'passed'});
     fixtureWork.drafts=oldDrafts;
+  }
+  if(selected.has('B27')){
+    const start=requests.length;
+    const stamp=new Date().toISOString();
+    // Deliberately retain legacy whole-suite claims. Rendering must not repeat them.
+    const legacy={name:'repo',kind:'python_repository',path:'D:/fixture/repo',root:false,measured_utc:stamp,
+      facts:{source_files:1,test_files:1},next_rung:null,
+      objectives:[{id:'tests_green',metric:'test_pass_rate',value:1,band:'optimal',evidence:'observed',unit:'passing / executed',why:'test signal',higher_is_better:true,minimal:.9,optimal:1}],
+      ladder:['tests_collect','tests_pass','fast_suite'].map(rung=>({rung,status:'achieved'}))};
+    const mount=async(probe,status,lens='environment')=>{
+      fixtureProbeMap={map:{workspace:'D:/fixture',utc:stamp,workspace_facts:{files:3},environment:{},unknowns:[],
+        objects:[{...structuredClone(legacy),probe}]},round:{utc:stamp,objects:{repo:status},details:{}},settings:{exclude:[]}};
+      await page.evaluate(async lens=>{
+        window.cleanup?.();document.querySelector('#page').replaceChildren();
+        const module=await import('/static/js/views/map.js');
+        window.cleanup=await module.default(document.querySelector('#page'),{sub:[lens],params:new URLSearchParams('focus=repo'),
+          app:{state:{workspace:{name:'Probe scope fixture'}}},navigate(){}});
+      },lens);
+    };
+    const panel=()=>page.getByRole('region',{name:'Details: repo',exact:true});
+    const node=()=>page.locator('.map-wrap .node[data-name="repo"]');
+    const partial={runner:'unittest',collected:1,passed:1,exit_code:0,suite_seconds:.01};
+    await page.setViewportSize({width:1440,height:1000});
+    await mount(partial,'unittest_passed');
+    assert((await panel().innerText()).includes('unittest subset passes'));
+    assert((await panel().innerText()).includes('whole-suite coverage is unknown'));
+    assert((await panel().innerText()).includes('unittest subset measured'));
+    assert((await node().getAttribute('aria-label')).includes('unittest subset passes'));
+    assert.equal(await panel().locator('.badge.good,.rung.achieved,.band.optimal').count(),0);
+    assert.equal(await panel().locator('.rung.unknown').count(),3);
+    loops.push({id:'B27.01',case:'Legacy unittest measurements show scoped success in Map node/accessibility and details, with unknown whole-suite objectives and rungs',result:'passed'});
+    for(const width of [1440,800,390]){
+      await page.setViewportSize({width,height:1000});await mount(partial,'unittest_passed');
+      assert(await panel().evaluate(el=>el.scrollWidth<=el.clientWidth+1),`Probe details overflow at ${width}`);
+      assert(await page.locator('#page').evaluate(el=>el.scrollWidth<=el.clientWidth+1),`Map overflow at ${width}`);
+      await page.screenshot({path:path.join(artifacts,`B27-subset-${width}.png`),fullPage:width===390});
+    }
+    loops.push({id:'B27.02',case:'Scoped Map evidence fits desktop, tablet and phone',result:'passed'});
+    const hostile='pytest unavailable <img src=x onerror="window.probeInjected=true">';
+    await mount({runner:'unittest',unavailable:hostile},'probe_unavailable');
+    assert((await panel().innerText()).includes(hostile));
+    assert((await panel().innerText()).includes('probe attempted'));
+    assert((await panel().innerText()).includes('No passing test result was established'));
+    assert((await node().getAttribute('aria-label')).includes('test probe unavailable'));
+    assert.equal(await panel().locator('.rung.achieved,.badge.good').count(),0);
+    assert.equal(await page.evaluate(()=>!!window.probeInjected),false);
+    loops.push({id:'B27.03',case:'Unavailable probe is not shown as measured/pass and diagnostics remain inert text',result:'passed'});
+    await mount({runner:'unittest',error:'test run timed out'},'timed_out');
+    assert((await node().getAttribute('aria-label')).includes('tests timed out'));
+    assert((await panel().innerText()).includes('probe attempted'));
+    await mount({runner:'unittest',exit_code:1,collected:1,passed:0,failed:1},'failing');
+    assert((await node().getAttribute('aria-label')).includes('tests failing'));
+    assert.equal(await panel().locator('.rung.not_achieved').count(),1);
+    assert.equal(await panel().locator('.rung.unknown').count(),2);
+    loops.push({id:'B27.04',case:'Timeout and real fallback failure retain their outcomes without full-suite green',result:'passed'});
+    await mount({runner:'pytest',exit_code:0,collected:1,passed:1},'green');
+    assert.equal(await panel().locator('.badge.good').count(),1);
+    assert.equal(await panel().locator('.rung.achieved').count(),3);
+    assert((await node().getAttribute('aria-label')).includes('tests pass'));
+    loops.push({id:'B27.05',case:'Normal pytest success remains green',result:'passed'});
+    await mount(partial,'unittest_passed','development');
+    const titles=await page.locator('#page .node title').allTextContents();
+    assert.equal(titles.length,3);assert(titles.every(text=>text.includes('unknown')));
+    loops.push({id:'B27.06',case:'Development tracks also remove legacy whole-suite achievements for fallback evidence',result:'passed'});
+    assert.equal(requests.slice(start).filter(r=>r.method==='POST').length,0);
+    loops.push({id:'B27.07',case:'Viewing and resizing evidence submits no worker job, model request or write',result:'passed'});
+    fixtureProbeMap=null;
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));
