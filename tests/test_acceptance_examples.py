@@ -433,7 +433,11 @@ def test_a_file_a_step_hands_the_program_that_nothing_creates_is_named_under_its
         {"name": "missing on purpose", "says": "A missing file is refused with a message.",
          "steps": [motion("nowhere.motion.json", exit="error", message=True)]},
         {"name": "written", "says": "The frame is written.", "steps": [motion("--at", "0", "--out", "frame.json")]}]}
-    checks = validate_examples(answer, milestone, source_text=source)["checks"]
+    # Told while the Checker drafts (J11-CC4): the answer is refused with the file named, and only a caller that cannot
+    # tell what the project holds gets the finding under its check.
+    with pytest.raises(WorkspaceError, match="Example 2 runs position.motion.json, which neither that example's files"):
+        validate_examples(answer, milestone, source_text=source)
+    checks = validate_examples(answer, milestone, source_text=source, refuse_missing=False)["checks"]
     assert [c.get("missing_input") for c in checks] == [None, ["position.motion.json"], None, None, None, None]
     assert "missing_input" not in validate_examples(answer, milestone)["checks"][1]          # no project: not judged
     said = " ".join(findings({"dry_run": {"verdict": "fails_now"}, "checks": checks}))
@@ -486,15 +490,15 @@ def test_the_owner_s_reasons_for_turning_down_checks_reach_the_next_checker(tmp_
         "x goes from 0 to 100 over 2 seconds, so at 1 second it is 50, not 1"]
 
 
-def test_a_check_on_a_file_nothing_creates_is_revised_once_and_the_owner_sees_why(tmp_path):
+def test_a_check_on_a_file_nothing_creates_is_asked_again_once_and_the_owner_sees_why(tmp_path):
     backup = {"name": "listed from a backup", "says": "Entries are listed from a backup file.",
               "steps": [add("Tea", "2026-01-05"), {"run": T + ["list", "backup.json"], "expect": {"shows": ["Tea"]}}]}
     first = {"examples": EXAMPLES["examples"] + [backup]}
     ws = workspace(tmp_path, [first, EXAMPLES])
     proposal = propose(ws, ws.router(), "m1")
-    assert proposal["revision"]["after"] == "missing_input"
+    # Journey J11-CC4: asked again at once with the refusal, as for any other rule of the examples format.
+    assert proposal["revision"]["after"] == "unusable" and "backup.json" in proposal["revision"]["error"]
     assert not any(c.get("missing_input") for c in proposal["checks"])
-    assert proposal["revision"]["first_checks"][-1]["missing_input"] == ["backup.json"]
 
 
 def test_a_command_neither_the_milestone_nor_the_program_mentions_is_refused_with_its_name():
@@ -520,10 +524,11 @@ def test_a_command_neither_the_milestone_nor_the_program_mentions_is_refused_wit
 def test_an_option_neither_the_milestone_nor_the_program_mentions_is_refused_with_its_name():
     # Journey J11-G30: for a browser export milestone the Checker ran --export-png and --export-webm, which nothing
     # names, and the autopilot approved them.
-    source = "const at = args.indexOf('--at'); const svg = args.indexOf('--svg');"
+    source = ('{"inventory": ["motion.mjs", "sample.txt"]} '
+              "const at = args.indexOf('--at'); const svg = args.indexOf('--svg');")
     milestone = "Export Capabilities. Implement WebM and PNG export functionality from the browser canvas."
     run = lambda *words: {"examples": [{"name": "export", "says": "The frame is exported.",
-                                         "steps": [{"run": ["node", "motion.mjs", "sample.motion.json", *words]}],
+                                         "steps": [{"run": ["node", "motion.mjs", "sample.txt", *words]}],
                                          "exists": ["frame.png"]}]}
     with pytest.raises(WorkspaceError, match="with “--export-png”, an option neither the milestone nor the program"):
         validate_examples(run("--export-png", "frame.png"), milestone, source_text=source)
@@ -531,7 +536,7 @@ def test_an_option_neither_the_milestone_nor_the_program_mentions_is_refused_wit
         validate_examples(run("--export-png=frame.png", "--scale", "2"), milestone, source_text=source)
     assert validate_examples(run("--at", "0", "--svg", "frame.png"), milestone, source_text=source)["examples"]
     assert validate_examples(run("--png", "frame.png"), milestone, source_text=source)["examples"]   # the milestone says PNG
-    for piece in ('{"inventory": ["motion.mjs", "export-png-helper.js"]}', '<button class="btn-export-png">'):
+    for piece in ('{"inventory": ["export-png-helper.js"]}', '<button class="btn-export-png">'):
         with pytest.raises(WorkspaceError, match="“--export-png”, an option neither"):     # review: a piece of another name
             validate_examples(run("--export-png", "frame.png"), milestone, source_text=source + piece)
     with pytest.raises(WorkspaceError, match="“--json”, an option neither"):
@@ -539,7 +544,7 @@ def test_an_option_neither_the_milestone_nor_the_program_mentions_is_refused_wit
     assert validate_examples(run("--json"), "Print the frame as JSON.", source_text=source)["examples"]
     assert validate_examples(run("--export-png", "frame.png"), milestone)["examples"]              # no source: not judged
     on_purpose = {"examples": [{"name": "unknown", "says": "An option the program does not know is refused.",
-                                "steps": [{"run": ["node", "motion.mjs", "sample.motion.json", "--export-png"],
+                                "steps": [{"run": ["node", "motion.mjs", "sample.txt", "--export-png"],
                                            "expect": {"exit": "error", "message": True}}]}]}
     assert validate_examples(on_purpose, milestone, source_text=source)["examples"]
 
@@ -1043,7 +1048,7 @@ def test_a_checked_svg_or_json_file_must_parse(tmp_path):
             raise AssertionError(name + " was accepted")
 
 
-def test_a_file_two_steps_only_read_is_named_as_missing():
+def test_a_file_two_steps_only_read_is_refused_as_missing():
     # Journey J11-G36: two steps both ran the program on dots.motion.json, which the example never made.
     source = json.dumps({"inventory": ["motion.mjs", "sample.motion.json"]}) + ' args.indexOf("--svg")'
     milestone = "Scatter: node motion.mjs FILE --at 3.5 --svg mid.svg shows the fade."
@@ -1051,7 +1056,9 @@ def test_a_file_two_steps_only_read_is_named_as_missing():
     twice = {"examples": [{"name": "fade", "says": "The dots fade.", "steps": [
         run("dots.motion.json", "--at", "3.5", "--svg", "mid.svg"), run("dots.motion.json", "--at", "6", "--svg", "end.svg")],
         "contains": [{"name": "mid.svg", "texts": ["opacity"]}]}]}
-    assert validate_examples(twice, milestone, source_text=source)["checks"][0]["missing_input"] == ["dots.motion.json"]
+    with pytest.raises(WorkspaceError, match="Example 1 runs dots.motion.json, which neither that example's files"):
+        validate_examples(twice, milestone, source_text=source)                   # J11-CC4: refused while it drafts
+    assert validate_examples(twice, milestone, source_text=source, refuse_missing=False)["checks"][0]["missing_input"] == ["dots.motion.json"]
     made = json.loads(json.dumps(twice))
     made["examples"][0]["files"] = [{"name": "dots.motion.json", "text": "{}"}]
     assert "missing_input" not in validate_examples(made, milestone, source_text=source)["checks"][0]

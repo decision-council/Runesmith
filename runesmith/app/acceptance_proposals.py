@@ -219,6 +219,93 @@ def _other_checks(ws, milestone_id, limit=6000) -> list[dict[str, Any]]:
     return rows
 
 
+PROVEN_FILE = 1500          # characters of one proven input file
+PROVEN_FILES = 3            # files taken from one milestone, so a few milestones' formats fit in the limit
+
+
+def _approved_proposal(ws, milestone_id) -> dict[str, Any] | None:
+    """The approved proposal whose file is the checks file in force, matched as status() matches it; None when the
+    milestone has no checks, or the file is one the owner wrote or changed."""
+    file = acceptance_file(ws, milestone_id)
+    if not file.is_file():
+        return None
+    digest = hashlib.sha256(file.read_bytes()).hexdigest()
+    return next((p for p in _proposal_rows(ws, milestone_id)
+                 if p.get('state') == 'approved' and p.get('file_sha256') == digest), None)
+
+
+def _accepted_files(examples) -> list[dict[str, str]]:
+    """Input files of example checks that the program reads without refusing them: the files of an example are left out
+    when only steps that must end in an error or a message read them (a damaged file, a project the program refuses),
+    or, when no step names them, when the example is about a refusal."""
+    def refusing(step) -> bool:
+        expect = step.get('expect') or {}
+        return expect.get('exit') in ('error', 'any') or bool(expect.get('message')) or 'raises' in expect
+
+    def names(step, name) -> bool:
+        return any(isinstance(w, str) and w.replace('\\', '/').removeprefix('./') == name for w in step.get('run') or [])
+    found = []
+    for example in examples if isinstance(examples, list) else []:
+        steps = [s for s in example.get('steps') or [] if isinstance(s, dict)]
+        for file in example.get('files') or []:
+            if not isinstance(file, dict) or not isinstance(file.get('name'), str) or not isinstance(file.get('text'), str):
+                continue
+            named = [s for s in steps if names(s, file['name'])]
+            if any(not refusing(s) for s in named) or (not named and not any(refusing(s) for s in steps)):
+                found.append({'name': file['name'], 'text': file['text']})
+    return found
+
+
+def _short_title(title) -> str:
+    """"Groups" of "Groups: shapes that move and fade together": the name another milestone's detail uses."""
+    return re.split(r'\s+[-–—]\s+|:\s', str(title or '').strip(), maxsplit=1)[0].strip().lower()
+
+
+def proven_inputs(ws, milestone_id, limit=6000) -> list[dict[str, Any]]:
+    """Input files from the approved example checks of finished milestones, as {milestone, files: [{name, text}]}.
+
+    Those checks pass on the program today, so their inputs are written the way the program reads them (journey
+    J11-B16, G38: the Checker was not shown the program, which no longer fitted its packet, and wrote a rect's colour
+    as "color" where the program reads "fill", a camera as an object where it reads a list, and a setting beside
+    "project" where it sits inside). A milestone whose title this milestone's detail names ("Builds on: Groups")
+    comes first, then the one whose checks were approved last. At most `limit` characters in all, `PROVEN_FILES` files
+    of a milestone, each file cut at `PROVEN_FILE` characters.
+    """
+    detail = str(_milestone(ws, milestone_id).get('detail') or '').lower()
+    found = []
+    for position, other in enumerate((ws.plan() or {}).get('milestones', [])):
+        other_id = other.get('id')
+        if other_id == milestone_id or other.get('status') != 'done' or not isinstance(other_id, str) \
+                or not MILESTONE_ID.fullmatch(other_id):
+            continue
+        proposal = _approved_proposal(ws, other_id)
+        files = _accepted_files((proposal or {}).get('examples')) if proposal and proposal.get('style') == 'examples' else []
+        if not files:
+            continue
+        title = str(other.get('title') or '').strip().lower()
+        short = _short_title(title)
+        named = bool(title and title in detail) or bool(len(short) >= 3 and re.search(
+            r'(?<![A-Za-z0-9_])' + re.escape(short) + r'(?![A-Za-z0-9_])', detail))
+        found.append((named, str(proposal.get('approved_utc') or ''), position, other.get('title'), files))
+    found.sort(key=lambda row: (row[1], row[2]), reverse=True)          # the most recently approved first
+    found.sort(key=lambda row: not row[0])                              # then the ones this detail names, in that order
+    rows, seen = [], set()
+    for _, _, _, title, files in found:
+        row = {'milestone': title, 'files': []}
+        for file in files:
+            if len(row['files']) >= PROVEN_FILES or (file['name'], file['text']) in seen:
+                continue
+            text = file['text'] if len(file['text']) <= PROVEN_FILE else file['text'][:PROVEN_FILE] + '…'
+            next_row = dict(row, files=[*row['files'], {'name': file['name'], 'text': text}])
+            if len(json.dumps([*rows, next_row], ensure_ascii=False)) > limit:
+                continue                    # too big for what is left: a smaller file may still fit
+            row = next_row
+            seen.add((file['name'], file['text']))
+        if row['files']:
+            rows.append(row)
+    return rows
+
+
 def _record(ws, milestone_id, default=None) -> dict[str, Any]:
     """A milestone's proposal record with only well-formed rows (reviews of J11-G16: one malformed row made every
     reader fail, the schedule's among them). A row that is not a proposal is left out, also when the record is
@@ -305,6 +392,9 @@ def packet(ws, milestone_id, style='code') -> dict[str, Any]:
             'owner_said_about_earlier_checks': _owner_reasons(ws, milestone_id),
             'owner_said_about_other_milestones_checks': _owner_reasons_elsewhere(ws, milestone_id),
             'source_context': source_context(ws, limit=16000),
+            # Input files of checks that pass on the program today (journey J11-B16): the source above no longer holds
+            # the whole program, so the formats it reads are shown by example.
+            **({'proven_inputs': proven_inputs(ws, milestone_id)} if style == 'examples' else {}),
             # The documents the owner chose to share with models (Goals & plan). Code goes in source_context; documents
             # never do, so without this a Checker could not see a single page of a handbook it is asked to check.
             'documents': ws.blueprint_text(),
@@ -313,14 +403,36 @@ def packet(ws, milestone_id, style='code') -> dict[str, Any]:
             'Owner acceptance runs on a clean copy of the project folder, with the current directory set to it.'}
 
 
-def _clean(answer, style, data) -> dict[str, Any]:
+def _holds(ws):
+    """Whether the project holds a file in the copy the checks run in: that copy has files no model is shown
+    (fixtures, shared documents), so the source context's list is not all of it. Read from a snapshot only when asked,
+    once; a snapshot that cannot be taken holds everything, so nothing is refused on a guess (J11-CC4)."""
+    names = []
+
+    def held(rel) -> bool:
+        if not names:
+            try:
+                names.append({name.casefold() for name in collect_snapshot(ws)['files']})
+            except SnapshotUnsupported:
+                names.append(None)
+        return names[0] is None or rel.casefold() in names[0]
+    return held
+
+
+def _clean(answer, style, data, ws=None) -> dict[str, Any]:
     """The proposal as stored, from the model's answer in either style; a WorkspaceError says what is wrong."""
     if style != 'examples':
         return validate(answer)
     milestone = data['milestone']
+    context = data.get('source_context')
+    # An example that runs a file it does not list, and the project does not hold, is refused here so the Checker is
+    # told once (J11-CC4); with no complete list of the project's files (a list cut at 2,000 names, or no source) it
+    # is only named under its check, for the autopilot's gate.
+    listed = isinstance(context, dict) and isinstance(context.get('inventory'), list) and not context.get('truncated_inventory')
     shaped = acceptance_examples.validate_examples(
         answer, ' '.join(str(milestone.get(k) or '') for k in ('title', 'detail', 'done_when')),
-        json.dumps(data.get('source_context'), ensure_ascii=False) + '\n' + str(data.get('documents') or ''))
+        json.dumps(context, ensure_ascii=False) + '\n' + str(data.get('documents') or ''),
+        refuse_missing=listed, held=_holds(ws) if ws is not None else None)
     # The limit is for check code a model writes; here the file is Runesmith's own template plus the examples,
     # which the examples format already bounds (journey J11-B12: the template grew, and three examples with their
     # motion files were refused as too long).
@@ -438,7 +550,7 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
     drafted_by = out.receipt.get('answered_by') or out.receipt.get('model')
     first_answer = out.data
     try:
-        clean = _clean(out.data, style, data)
+        clean = _clean(out.data, style, data, ws)
     except WorkspaceError as error:
         if style != 'examples':
             raise
@@ -451,7 +563,7 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
             raise PlannerUnavailable(f'the first answer broke a rule ({str(error)[:200]}), and asking again failed: {again}') from again
         checkpoint()
         try:
-            clean = _clean(out.data, style, data)
+            clean = _clean(out.data, style, data, ws)
         except WorkspaceError as again:
             # Both answers are kept, so what the Checker wrote can be read (journey J11-G3).
             kept = ws.home / 'acceptance-proposals' / 'refused' / (key + '.json')
@@ -534,7 +646,7 @@ def _revise_once(ws, router, data, first, key, drafted_by, checkpoint, *, style=
     try:
         if not out.ok or not isinstance(out.data, dict) or out.data.get('skipped_by_owner'):
             raise WorkspaceError((out.error or 'no usable answer')[:200])
-        revised = _clean(out.data, style, data)
+        revised = _clean(out.data, style, data, ws)
     except WorkspaceError as error:
         return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by
     revised['dry_run'] = dry_run(ws, revised['code'], runs_project_code=_runs_project_code(revised))
