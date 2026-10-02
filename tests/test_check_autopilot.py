@@ -498,3 +498,556 @@ def test_after_a_milestone_is_done_the_next_step_asks_for_checks_first(tmp_path,
     monkeypatch.setattr(autopilot, "needs_checks", lambda ws: None)
     worker._execute({"id": "b2", "kind": "build", "params": {}, "by": "schedule"})
     assert [j["kind"] for j in worker._jobs] == ["build"]                  # every ready milestone has checks
+
+
+def test_the_owner_withdraws_approved_checks_with_a_reason_the_next_checker_reads(tmp_path):
+    # Journey J11-G37: Envelope's wrong approved checks could only be replaced, never withdrawn with a reason.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.acceptance_contracts import expectations
+    from runesmith.app.workspace import WorkspaceError
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    with pytest.raises(WorkspaceError, match="no approved checks"):
+        acceptance_proposals.withdraw(ws, "m1", reason="wrong")
+    first = propose(ws, ws.router(), "m1")
+    acceptance_proposals.approve(ws, "m1", first["id"], by="autopilot")
+    target = acceptance_proposals.acceptance_file(ws, "m1")
+    assert target.is_file() and expectations(ws, "m1")
+    with pytest.raises(WorkspaceError, match="Say why"):
+        acceptance_proposals.withdraw(ws, "m1", reason="  ")
+    done = acceptance_proposals.withdraw(ws, "m1", reason="The milestone keeps the envelope inside project.")
+    assert not target.is_file() and (target.parent / done["kept"]).is_file()
+    assert not expectations(ws, "m1")                                      # builders are not shown their sentences
+    assert acceptance_proposals._owner_reasons(ws, "m1")[0] == "The milestone keeps the envelope inside project."
+    assert autopilot.needs_checks(ws) == "m1" and autopilot.rounds_used(ws, "m1") == 0
+    with pytest.raises(WorkspaceError, match="no approved checks"):
+        acceptance_proposals.withdraw(ws, "m1", reason="again")
+
+
+def approved_workspace(tmp_path, *, by="autopilot", answers=3):
+    ws = autopilot_workspace(tmp_path, [EXAMPLES] * answers, [])
+    approve(ws, "m1", propose(ws, ws.router(), "m1")["id"], by=by)
+    return ws
+
+
+def test_withdrawing_keeps_the_owners_own_criteria_interfaces_and_every_version(tmp_path):
+    # Review of J11-G37: withdrawing deleted the owner's own criteria and interfaces with the checks' sentences, and
+    # approving again restarted at version 1, overwriting history/1.json.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.acceptance_contracts import expectations, publish_expectations
+    ws = autopilot_workspace(tmp_path, [EXAMPLES] * 3, [])
+    interface = {"id": "api", "invocation": "tally months", "description": "", "criterion_ids": ["owner.1"],
+                 "response_type": "array", "fields": [{"name": "month", "type": "string", "required": True, "nullable": False,
+                                                       "unit": "", "description": ""}]}
+    publish_expectations(ws, "m1", [{"id": "owner.1", "description": "The report is for one person only."}],
+                         "the owner says so", interfaces=[interface])
+    approve(ws, "m1", propose(ws, ws.router(), "m1")["id"])
+    assert expectations(ws, "m1")["version"] == 2
+    history = ws.home / "acceptance-contracts" / "history" / "m1"
+    first_version = (history / "1.json").read_bytes()
+    acceptance_proposals.withdraw(ws, "m1", reason="The envelope belongs inside project.")
+    left = expectations(ws, "m1")
+    assert [c["id"] for c in left["criteria"]] == ["owner.1"] and left["interfaces"] == [interface]
+    assert left["version"] == 3 and left["reason"] == "Checks withdrawn: The envelope belongs inside project."
+    assert not acceptance_file(ws, "m1").is_file()                          # the checks themselves no longer judge
+    approve(ws, "m1", propose(ws, ws.router(), "m1")["id"])
+    assert expectations(ws, "m1")["version"] == 4
+    assert [c["id"] for c in expectations(ws, "m1")["criteria"]][0] == "owner.1"
+    assert sorted(p.name for p in history.glob("*.json")) == ["1.json", "2.json", "3.json", "4.json"]
+    assert (history / "1.json").read_bytes() == first_version
+
+
+def test_checks_approved_again_after_a_withdrawal_never_overwrite_the_history(tmp_path):
+    # Review of J11-G37: with nothing else stated nothing stays in force, and the next version still follows the last.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.acceptance_contracts import expectations
+    ws = approved_workspace(tmp_path)
+    history = ws.home / "acceptance-contracts" / "history" / "m1"
+    first_version = (history / "1.json").read_bytes()
+    acceptance_proposals.withdraw(ws, "m1", reason="wrong")
+    assert expectations(ws, "m1") is None
+    approve(ws, "m1", propose(ws, ws.router(), "m1")["id"])
+    assert expectations(ws, "m1")["version"] == 2 and (history / "1.json").read_bytes() == first_version
+
+
+def test_the_sentences_of_withdrawn_checks_reach_no_builder(tmp_path):
+    # Review of J11-G37: a builder was still shown the milestone's memories of the withdrawn sentences, a draft that
+    # failed them as the candidate to revise, and their feedback among the previous attempts.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.acceptance_contracts import expectations
+    from runesmith.app.build_memory import recall_for_milestone, remember_check
+    from runesmith.app.planner import draft_prompt, milestone_contract, source_context
+    ws = approved_workspace(tmp_path)
+    contract = expectations(ws, "m1")
+    check = next(c for c in contract["criteria"] if c["id"].startswith("check."))
+    sentence = check["description"][:40]
+    milestone, context = ws.plan()["milestones"][0], source_context(ws)
+    draft = ws.save_draft(title="Build 1", why="w", files=[{"path": "new.py", "content": "x = 1\n", "expected_absent": True}],
+                          drafted_by="x", milestone="m1")
+    verification = {"status": "failed", "utc": "2026-10-01T10:00:00Z", "snapshot_digest": context["snapshot_digest"],
+                    "candidate_digest": "b" * 64, "public_acceptance_digest": contract["digest"], "public_contracts": [contract],
+                    "acceptance": {"status": "failed", "ran": 3, "failures": 1, "errors": 0, "failure_details": [
+                        {"test": check["id"][6:], "criteria": [check["id"]], "trace_tail": "AssertionError: x"}]}}
+    ws._save_draft_state(draft, "needs_revision", contract=milestone_contract(ws, milestone), context_digest=context["digest"],
+                         snapshot_digest=context["snapshot_digest"], public_acceptance_digest=contract["digest"],
+                         verification=verification)
+    remember_check(ws, ws._draft(draft["id"]), verification)
+    seen = draft_prompt(ws, milestone, context)
+    assert sentence in seen and "Resolve every listed owner-acceptance failure" in seen
+    assert sentence in recall_for_milestone(ws, milestone)[0]["text"]
+    acceptance_proposals.withdraw(ws, "m1", reason="these checks are wrong")
+    assert recall_for_milestone(ws, milestone) == []
+    unseen = draft_prompt(ws, milestone, context)
+    assert sentence not in unseen and "Resolve every listed owner-acceptance failure" not in unseen
+    assert '"candidate_to_revise": null' in unseen
+    assert "have since been withdrawn or replaced" in unseen                  # the attempt is named, never its sentences
+
+
+def test_what_the_owner_said_when_replacing_checks_survives_their_withdrawal(tmp_path):
+    # Review of J11-G37: both readers took only "reason" from a withdrawn row, so the reason it was approved with
+    # (replace_reason) disappeared once its checks were withdrawn.
+    from runesmith.app import acceptance_proposals
+    ws = autopilot_workspace(tmp_path, [EXAMPLES] * 3, [])
+    approve(ws, "m1", propose(ws, ws.router(), "m1")["id"])
+    approve(ws, "m1", propose(ws, ws.router(), "m1")["id"], replace=True, reason="x goes from 0 to 100, so at 1 s it is 50")
+    acceptance_proposals.withdraw(ws, "m1", reason="The envelope belongs inside project.")
+    assert acceptance_proposals._owner_reasons(ws, "m1") == ["The envelope belongs inside project.",
+                                                             "x goes from 0 to 100, so at 1 s it is 50"]
+    elsewhere = acceptance_proposals._owner_reasons_elsewhere(ws, "m2")
+    assert [row["said"] for row in elsewhere] == ["The envelope belongs inside project.",
+                                                  "x goes from 0 to 100, so at 1 s it is 50"]
+
+
+def test_checks_withdrawn_after_a_turn_down_give_the_autopilot_its_rounds_afresh(tmp_path):
+    # Review of J11-G37: a turn-down made after the approval but before the withdrawal sits behind the withdrawn row
+    # in the list and still counted, though it was judged by checks the owner took back.
+    from runesmith.app import acceptance_proposals
+    ws = autopilot_workspace(tmp_path, [EXAMPLES] * 4, [])
+    approve(ws, "m1", propose(ws, ws.router(), "m1")["id"], by="autopilot")
+
+    def turn_down():
+        row = propose(ws, ws.router(), "m1")
+        acceptance_proposals.note_autopilot(ws, "m1", row["id"], {"decision": "turned_down", "reason": "x"})
+        acceptance_proposals.discard(ws, "m1", row["id"], reason="Runesmith's check autopilot turned them down: x")
+    turn_down()
+    assert autopilot.rounds_used(ws, "m1") == 1
+    acceptance_proposals.withdraw(ws, "m1", reason="wrong")
+    assert autopilot.rounds_used(ws, "m1") == 0
+    turn_down()
+    assert autopilot.rounds_used(ws, "m1") == 1                              # only what came after the withdrawal
+
+
+def test_withdrawing_waits_for_whoever_holds_the_workspace(tmp_path):
+    # Review of J11-G37: withdraw took no workspace lock, so an apply that was judging a build by the checks file
+    # could lose it halfway.
+    import threading
+    from runesmith.app import acceptance_proposals
+    ws = approved_workspace(tmp_path, answers=1)
+    done = []
+    worker = threading.Thread(target=lambda: done.append(acceptance_proposals.withdraw(ws, "m1", reason="wrong")))
+    with ws._lock:
+        worker.start()
+        worker.join(0.5)
+        assert not done and acceptance_file(ws, "m1").is_file()
+    worker.join(30)
+    assert done and not acceptance_file(ws, "m1").is_file()
+
+
+def test_the_server_will_not_withdraw_a_checks_file_the_owner_wrote_or_changed(tmp_path):
+    # Review of J11-G37: only the studio hid the button for "owner file" checks; the endpoint withdrew anything.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.acceptance_contracts import expectations
+    from runesmith.app.workspace import WorkspaceError
+    ws = approved_workspace(tmp_path, answers=1)
+    acceptance_file(ws, "m1").write_bytes(b"import unittest\n# the owner wrote this himself\n")
+    assert status(ws)["m1"]["approved"]["provenance"] == "owner file"
+    with pytest.raises(WorkspaceError, match="wrote or changed it yourself"):
+        acceptance_proposals.withdraw(ws, "m1", reason="x")
+    assert acceptance_file(ws, "m1").is_file() and expectations(ws, "m1")
+
+
+# ---- review of the withdraw batch (J11-G37), second round ------------------------------------------------------------
+
+OK_TEST = "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n"
+OTHER = {"examples": [dict(e, name="other %d" % i, says="Replacement check number %d stands alone." % i)
+                      for i, e in enumerate(EXAMPLES["examples"])]}
+
+
+def with_project_tests(ws):
+    (ws.root / "tests").mkdir()
+    (ws.root / "tests" / "__init__.py").write_text("")
+    (ws.root / "tests" / "test_ok.py").write_text(OK_TEST)
+
+
+def answers_now(ws, answers):
+    config = ws.config()
+    config["instruments"]["offline"]["answers"] = list(answers)
+    ws.save_config(config)
+
+
+def draft_for(ws, milestone, verification=None, state="waiting"):
+    from runesmith.app.acceptance_contracts import expectation_digest
+    from runesmith.app.planner import milestone_contract, source_context
+    from runesmith.app.snapshots import collect_snapshot, freeze_snapshot
+    snapshot = collect_snapshot(ws)
+    freeze_snapshot(ws, snapshot)                   # a build is checked against the source it was drafted on
+    context = source_context(ws, snapshot=snapshot)
+    draft = ws.save_draft(title="Build", why="w", files=[{"path": "new.py", "content": "x = 1\n", "expected_absent": True}],
+                          drafted_by="x", milestone=milestone["id"])
+    ws._save_draft_state(draft, state, contract=milestone_contract(ws, milestone), context_digest=context["digest"],
+                         snapshot_digest=context["snapshot_digest"], shown_files=sorted(context["files"]),
+                         public_acceptance_digest=expectation_digest(ws, milestone["id"]),
+                         **({"verification": verification} if verification else {}))
+    return ws._draft(draft["id"]), context
+
+
+def failing(ws, milestone, contract, context, check):
+    return {"status": "failed", "utc": "2026-10-01T10:00:00Z", "snapshot_digest": context["snapshot_digest"],
+            "candidate_digest": "b" * 64, "public_acceptance_digest": contract["digest"], "public_contracts": [contract],
+            "acceptance": {"status": "failed", "ran": 3, "failures": 1, "errors": 0, "failure_details": [
+                {"test": check["id"][6:], "criteria": [check["id"]], "trace_tail": "AssertionError: x"}]}}
+
+
+def test_withdrawing_a_done_milestones_checks_reaches_no_later_builder(tmp_path):
+    # Review of J11-G37: a done milestone's checks judge every later build, so a later milestone's failed build quotes
+    # their sentences in its draft feedback, its candidate to revise and a memory keyed to the later milestone; the
+    # withdrawal looked only at the done milestone's own digest and own memories.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.acceptance_contracts import draft_owner_feedback, expectations
+    from runesmith.app.build_memory import recall_for_milestone
+    from runesmith.app.planner import draft_prompt, milestone_contract, source_context
+    from runesmith.app.building import _check_and_record
+    from test_acceptance_examples import MILESTONE
+    second = {"examples": [dict(e, name="second %d" % i, says="Second milestone check number %d stands alone." % i)
+                           for i, e in enumerate(EXAMPLES["examples"])]}
+    ws = autopilot_workspace(tmp_path, [EXAMPLES, second], [])
+    with_project_tests(ws)
+    later = ws.add_milestone("Second step", MILESTONE, "", "Tests show correct counts.")
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], by="autopilot")
+    ws.update_milestone("m1", {"status": "done"})
+    answers_now(ws, [second])
+    approve(ws, later["id"], propose(ws, ws.router(backoff_s=()), later["id"])["id"], by="autopilot")
+    sentences = [c["description"][:40] for c in expectations(ws, "m1")["criteria"] if c["id"].startswith("check.")]
+    milestone = next(m for m in ws.plan()["milestones"] if m["id"] == later["id"])
+    draft, _ = draft_for(ws, milestone)
+    result = _check_and_record(ws, draft, milestone, milestone_contract(ws, milestone), checkpoint=lambda: None)
+    assert result["verification"]["status"] == "failed"
+    assert "m1" in [c["milestone"] for c in result["verification"]["public_contracts"]]
+    saved = ws._draft(draft["id"])
+    hit = lambda text: [s for s in sentences if s in text]
+    assert hit(json.dumps(draft_owner_feedback(ws, saved))) and hit(json.dumps(recall_for_milestone(ws, milestone)))
+    acceptance_proposals.withdraw(ws, "m1", reason="The next milestone changes what these checks required.")
+    assert not hit(json.dumps(draft_owner_feedback(ws, saved)))
+    assert recall_for_milestone(ws, milestone) == []
+    prompt = draft_prompt(ws, milestone, source_context(ws))
+    assert not hit(prompt) and not hit(draft_prompt(ws, milestone, source_context(ws), revision=saved))
+
+
+def test_a_build_checked_while_the_owner_withdraws_leaves_no_memory_of_the_sentences(tmp_path):
+    # Review of J11-G37: the check finished against the bytes it had read and remembered the withdrawn sentences after
+    # the withdrawal had retired the milestone's memories.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.acceptance_contracts import expectations
+    from runesmith.app.build_memory import recall_for_milestone
+    from runesmith.app.building import _check_and_record
+    from runesmith.app.planner import draft_prompt, milestone_contract, source_context
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    with_project_tests(ws)
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], by="autopilot")
+    sentences = [c["description"][:40] for c in expectations(ws, "m1")["criteria"] if c["id"].startswith("check.")]
+    milestone = ws.plan()["milestones"][0]
+    draft, _ = draft_for(ws, milestone)
+    calls = []
+
+    def checkpoint():
+        calls.append(1)
+        if len(calls) == 3:         # between "project checks" and "owner acceptance": the owner withdraws now
+            acceptance_proposals.withdraw(ws, "m1", reason="These checks are wrong.")
+    result = _check_and_record(ws, draft, milestone, milestone_contract(ws, milestone), checkpoint=checkpoint)
+    assert result["verification"]["status"] == "failed" and not acceptance_file(ws, "m1").is_file()
+    hit = lambda text: [s for s in sentences if s in text]
+    assert not hit(json.dumps(recall_for_milestone(ws, milestone), ensure_ascii=False))
+    assert not hit(draft_prompt(ws, milestone, source_context(ws)))
+
+
+def test_the_autopilots_rounds_start_afresh_although_the_record_keeps_only_ten_rows(tmp_path):
+    # Review of J11-G37: the boundary was a position in the list, which moves when the record trims to its last ten
+    # rows: rounds stayed 0 for three turn-downs, then jumped to ten when the withdrawn row rolled out.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.workspace import _read_json, _write_json
+    ws = autopilot_workspace(tmp_path, [EXAMPLES] * 3, [])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], by="autopilot")
+    path = acceptance_proposals._record_path(ws, "m1")
+    record = _read_json(path, {})
+    for n in range(8):               # eight turn-downs made while the checks stood: nine rows, one short of the window
+        record["proposals"].append({"id": f"x{n}", "state": "discarded", "milestone": "m1", "utc": "2026-10-01T00:00:00Z",
+                                    "autopilot": {"decision": "turned_down"}, "checks": [], "code": "", "dry_run": {}})
+    _write_json(path, record)
+    assert len(acceptance_proposals._proposal_rows(ws, "m1")) == 9
+    acceptance_proposals.withdraw(ws, "m1", reason="wrong")
+    assert autopilot.rounds_used(ws, "m1") == 0
+
+    def turn_down():
+        row = propose(ws, ws.router(backoff_s=()), "m1")
+        acceptance_proposals.note_autopilot(ws, "m1", row["id"], {"decision": "turned_down", "reason": "x"})
+        acceptance_proposals.discard(ws, "m1", row["id"], reason="turned down")
+    turn_down()
+    assert autopilot.rounds_used(ws, "m1") == 1
+    turn_down()
+    assert len(acceptance_proposals._proposal_rows(ws, "m1")) == 11          # the window's ten and the newest withdrawal
+    assert autopilot.rounds_used(ws, "m1") == autopilot.MAX_ROUNDS == 2 and autopilot.needs_checks(ws) is None
+
+
+def test_a_supplement_after_a_withdrawal_is_not_told_to_resolve_the_withdrawn_sentences(tmp_path):
+    # Review of J11-G37: the explicit revision's candidate carried its feedback through an ungated reader, so the call
+    # the owner authorizes after a clarification was told to satisfy sentences he took back.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.acceptance_contracts import expectations, publish_expectations
+    from runesmith.app.building import supplement_status
+    from runesmith.app.planner import draft_prompt, source_context
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    publish_expectations(ws, "m1", [{"id": "owner.1", "description": "The report is for one person only."}], "the owner says so")
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], by="autopilot")
+    contract = expectations(ws, "m1")
+    check = next(c for c in contract["criteria"] if c["id"].startswith("check."))
+    milestone, context = ws.plan()["milestones"][0], source_context(ws)
+    draft, _ = draft_for(ws, milestone)
+    ws._save_draft_state(draft, "needs_revision", verification=failing(ws, milestone, contract, context, check))
+    saved = ws._draft(draft["id"])
+    assert check["description"][:40] in draft_prompt(ws, milestone, source_context(ws), revision=saved)
+    acceptance_proposals.withdraw(ws, "m1", reason="These checks are wrong.")
+    assert supplement_status(ws, saved)["eligible"]
+    asked = draft_prompt(ws, milestone, source_context(ws), revision=saved)
+    assert check["description"][:40] not in asked
+
+
+def test_the_withdrawal_reason_is_read_before_three_later_turn_downs(tmp_path):
+    # Review of J11-G37: _owner_reasons walked the rows by position; the withdrawn row sits where its checks were
+    # proposed, behind every proposal made while they stood, so three reasoned turn-downs crowded its reason out.
+    from runesmith.app import acceptance_proposals
+    ws = autopilot_workspace(tmp_path, [EXAMPLES] * 4, [])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], by="autopilot")
+    for n in (1, 2, 3):
+        acceptance_proposals.discard(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], reason=f"discard reason {n}")
+    acceptance_proposals.withdraw(ws, "m1", reason="WITHDRAWAL REASON: the envelope belongs inside project.")
+    assert acceptance_proposals._owner_reasons(ws, "m1")[0].startswith("WITHDRAWAL REASON")
+    assert any(s.startswith("WITHDRAWAL REASON") for s in acceptance_proposals.packet(ws, "m1", "examples")["owner_said_about_earlier_checks"])
+
+
+def test_approved_checks_stay_withdrawable_after_ten_more_proposals(tmp_path):
+    # Review of J11-G37: the record keeps ten rows, so the approved checks' row rolled out after nine more proposals,
+    # Withdraw refused, and the Studio called the file "your own".
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.workspace import _read_json, _write_json
+    ws = autopilot_workspace(tmp_path, [EXAMPLES] * 2, [])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"])
+    path = acceptance_proposals._record_path(ws, "m1")
+    record = _read_json(path, {})
+    for n in range(9):
+        record["proposals"].append({"id": f"x{n}", "state": "discarded", "milestone": "m1", "utc": "2026-10-01T00:00:00Z",
+                                    "reason": f"no {n}", "checks": [], "code": "", "dry_run": {}})
+    _write_json(path, record)
+    propose(ws, ws.router(backoff_s=()), "m1")
+    rows = acceptance_proposals._proposal_rows(ws, "m1")
+    assert len(rows) == 11 and [r["state"] for r in rows].count("approved") == 1          # ten, and the checks in force
+    assert status(ws)["m1"]["approved"]["provenance"] == "model-proposed, owner-approved"
+    acceptance_proposals.withdraw(ws, "m1", reason="wrong")
+    assert not acceptance_file(ws, "m1").is_file()
+
+
+def test_replacing_checks_that_an_interface_links_to_leaves_nothing_half_done(tmp_path):
+    # Review of J11-G37: the new file was written, then publishing refused the interface linked to a replaced sentence;
+    # the checks and their public sentences disagreed, and neither approving nor withdrawing worked.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.acceptance_contracts import expectations, publish_expectations
+    ws = autopilot_workspace(tmp_path, [EXAMPLES, OTHER], [])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"])
+    contract = expectations(ws, "m1")
+    check_id = next(c["id"] for c in contract["criteria"] if c["id"].startswith("check."))
+    interface = {"id": "api", "invocation": "tally months", "description": "", "criterion_ids": [check_id], "response_type": "array",
+                 "fields": [{"name": "month", "type": "string", "required": True, "nullable": False, "unit": "", "description": ""}]}
+    publish_expectations(ws, "m1", contract["criteria"], "link an interface to a sentence", interfaces=[interface],
+                         expected_digest=contract["digest"])
+    answers_now(ws, [OTHER])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], replace=True, reason="better")
+    assert [c["id"] for c in expectations(ws, "m1")["criteria"]][0].startswith("check.test_01_other")
+    assert expectations(ws, "m1")["interfaces"] == []                     # nothing left to link to, so it goes
+    assert status(ws)["m1"]["approved"]["provenance"] == "model-proposed, owner-approved"
+    acceptance_proposals.withdraw(ws, "m1", reason="wrong")
+
+
+def test_replacing_checks_retires_the_memories_of_their_sentences(tmp_path):
+    # Review of J11-G37: only a withdrawal retired the milestone's memories, so builders kept seeing replaced sentences.
+    from runesmith.app.acceptance_contracts import expectations
+    from runesmith.app.build_memory import recall_for_milestone, remember_check
+    from runesmith.app.planner import source_context
+    ws = autopilot_workspace(tmp_path, [EXAMPLES, OTHER], [])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"])
+    contract = expectations(ws, "m1")
+    check = next(c for c in contract["criteria"] if c["id"].startswith("check."))
+    milestone = ws.plan()["milestones"][0]
+    draft, context = draft_for(ws, milestone)
+    remember_check(ws, draft, failing(ws, milestone, contract, context, check))
+    assert check["description"][:40] in json.dumps(recall_for_milestone(ws, milestone))
+    answers_now(ws, [OTHER])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], replace=True, reason="the first checks were wrong")
+    assert recall_for_milestone(ws, milestone) == []
+
+
+def test_a_request_written_before_a_withdrawal_is_not_stored_as_if_it_read_the_reason(tmp_path):
+    # Review of J11-G37: the Checker's answer to a request composed before the withdrawal was stored as a waiting
+    # proposal, and the autopilot then approved checks the owner had just withdrawn, which never read his reason.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.workspace import WorkspaceError
+    ws = autopilot_workspace(tmp_path, [EXAMPLES, EXAMPLES], [])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], by="autopilot")
+    fired = []
+
+    def checkpoint():
+        if not fired:
+            fired.append(1)
+            acceptance_proposals.withdraw(ws, "m1", reason="WITHDRAWAL REASON: the envelope belongs inside project.")
+    with pytest.raises(WorkspaceError, match="never read your reason"):
+        propose(ws, ws.router(backoff_s=()), "m1", checkpoint=checkpoint)
+    assert status(ws).get("m1") is None and autopilot.needs_checks(ws) == "m1"
+    router = ws.router(backoff_s=())
+    propose(ws, router, "m1")
+    assert "WITHDRAWAL REASON" in router.instruments["offline"].requests[0]["prompt"]
+
+
+# ---- review of the withdraw batch (J11-G37), verification round --------------------------------------------------------
+
+def test_a_proposal_waiting_when_the_owner_withdraws_is_never_approved(tmp_path):
+    # Review of J11-G37: a proposal stored before the withdrawal stayed waiting, and the autopilot, finishing its
+    # cross-check afterwards, approved it: the owner's withdrawal was undone and the checks never read his reason.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.workspace import WorkspaceError
+    ws = autopilot_workspace(tmp_path, [EXAMPLES] * 2, [])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], by="autopilot")
+    waiting = propose(ws, ws.router(backoff_s=()), "m1")
+    assert status(ws)["m1"]["proposal"]["id"] == waiting["id"]
+    acceptance_proposals.withdraw(ws, "m1", reason="WITHDRAWAL REASON: the envelope belongs inside project.")
+    assert status(ws).get("m1") is None                                   # nothing waits, nothing is in force
+    row = next(r for r in acceptance_proposals._proposal_rows(ws, "m1") if r["id"] == waiting["id"])
+    assert row["state"] == "stale" and "never read" in row["stale_note"]
+    said, done = autopilot.act(ws, "m1", waiting, {"decision": "approve", "reason": "worked out the same"})
+    assert done == "none" and "decided about these checks meanwhile" in said and not acceptance_file(ws, "m1").is_file()
+    with pytest.raises(WorkspaceError, match="not waiting for approval"):
+        approve(ws, "m1", waiting["id"], by="autopilot")
+    assert autopilot.needs_checks(ws) == "m1"                             # asked again, with the reason
+    # a waiting row stamped by a withdrawal is refused whoever asks, also when its state says otherwise
+    record = acceptance_proposals._record(ws, "m1")
+    next(r for r in record["proposals"] if r["id"] == waiting["id"]).update(state="proposed")
+    acceptance_proposals._write_json(acceptance_proposals._record_path(ws, "m1"), record)
+    with pytest.raises(WorkspaceError, match="never read the reason"):
+        approve(ws, "m1", waiting["id"], by="autopilot")
+
+
+def test_the_newest_withdrawal_stays_in_the_record_until_checks_are_approved_after_it(tmp_path):
+    # Review of J11-G37: the first proposal after a withdrawal trimmed its row out of the ten-row window, and the
+    # reason went with it: only that first request ever read why the checks were withdrawn.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.workspace import _read_json, _write_json
+    ws = autopilot_workspace(tmp_path, [EXAMPLES] * 4, [])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"])
+    path = acceptance_proposals._record_path(ws, "m1")
+    record = _read_json(path, {})
+    for n in range(9):
+        record["proposals"].append({"id": f"x{n}", "state": "discarded", "milestone": "m1", "utc": "2026-10-01T00:00:00Z",
+                                    "checks": [], "code": "", "dry_run": {}})
+    _write_json(path, record)
+    acceptance_proposals.withdraw(ws, "m1", reason="WITHDRAWAL REASON: the envelope belongs inside project.")
+    for _ in range(3):
+        acceptance_proposals.discard(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], reason="not these either")
+    assert [r["state"] for r in acceptance_proposals._proposal_rows(ws, "m1")].count("withdrawn") == 1
+    assert "WITHDRAWAL REASON" in " ".join(acceptance_proposals.packet(ws, "m1", "examples")["owner_said_about_earlier_checks"])
+    # checks approved after it let it go: its row is trimmed like any other
+    rows = [{"state": "withdrawn"}] + [{"state": "discarded"} for _ in range(5)] + [{"state": "approved"}] + [{"state": "discarded"}] * 6
+    assert acceptance_proposals._kept_beyond_window(rows) == set()               # the old withdrawal goes: checks were approved after it
+    rows = [{"state": "withdrawn"}] + [{"state": "discarded"} for _ in range(12)]
+    assert acceptance_proposals._kept_beyond_window(rows) == {id(rows[0])}
+
+
+def test_replacing_checks_says_which_interface_links_it_removed(tmp_path):
+    # Review of J11-G37: a replacement drops the owner's links to replaced sentences, and an interface left with none;
+    # neither the result nor the ledger said so, also when the autopilot replaced them.
+    from runesmith.app.acceptance_contracts import expectations, publish_expectations
+    ws = autopilot_workspace(tmp_path, [EXAMPLES, OTHER], [])
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"])
+    contract = expectations(ws, "m1")
+    check_id = next(c["id"] for c in contract["criteria"] if c["id"].startswith("check."))
+    field = {"name": "month", "type": "string", "required": True, "nullable": False, "unit": "", "description": ""}
+    both = {"id": "both", "invocation": "tally months", "description": "", "criterion_ids": ["owner.1", check_id],
+            "response_type": "array", "fields": [field]}
+    only = dict(both, id="only", criterion_ids=[check_id])
+    publish_expectations(ws, "m1", [*contract["criteria"], {"id": "owner.1", "description": "One person only."}],
+                         "link interfaces", interfaces=[both, only], expected_digest=contract["digest"])
+    answers_now(ws, [OTHER])
+    result = approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], replace=True, reason="better")
+    assert result["interface_links_removed"] == [{"interface": "both", "removed": [check_id], "dropped": False},
+                                                 {"interface": "only", "removed": [check_id], "dropped": True}]
+    assert [row["id"] for row in expectations(ws, "m1")["interfaces"]] == ["both"]
+    logged = [r["data"] for r in ws.ledger if r["kind"] == "acceptance.approved"][-1]
+    assert logged["interface_links_removed"] == result["interface_links_removed"]
+
+
+def test_a_build_checked_while_the_owner_withdraws_is_remembered_without_a_phantom_failure(tmp_path):
+    # Review of J11-G37: the memory kept the outcome with its sentences stripped, which read as failures that "need the
+    # owner's clarification" for checks the owner had already withdrawn.
+    from runesmith.app import acceptance_proposals
+    from runesmith.app.build_memory import recall_for_milestone
+    from runesmith.app.building import _check_and_record
+    from runesmith.app.planner import milestone_contract
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    with_project_tests(ws)
+    approve(ws, "m1", propose(ws, ws.router(backoff_s=()), "m1")["id"], by="autopilot")
+    milestone = ws.plan()["milestones"][0]
+    draft, _ = draft_for(ws, milestone)
+    calls = []
+
+    def checkpoint():
+        calls.append(1)
+        if len(calls) == 3:
+            acceptance_proposals.withdraw(ws, "m1", reason="These checks are wrong.")
+    _check_and_record(ws, draft, milestone, milestone_contract(ws, milestone), checkpoint=checkpoint)
+    remembered = json.dumps(recall_for_milestone(ws, milestone), ensure_ascii=False)
+    assert "Observed outcome: failed" in remembered
+    assert "Owner clarification needed" not in remembered and "have since been withdrawn or replaced" in remembered
+
+
+def test_withdrawing_reads_the_receipts_of_older_memories_once_and_outside_the_lock(tmp_path):
+    # Review of J11-G37: every legacy memory's receipt was read under the workspace lock on each withdrawal or
+    # replacement: 64 s on J11's 131 memories, the lock held throughout and nothing kept.
+    from runesmith import memory as memory_module
+    from runesmith.app import acceptance_proposals, build_memory
+    from runesmith.app.workspace import _write_json
+    ws = approved_workspace(tmp_path, answers=1)
+    store = memory_module.Memory(ws.home / "memory.jsonl")
+
+    def legacy(name, milestone, quoting):
+        evidence = f"build-evidence/{name}"
+        _write_json(ws.home / evidence / "VERIFICATION.json", {
+            "public_contracts": [{"milestone": quoting, "digest": "d", "criteria": [{"id": "check.test_a"}]}],
+            "acceptance": {"failure_details": [{"criteria": ["check.test_a"]}]}})
+        return store.add("negative", f"Build check {name}", tags=["build_check"], source={
+            "kind": "build_check", "milestone": milestone, "evidence_dir": evidence, "draft": name})
+    own, later, other = legacy("own", "m1", "m1"), legacy("later", "m2", "m1"), legacy("other", "m2", "m3")
+    reads = []
+    real = build_memory._read_json
+
+    def watched(path, default):
+        if str(path).endswith("VERIFICATION.json"):
+            reads.append((path.parent.name, ws._lock._is_owned()))
+        return real(path, default)
+    build_memory._read_json = watched
+    try:
+        acceptance_proposals.withdraw(ws, "m1", reason="wrong")
+        assert sorted(name for name, _ in reads) == ["later", "other"]       # its own milestone's needs no receipt
+        assert not any(held for _, held in reads)                            # none read under the lock
+        active = {row["id"] for row in store.active(source_kind=build_memory.SOURCE_KIND)}
+        assert active == {other}                                             # own and the one quoting m1 are retired
+        reads.clear()
+        build_memory.retire_for_milestone(ws, "m3", "again")
+        assert reads == [] and (ws.home / build_memory.QUOTED_INDEX).is_file()      # kept: nothing read twice
+        assert {row["id"] for row in store.active(source_kind=build_memory.SOURCE_KIND)} == set()
+    finally:
+        build_memory._read_json = real

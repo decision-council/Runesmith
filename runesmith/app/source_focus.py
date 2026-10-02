@@ -12,7 +12,7 @@ from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_jso
 
 CONTEXT_CHARS = 48000
 DEFAULT_FILE_BYTES = 20000
-FOCUSED_FILE_BYTES = 32000
+FOCUSED_FILE_BYTES = 40000        # raised from 32000: motion.mjs reached 30,023 bytes and grows (journey J11-B15)
 MAX_FOCUS_PATHS = 12
 
 
@@ -29,7 +29,7 @@ def _validate_paths(paths):
     if (not isinstance(paths, list) or len(paths) > MAX_FOCUS_PATHS or
             any(not isinstance(p, str) or not p or len(p) > 240 for p in paths) or
             len(set(paths)) != len(paths)):
-        raise WorkspaceError('Choose up to12 unique model-visible relative file paths.')
+        raise WorkspaceError(f'Choose up to {MAX_FOCUS_PATHS} unique model-visible relative file paths.')
 
 
 def _context(files, hashes, snapshot, inventory, omitted, **metadata):
@@ -41,7 +41,7 @@ def _context(files, hashes, snapshot, inventory, omitted, **metadata):
 
 def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, include_rows=False):
     if type(limit) is not int or not 0 <= limit <= CONTEXT_CHARS:
-        raise WorkspaceError('Author source budget must be between0 and48000 characters.')
+        raise WorkspaceError(f'Author source budget must be between 0 and {CONTEXT_CHARS} characters.')
     paths = focus_settings(ws)['paths'] if focus_paths is None else focus_paths
     _validate_paths(paths)
     inventory = [p for p, e in snapshot['manifest'].items() if e['visibility'] == 'model']
@@ -49,10 +49,13 @@ def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, inclu
     focus_errors = {p: 'not_model_visible' for p in paths if p not in visible}
     order = [p for p in paths if p in visible] + [p for p in inventory[:2000] if p not in paths]
     files, hashes, omitted, reasons, rows, used = {}, {}, [], {}, [], 0
-    for rel in order:
+    # A file over the normal cap, up to the prioritized cap, is shown after the others when the budget has room (journey
+    # J11-B15: motion.mjs grew to 20,316 bytes, was never shown again, and every build that edited it was refused).
+    larger = [rel for rel in order if rel not in paths and DEFAULT_FILE_BYTES < len(snapshot['files'][rel]) <= FOCUSED_FILE_BYTES]
+    for rel in [rel for rel in order if rel not in larger] + larger:
         data = snapshot['files'][rel]
         focused = rel in paths
-        cap = FOCUSED_FILE_BYTES if focused else DEFAULT_FILE_BYTES
+        cap = FOCUSED_FILE_BYTES if focused or rel in larger else DEFAULT_FILE_BYTES
         reason = None
         try: content = data.decode('utf-8-sig').replace('\r\n', '\n')
         except UnicodeError:content = ''; reason = 'not_utf8'
@@ -72,6 +75,14 @@ def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, inclu
                    **({'rows': rows} if include_rows else {})})
 
 
+def _omission_reason(data):
+    """Why a file is not in a recorded selection, as select_context says it: not text, over the size limit, else the
+    source budget."""
+    try: data.decode('utf-8-sig')
+    except UnicodeError:return 'not_utf8'
+    return 'file_limit' if len(data) > FOCUSED_FILE_BYTES else 'packet_budget'
+
+
 def recorded_context(snapshot, names):
     """Reconstruct a new-format host packet's original complete file selection."""
     if (not isinstance(names, list) or len(names) > 2000 or
@@ -88,7 +99,10 @@ def recorded_context(snapshot, names):
         except UnicodeError as error:raise WorkspaceError('Retained author input is not UTF-8.') from error
         hashes[rel] = snapshot['manifest'][rel]['sha256']
     if sum(map(len, files.values())) > CONTEXT_CHARS:raise WorkspaceError('Retained author packet exceeds its source budget.')
-    return _context(files, hashes, snapshot, inventory, [p for p in inventory[:2000] if p not in files])
+    omitted = [p for p in inventory[:2000] if p not in files]
+    # Said as select_context says it (journey J11-B15: every gap read "packet_budget" here, a file over the limit too).
+    return _context(files, hashes, snapshot, inventory, omitted,
+                    omission_reasons={rel: _omission_reason(snapshot['files'][rel]) for rel in omitted})
 
 
 def inspect_context(ws):
@@ -115,7 +129,7 @@ def save_focus(ws, paths, snapshot_digest, reason):
         if snapshot['digest'] != snapshot_digest:raise WorkspaceError('Source changed; inspect the current context before saving.')
         context = select_context(ws, snapshot, focus_paths=paths)
         if context['focus_errors']:
-            raise WorkspaceError('Focus files must be model-visible UTF-8, at most32000bytes each, and fit the48000character source budget: '
+            raise WorkspaceError(f'Focus files must be model-visible UTF-8, at most {FOCUSED_FILE_BYTES} bytes each, and fit the {CONTEXT_CHARS} character source budget: '
                                  + ', '.join(f'{p}: {why}' for p, why in context['focus_errors'].items()))
         receipt = {'schema': 1, 'paths': list(paths), 'reason': reason.strip()[:1200], 'utc': _now(),
                    'snapshot_at_selection': snapshot_digest, 'scope': 'Input selection only; fresh source is bound for each request.'}

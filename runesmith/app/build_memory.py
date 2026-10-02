@@ -11,7 +11,9 @@ from datetime import datetime
 
 from runesmith.canon import digest
 from runesmith.memory import Memory, rank_memories
-from runesmith.app.acceptance_contracts import owner_feedback
+from runesmith.app.acceptance_contracts import (contracts_in_force, expectation_digest, owner_feedback,
+                                                withdrawn_feedback)
+from runesmith.app.workspace import _read_json, _write_json
 
 SOURCE_KIND = 'build_check'
 MEMORY_LIMIT = 3
@@ -46,14 +48,40 @@ def _check_summary(check):
     return result
 
 
+def quoted_milestones(verification):
+    """The milestones whose sentences a verification's failure feedback quotes: a done milestone's checks judge every
+    later build, so a memory of milestone m2's build can quote m1's (journey J11-G37 review)."""
+    failed = {key for row in (verification.get('acceptance') or {}).get('failure_details') or [] if isinstance(row, dict)
+              for key in row.get('criteria') or []}
+    return sorted({c['milestone'] for c in verification.get('public_contracts') or []
+                   if isinstance(c, dict) and isinstance(c.get('milestone'), str)
+                   and failed & {x.get('id') for x in c.get('criteria') or [] if isinstance(x, dict)}})
+
+
 def remember_check(ws, draft, verification, *, origin='runtime'):
-    """Record once per distinct check observation; callers own the home lock.
+    """Record once per distinct check observation.
 
     Identical rechecks retain all verification receipts but do not create extra
     retrieval votes. Neither re-import nor a recheck revives a retired memory.
     """
+    # withdraw() holds this lock while it retires the milestone's memories: judging freshness and adding in one step
+    # leaves no order in which a withdrawn sentence is remembered afterwards (review of J11-G37: a build being checked
+    # when the owner withdrew wrote a memory with the withdrawn sentences).
+    with ws._lock:
+        milestone = draft.get('milestone')
+        stale = (not contracts_in_force(ws, verification)
+                 or verification.get('public_acceptance_digest') != (expectation_digest(ws, milestone)
+                                                                     if isinstance(milestone, str) else None))
+        if stale:
+            # Judged by expectations the owner has since withdrawn or replaced: the outcome is kept, not their
+            # sentences, nor a phantom failure that "needs the owner's clarification" (review of J11-G37).
+            verification = dict(verification, public_contracts=[])
+        return _remember_check(ws, draft, verification, origin, stale)
+
+
+def _remember_check(ws, draft, verification, origin, stale):
     checks = {name: _check_summary(verification.get(name)) for name in ('project_checks', 'acceptance')}
-    checks['acceptance'] = owner_feedback(ws, verification)
+    checks['acceptance'] = withdrawn_feedback() if stale else owner_feedback(ws, verification)
     outcome = verification.get('status', 'unknown')
     if any(c['status'] == 'timeout' for c in checks.values()):
         outcome = 'incomplete_timeout'
@@ -80,7 +108,7 @@ def remember_check(ws, draft, verification, *, origin='runtime'):
     source = {key: observation[key] for key in ('draft', 'contract', 'snapshot_digest', 'candidate_digest', 'outcome')}
     source.update(kind=SOURCE_KIND, milestone=draft.get('milestone'), author=draft.get('drafted_by'),
                   evidence_dir=verification.get('evidence_dir'), observed_utc=verification.get('utc'), origin=origin,
-                  feedback_projection='public-v1')
+                  feedback_projection='public-v1', quoted=quoted_milestones(verification))
     with ws._lock:
         return Memory(ws.home / 'memory.jsonl').add(
             'negative' if outcome == 'failed' else 'episode', '\n'.join(lines)[:2400],
@@ -148,6 +176,58 @@ def _select_observations(rows, milestone):
 def recall_for_milestone(ws, milestone):
     """At most three short, public-projected historical observations; no model call."""
     return _select_observations(Memory(ws.home / 'memory.jsonl').active(source_kind=SOURCE_KIND), milestone)
+
+
+QUOTED_INDEX = 'memory-quoted.json'
+
+
+def _quoted_index(ws):
+    value = _read_json(ws.home / QUOTED_INDEX, {})
+    return value if isinstance(value, dict) else {}
+
+
+def backfill_quoted(ws, milestone_id=None):
+    """Which milestones each older memory quotes, read once from its build's receipt and kept beside the memories.
+
+    A memory remembered before `quoted` was recorded needs its receipt, and a cold receipt takes about half a second:
+    on J11's 131 memories the first withdrawal took 64 s with every other change to the workspace waiting for the
+    lock (review of J11-G37). So they are read here, outside the lock, once; a memory of `milestone_id` itself is
+    retired by its own milestone and needs no receipt."""
+    index = _quoted_index(ws)
+    wanted = {}
+    for row in Memory(ws.home / 'memory.jsonl').active(source_kind=SOURCE_KIND):
+        source = row.get('source', {})
+        if source.get('quoted') is not None or row['id'] in index:
+            continue
+        if milestone_id is not None and source.get('milestone') == milestone_id:
+            continue
+        wanted[row['id']] = source.get('evidence_dir')
+    if not wanted:
+        return
+    found = {}
+    for memory_id, evidence in wanted.items():
+        receipt = _read_json(ws.home / evidence / 'VERIFICATION.json', {}) if isinstance(evidence, str) and evidence else {}
+        found[memory_id] = quoted_milestones(receipt) if isinstance(receipt, dict) else []
+    with ws._lock:
+        _write_json(ws.home / QUOTED_INDEX, {**_quoted_index(ws), **found})
+
+
+def retire_for_milestone(ws, milestone_id, reason):
+    """Retire the build-check observations that quote a milestone's sentences: its own builds', and a later milestone's
+    that failed its checks (a done milestone's checks judge every build). They quote sentences of checks the owner
+    withdrew or replaced (journey J11-G37), and would otherwise be shown to builders again. A recheck does not revive
+    them. A caller that holds the workspace lock calls `backfill_quoted` first, so no receipt is read under it."""
+    backfill_quoted(ws, milestone_id)
+    with ws._lock:
+        index = _quoted_index(ws)
+        memory = Memory(ws.home / 'memory.jsonl')
+        for row in memory.active(source_kind=SOURCE_KIND):
+            source = row.get('source', {})
+            quoted = source.get('quoted')
+            if quoted is None:
+                quoted = index.get(row['id']) or []
+            if source.get('milestone') == milestone_id or milestone_id in quoted:
+                memory.retire(row['id'], reason)
 
 
 def recent_observations(ws):

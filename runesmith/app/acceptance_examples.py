@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 from typing import Any
 
@@ -200,6 +201,11 @@ def _option_named(option: str, text: str) -> bool:
         return True
     bare = re.escape(option[2:].lower())
     return re.search(r'(?<![A-Za-z0-9_-])' + bare + r'(?![A-Za-z0-9_-])', text.lower()) is not None
+
+
+def _same_file(name):
+    """A project file name as the file is found, so two spellings of one file compare equal."""
+    return posixpath.normpath(name).casefold()
 
 
 def _relative(name, what):
@@ -856,6 +862,24 @@ def validate_examples(data: Any, milestone_text: str, source_text: str = '') -> 
                     'the finished project contains, use "exists" or "contains".' if example['files'] else '')
             raise NothingToCheck(f'{what} needs steps, or a check on files ("exists", "contains", "lacks", "links_resolve" '
                                  'or "pages_reachable").' + hint)
+        if not example['steps'] and example['files']:
+            # Journey J11-F28: the video milestone's checks put record.html in "files", then looked for texts in it.
+            # Names are compared as the files are found: "./record.html" and "Record.html" are the same file (review).
+            own = {_same_file(f['name']) for f in example['files']}
+            own_checks = sorted({c['name'] for key in ('contains', 'lacks', 'file_lines') for c in example[key]
+                                 if _same_file(c['name']) in own} | {n for n in example['exists'] if _same_file(n) in own})
+            real = ([c for key in ('contains', 'lacks', 'file_lines') for c in example[key] if _same_file(c['name']) not in own]
+                    + [n for n in example['exists'] if _same_file(n) not in own])
+            if own_checks and not real and not (example['links_resolve'] or example['pages_reachable']):
+                raise WorkspaceError(f'{what} checks ' + ', '.join(own_checks) + ', which it writes itself in "files" and no '
+                                     'step changes, so it checks nothing the build makes. Leave the project\'s own files out '
+                                     'of "files".')
+            if own_checks:           # it also checks the project's own files: only the trivial checks go
+                for key in ('contains', 'lacks', 'file_lines'):
+                    example[key] = [c for c in example[key] if _same_file(c['name']) not in own]
+                example['exists'] = [n for n in example['exists'] if _same_file(n) not in own]
+                dropped.append(f'{what}: the checks on ' + ', '.join(own_checks) + ' (the example writes them itself in '
+                               '"files", so they check nothing the build makes)')
         for n, step in enumerate(example['steps'], 1):
             word = _command_word(step)
             refused_on_purpose = (step.get('expect') or {}).get('exit') == 'error'   # "an unknown command is refused"

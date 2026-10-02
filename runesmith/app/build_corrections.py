@@ -18,11 +18,11 @@ import uuid
 from runesmith.app.build_memory import _check_summary
 from runesmith.app.planner import (DRAFT_SCHEMA, PlannerUnavailable,
                                    admit_revision_answer, milestone_contract,
-                                   source_context)
+                                   settled_state, source_context)
 from runesmith.app.snapshots import collect_snapshot, freeze_snapshot
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 from runesmith.instruments import LenientSchema, TransportCensored
-from runesmith.app.acceptance_contracts import expectations, expectation_digest, owner_feedback
+from runesmith.app.acceptance_contracts import draft_owner_feedback, expectations, expectation_digest
 
 MAX_CORRECTIONS = 2
 
@@ -51,7 +51,9 @@ def _answers(ws, attempt):
 def _corrections(ws, attempt_id):
     rows = [_read_json(path,{}) for path in (ws.home/'build-corrections').glob('*.json')]
     # A call no route accepted produced no answer: it neither spends a correction nor blocks one (journey J2-F17).
-    return sorted((row for row in rows if row.get('attempt')==attempt_id and row.get('state')!='transport_failed'),
+    # Nor does an answer for a file the model was not shown (J11-B15).
+    return sorted((row for row in rows if row.get('attempt')==attempt_id
+                   and row.get('state') not in ('transport_failed','context_gap')),
                   key=lambda row:row.get('utc',''))
 
 
@@ -211,7 +213,7 @@ def _verification(ws, draft):
     return {'draft':draft.get('id'),'status':value.get('status'),
             'detail':str(value.get('detail') or '')[:400],
             'project_checks':_check_summary(value.get('project_checks')),
-            'owner_acceptance':owner_feedback(ws, value)}
+            'owner_acceptance':draft_owner_feedback(ws, draft)}
 
 
 def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:None):
@@ -348,7 +350,8 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
         files=admit_revision_answer(ws,context,operations,previous_draft,
                                     allowed_paths=allowed)
     except PlannerUnavailable as error:
-        _write_json(receipt_path,dict(receipt,state='refused',error=str(error)[:300],feedback=getattr(error,'feedback',None)))
+        _write_json(receipt_path,dict(receipt,state=settled_state(error,'refused'),error=str(error)[:300],
+                                      feedback=getattr(error,'feedback',None)))
         raise
     by=outcome.receipt.get('answered_by') or outcome.receipt.get('model')
     draft=ws.save_draft(title=str(outcome.data.get('title') or base_title),

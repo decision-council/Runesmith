@@ -103,7 +103,7 @@ def _legacy_evidence(ws, draft, parent):
              draft.get('state') == 'waiting' and draft.get('verification') == LEGACY_REFUSAL,
              'Only the specifically identified pre-execution author-view refusal is eligible; zero time alone is insufficient.')
     _require(all(type(parent.get(k)) is int for k in ('project_timeout_s', 'owner_timeout_s', 'maximum_check_s')) and
-             1 <= parent['project_timeout_s'] <= 600 and 1 <= parent['owner_timeout_s'] <= 240 and
+             1 <= parent['project_timeout_s'] <= 600 and 1 <= parent['owner_timeout_s'] <= building.OWNER_LIMIT_S and
              parent['maximum_check_s'] == parent['project_timeout_s'] + parent['owner_timeout_s'] and
              parent.get('max_phases') == 2 and parent.get('author_budget_reset') is False,
              'The original resource limits are not valid.')

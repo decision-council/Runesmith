@@ -39,9 +39,9 @@ def test_host_binds_source_and_reuses_waiting_draft(tmp_path):
 
 def test_unseen_replacements_refused(tmp_path):
     ws = planned(tmp_path)
-    (tmp_path/'large.py').write_text('x = 1\n'*5000)
+    (tmp_path/'large.py').write_text('x = 1\n'*7000)        # 42,000 bytes, over even the prioritized cap: never shown (J11-B15)
     scripted(ws, [{'title':'Blind edit','files':[{'path':'large.py','content':'x = 2'}]}], roles=('plan',))
-    with pytest.raises(PlannerUnavailable, match='unseen'):
+    with pytest.raises(PlannerUnavailable, match='large.py is too large to show a model'):
         draft_files(ws, ws.router())
 
 
@@ -342,3 +342,424 @@ def test_a_model_that_repeats_a_refused_edit_is_asked_last(tmp_path):
         "contract": "k", "utc": "2026-09-29T10:59:40Z", "state": "failed", "error": "x",
         "feedback": {"requested_old_text": "<h/>", "answer_receipt": "../../secret.json"}}), encoding="utf-8")
     assert _rotate_repeating_author(ws, router(), "k") is None               # only a receipt under draft-answers
+
+
+def crowded(root):
+    """A project where huge.js is left out of what models are shown: a_pad.js, read first, leaves it no room.
+    Both are 28,000 bytes, under every cap, and together over the 48,000-character source budget."""
+    for name in ("a_pad.js", "huge.js"):
+        (root / name).write_bytes(b"// y\n" * 5600)
+
+
+EDIT_HUGE = {"title": "Edit", "files": [{"path": "huge.js", "edits": [{"old_text": "// y", "new_text": "// z"}]}]}
+
+
+def test_a_program_over_the_normal_cap_is_still_shown_when_the_budget_has_room(tmp_path):
+    # Journey J11-B15: motion.mjs grew past 20,000 bytes, was never shown again, and every build that edited it was
+    # refused until all tries were used up and J11 stood still for two days.
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import DEFAULT_FILE_BYTES, select_context
+    ws = planned(tmp_path)
+    (tmp_path / "motion.mjs").write_bytes(b"// x\n" * ((DEFAULT_FILE_BYTES + 400) // 5))
+    (tmp_path / "small.js").write_bytes(b"export const a = 1;\n")
+    context = select_context(ws, collect_snapshot(ws))
+    assert "motion.mjs" in context["files"] and "small.js" in context["files"]          # over the normal cap, shown
+    assert context["omission_reasons"] == {}
+
+
+def test_a_file_that_can_never_be_shown_is_an_ordinary_refusal_that_says_what_to_change(tmp_path):
+    # Review of J11-B15: waiting for the owner to prioritize such a file left the milestone stuck, since the Author
+    # context refuses a file over 40,000 bytes or one that is not UTF-8. It stays a failed try, in plain words.
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import FOCUSED_FILE_BYTES, select_context
+    from runesmith.app.planner import admit_answer_files, settled_state
+    ws = planned(tmp_path)
+    (tmp_path / "huge.js").write_bytes(b"// y\n" * ((FOCUSED_FILE_BYTES + 400) // 5))
+    (tmp_path / "wide.js").write_bytes("var a = 1;\n".encode("utf-16"))
+    context = select_context(ws, collect_snapshot(ws))
+    assert context["omission_reasons"] == {"huge.js": "file_limit", "wide.js": "not_utf8"}
+    for name, words, remedy in (("huge.js", "is too large to show a model", "Split it into smaller files"),
+                                ("wide.js", "is not UTF-8 text", "Save it as UTF-8 text")):
+        for answer in ({"path": name, "edits": [{"old_text": "a", "new_text": "b"}]}, {"path": name, "content": "// whole\n"}):
+            with pytest.raises(PlannerUnavailable, match=f"{name} {words}") as refused:
+                admit_answer_files(ws, context, [answer])
+            assert remedy in str(refused.value)
+            assert not getattr(refused.value, "context_gap", None) and settled_state(refused.value) == "failed"
+            assert "path" not in refused.value.feedback and refused.value.feedback["not_shown"] == name
+
+
+def test_a_file_the_budget_left_out_is_a_gap_the_owner_can_close(tmp_path):
+    # Journey J11-B15: the other files filled the source budget; prioritizing the file shows it, so such a refusal
+    # uses up no try.
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import save_focus, select_context
+    from runesmith.app.planner import admit_answer_files, settled_state
+    ws = planned(tmp_path)
+    crowded(tmp_path)
+    context = select_context(ws, collect_snapshot(ws))
+    assert "a_pad.js" in context["files"] and context["omission_reasons"] == {"huge.js": "packet_budget"}
+    for answer in (EDIT_HUGE["files"][0], {"path": "huge.js", "content": "// whole\n"}):
+        with pytest.raises(PlannerUnavailable, match="huge.js was not shown to the model") as refused:
+            admit_answer_files(ws, context, [answer])
+        assert refused.value.context_gap == {"path": "huge.js", "reason": "packet_budget"}
+        assert settled_state(refused.value) == "context_gap" and "Prioritize huge.js" in str(refused.value)
+    save_focus(ws, ["huge.js"], collect_snapshot(ws)["digest"], "Builds of this milestone edit it")
+    assert "huge.js" in source_context(ws)["files"]                                    # the remedy works
+
+
+def test_a_retained_selection_says_why_each_file_was_left_out(tmp_path):
+    # Review of J11-B15: a late answer is admitted against its recorded selection, which kept no reasons, so every
+    # file read "packet_budget", a file over the limit or not UTF-8 included.
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import FOCUSED_FILE_BYTES, recorded_context
+    from runesmith.app.planner import admit_answer_files
+    ws = planned(tmp_path)
+    (tmp_path / "small.js").write_bytes(b"export const a = 1;\n")
+    (tmp_path / "big.js").write_bytes(b"// y\n" * 5600)
+    (tmp_path / "huge.js").write_bytes(b"// y\n" * ((FOCUSED_FILE_BYTES + 400) // 5))
+    (tmp_path / "wide.js").write_bytes("var a = 1;\n".encode("utf-16"))
+    context = recorded_context(collect_snapshot(ws), ["small.js"])
+    assert context["omission_reasons"] == {"big.js": "packet_budget", "huge.js": "file_limit", "wide.js": "not_utf8"}
+    edit = {"edits": [{"old_text": "a", "new_text": "b"}]}
+    with pytest.raises(PlannerUnavailable, match="huge.js is too large") as refused:
+        admit_answer_files(ws, context, [dict(edit, path="huge.js")])
+    assert not getattr(refused.value, "context_gap", None)
+    with pytest.raises(PlannerUnavailable, match="wide.js is not UTF-8") as refused:
+        admit_answer_files(ws, context, [dict(edit, path="wide.js")])
+    assert not getattr(refused.value, "context_gap", None)
+    with pytest.raises(PlannerUnavailable, match="big.js was not shown") as refused:
+        admit_answer_files(ws, context, [dict(edit, path="big.js")])
+    assert refused.value.context_gap == {"path": "big.js", "reason": "packet_budget"}
+
+
+def test_a_try_refused_for_an_unshown_file_uses_nothing_and_the_milestone_waits(tmp_path):
+    # Journey J11-B15: such refusals used up every try; now they use none, and the milestone waits for the owner.
+    import json as _json
+    from runesmith.app.author_allowance import ordinary_allowance
+    from runesmith.app.building import _context_gap
+    from runesmith.app.planner import milestone_contract
+    ws = planned(tmp_path)
+    milestone = ws.plan()["milestones"][0]
+    contract = milestone_contract(ws, milestone)
+    snapshot = "a" * 64
+    (ws.home / "build-attempts").mkdir(parents=True, exist_ok=True)
+    (ws.home / "build-attempts" / "g1.json").write_text(_json.dumps({
+        "scope": "b" * 64, "contract": contract, "context_digest": "c" * 64, "snapshot_digest": snapshot,
+        "state": "context_gap", "utc": "2026-10-01T16:00:00Z", "error": "PlannerUnavailable: motion.mjs was not shown",
+        "feedback": {"not_shown": "motion.mjs", "reason": "packet_budget"}}), encoding="utf-8")
+    assert ordinary_allowance(ws, contract, snapshot)["used"] == 0
+    assert _context_gap(ws, contract, {"snapshot_digest": snapshot, "files": {}}) == "motion.mjs"
+    assert _context_gap(ws, contract, {"snapshot_digest": snapshot, "files": {"motion.mjs": "x"}}) is None   # shown now
+    assert _context_gap(ws, contract, {"snapshot_digest": "d" * 64, "files": {}}) is None                     # other source
+
+
+def gap_project(tmp_path, answers):
+    ws = planned(tmp_path)
+    ws.update_settings({"build_steps": True, "build_apply": True, "build_paths": ["app.py", "tests", "huge.js"]})
+    crowded(tmp_path)
+    scripted(ws, answers, roles=("plan",))
+    return ws
+
+
+def counting(router):
+    calls = []
+    real = router.call
+    router.call = lambda *args, **kwargs: (calls.append(1), real(*args, **kwargs))[1]
+    return calls
+
+
+def tries_used(ws):
+    from runesmith.app.author_allowance import ordinary_allowance
+    from runesmith.app.planner import milestone_contract
+    contract = milestone_contract(ws, ws.plan()["milestones"][0])
+    return ordinary_allowance(ws, contract, source_context(ws)["snapshot_digest"])["used"]
+
+
+def test_a_build_refused_for_an_unshown_file_uses_no_try_and_waits_until_it_is_shown(tmp_path):
+    # Journey J11-B15, end to end: no try used, no new call while the file is still not shown, a call again after.
+    from runesmith.app.building import build_step
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import save_focus
+    ws = gap_project(tmp_path, [EDIT_HUGE] * 4)
+    router = ws.router()
+    calls = counting(router)
+    with pytest.raises(PlannerUnavailable, match="huge.js was not shown"):
+        build_step(ws, router)
+    assert tries_used(ws) == 0 and len(calls) == 1
+    assert "huge.js is not shown to the models" in build_step(ws, router)["summary"] and len(calls) == 1
+    save_focus(ws, ["huge.js"], collect_snapshot(ws)["digest"], "Builds of this milestone edit it")
+    with pytest.raises(PlannerUnavailable):                           # shown now: its edit is judged like any other
+        build_step(ws, router)
+    assert len(calls) == 2 and tries_used(ws) == 1
+
+
+def test_a_draft_that_waits_is_checked_although_an_older_answer_was_refused_for_an_unshown_file(tmp_path):
+    # Review of J11-B15: the stale refusal was looked at before the waiting draft, so a draft the owner made on the
+    # same source was never checked.
+    from runesmith.app.building import build_step
+    from runesmith.app.planner import draft_files
+    good = {"title": "Good", "files": [{"path": "app.py", "content": "def answer():\n    return 42\n"}]}
+    ws = gap_project(tmp_path, [EDIT_HUGE])
+    with pytest.raises(PlannerUnavailable, match="huge.js was not shown"):
+        build_step(ws, ws.router())
+    scripted(ws, [good], roles=("plan",))
+    waiting = draft_files(ws, ws.router(), "m1")
+    assert waiting["state"] == "waiting"
+    result = build_step(ws, ws.router())
+    assert result["draft"] == waiting["id"] and "verification" in result and "not shown" not in result["summary"]
+
+
+def test_the_one_more_try_refused_for_an_unshown_file_is_not_used_up(tmp_path):
+    # Review of J11-B15: escalate_build recorded such a refusal as a used "failed" try.
+    import json as _json
+    import uuid
+    from runesmith.app.building import build_escalation_status, escalate_build
+    from runesmith.app.author_allowance import ordinary_allowance
+    from runesmith.app.planner import milestone_contract
+    ws = gap_project(tmp_path, [EDIT_HUGE] * 2)
+    contract = milestone_contract(ws, ws.plan()["milestones"][0])
+    context = source_context(ws)
+    scope = ordinary_allowance(ws, contract, context["snapshot_digest"])["scope"]
+    (ws.home / "build-attempts").mkdir(parents=True, exist_ok=True)
+    for n in range(3):
+        (ws.home / "build-attempts" / (uuid.uuid4().hex + ".json")).write_text(_json.dumps({
+            "scope": scope, "contract": contract, "context_digest": "c" * 64, "snapshot_digest": context["snapshot_digest"],
+            "state": "failed", "utc": f"2026-10-01T10:0{n}:00Z", "error": "x"}), encoding="utf-8")
+    assert build_escalation_status(ws)["eligible"]
+    with pytest.raises(PlannerUnavailable, match="huge.js was not shown"):
+        escalate_build(ws, ws.router())
+    assert [_json.loads(p.read_text())["state"] for p in (ws.home / "build-escalations").glob("*.json")] == ["context_gap"]
+    state = build_escalation_status(ws)
+    assert state["eligible"] and not state["used"]
+
+
+def test_a_correction_refused_for_an_unshown_file_is_not_counted(tmp_path):
+    # Review of J11-B15: the refusal was recorded as "refused" and spent one of the two corrections.
+    import json as _json
+    from runesmith.app.build_corrections import _corrections, correct_rejected_answer, correction_candidates
+    from runesmith.app.building import build_step
+    first = {"title": "Two", "files": [{"path": "app.py", "edits": [{"old_text": "x = 99", "new_text": "x = 2"}]},
+                                       EDIT_HUGE["files"][0]]}
+    fixed = {"title": "Two", "why": "w", "files": [{"path": "app.py", "edits": [{"old_text": "x = 1", "new_text": "x = 2"}]},
+                                                   EDIT_HUGE["files"][0]]}
+    ws = gap_project(tmp_path, [first])
+    (tmp_path / "app.py").write_bytes(b"x = 1\n")
+    with pytest.raises(PlannerUnavailable, match="Exact edit refused for app.py"):
+        build_step(ws, ws.router())
+    attempt = correction_candidates(ws)[0]["attempt"]
+    scripted(ws, [fixed], roles=("plan",))
+    with pytest.raises(PlannerUnavailable, match="huge.js was not shown"):
+        correct_rejected_answer(ws, ws.router(), attempt)
+    assert [_json.loads(p.read_text())["state"] for p in (ws.home / "build-corrections").glob("*.json")] == ["context_gap"]
+    assert _corrections(ws, attempt) == []
+    row = correction_candidates(ws)[0]
+    assert row["remaining"] == 2 and row["eligible"]
+
+
+def marked(root):
+    """crowded() with a first line of its own in each file, so an edit can name it once."""
+    for name in ("a_pad.js", "huge.js"):
+        (root / name).write_bytes(f"// {name}\n".encode() + b"// y\n" * 5600)
+
+
+
+def test_files_that_cannot_be_shown_together_are_no_gap_the_owner_can_close(tmp_path):
+    # Review of J11-B15: each time the owner prioritized the file named, another became the gap, until Author context
+    # refused the whole list; the milestone then waited forever, and used no try, so no replan was ever asked.
+    from runesmith.app.building import build_step
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import save_focus
+    both = {"title": "Both", "files": [{"path": "a_pad.js", "edits": [{"old_text": "// a_pad.js", "new_text": "// one"}]},
+                                       {"path": "huge.js", "edits": [{"old_text": "// huge.js", "new_text": "// one"}]}]}
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir(), second.mkdir()
+    ws = gap_project(first, [both] * 5)
+    marked(first)
+    router = ws.router()
+    for _ in range(3):
+        with pytest.raises(PlannerUnavailable, match="do not fit the source budget together"):
+            build_step(ws, router)
+    assert tries_used(ws) == 3
+    assert build_step(ws, router).get("replan_needed")                       # the way out: smaller steps
+    # a gap the owner can close is still waited for, with no try used
+    only = {"title": "Only", "files": [{"path": "huge.js", "edits": [{"old_text": "// huge.js", "new_text": "// one"}]}]}
+    ws2 = gap_project(second, [only])
+    marked(second)
+    with pytest.raises(PlannerUnavailable, match="was not shown to the model"):
+        build_step(ws2, ws2.router())
+    assert tries_used(ws2) == 0
+    save_focus(ws2, ["huge.js"], collect_snapshot(ws2)["digest"], "Builds of this milestone edit it")
+
+
+def test_a_retained_candidate_file_that_is_no_longer_shown_is_the_same_uncounted_gap(tmp_path):
+    # Review of J11-B15: an answer that edits only one file of a candidate retains the others; one the budget no longer
+    # shows was refused as a counted failed try with no remedy, where an edit to it is an uncounted gap.
+    import json as _json
+    from runesmith.app.building import build_step
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import save_focus
+    ws = planned(tmp_path)
+    ws.update_settings({"build_steps": True, "build_apply": True, "build_paths": ["a.js", "b_y.js", "c_x.js"]})
+    (tmp_path / "a.js").write_bytes(b"// MARK\n")
+    for name in ("b_y.js", "c_x.js"):
+        (tmp_path / name).write_bytes(b"// MARK\n" + b"// y\n" * 5600)
+    save_focus(ws, ["c_x.js"], collect_snapshot(ws)["digest"], "Needs it")
+    first = {"title": "First", "files": [{"path": "a.js", "edits": [{"old_text": "// MARK", "new_text": "// one"}]},
+                                         {"path": "c_x.js", "edits": [{"old_text": "// MARK", "new_text": "// one"}]}]}
+    scripted(ws, [first], roles=("plan",))
+    candidate = ws._draft(build_step(ws, ws.router(), author_only=True)["draft"])
+    ws._save_draft_state(candidate, "needs_revision")
+    save_focus(ws, [], collect_snapshot(ws)["digest"], "Clear it")               # c_x.js no longer fits beside b_y.js
+    retain = {"title": "Retain", "files": [{"path": "a.js", "edits": [{"old_text": "// MARK", "new_text": "// two"}]}]}
+    scripted(ws, [retain], roles=("plan",))
+    used = tries_used(ws)
+    with pytest.raises(PlannerUnavailable, match="c_x.js was not shown to the model"):
+        build_step(ws, ws.router())
+    states = sorted(_json.loads(p.read_text())["state"] for p in (ws.home / "build-attempts").glob("*.json"))
+    assert states == ["answered", "context_gap"] and tries_used(ws) == used
+    assert "c_x.js is not shown to the models" in build_step(ws, ws.router())["summary"]
+    save_focus(ws, ["c_x.js"], collect_snapshot(ws)["digest"], "Now it is shown")
+    assert build_step(ws, ws.router(), author_only=True)["draft"]            # the same answer is admitted now
+    assert tries_used(ws) == used + 1
+
+
+def two_steps(tmp_path):
+    ws = planned(tmp_path)
+    ws.save_plan({"summary": "Tool", "milestones": [{"title": "Other", "done_when": "other.py exists"},
+                                                     {"title": "Motion", "done_when": "motion.mjs changes"}]})
+    ws.update_settings({"build_steps": True, "build_apply": True, "build_paths": ["other.py", "motion.mjs"]})
+    return ws
+
+
+def tries_of(ws, milestone_id):
+    from runesmith.app.author_allowance import ordinary_allowance
+    from runesmith.app.planner import milestone_contract
+    milestone = next(m for m in ws.plan()["milestones"] if m["id"] == milestone_id)
+    return ordinary_allowance(ws, milestone_contract(ws, milestone), source_context(ws)["snapshot_digest"])["used"]
+
+
+def test_a_prioritized_file_that_outgrows_the_limit_blocks_only_the_milestones_that_edit_it(tmp_path):
+    # Review of J11-B15 (verification round): the owner prioritized motion.mjs as the remedy said, it grew past 40,000
+    # bytes, and every milestone was blocked, also the ones that never touch it. It is an omitted file now: a milestone
+    # that edits it is refused in words naming it, and no try is used without a model asked.
+    from runesmith.app.building import build_step
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import FOCUSED_FILE_BYTES, save_focus
+    ws = two_steps(tmp_path)
+    (tmp_path / "motion.mjs").write_bytes(b"// MARK\n" + b"// y\n" * 7990)           # 39,958 bytes: prioritized
+    save_focus(ws, ["motion.mjs"], collect_snapshot(ws)["digest"], "Builds of this milestone edit it")
+    (tmp_path / "motion.mjs").write_bytes(b"// MARK\n" + b"// y\n" * 8010)           # an applied draft grew it past the limit
+    assert (tmp_path / "motion.mjs").stat().st_size > FOCUSED_FILE_BYTES
+    calls = []
+
+    def asked(answer):
+        scripted(ws, [answer], roles=("plan",))
+        router = ws.router()
+        real = router.call
+        router.call = lambda *args, **kwargs: (calls.append(1), real(*args, **kwargs))[1]
+        return router
+    other = asked({"title": "Other", "files": [{"path": "other.py", "content": "x = 1\n"}]})
+    assert build_step(ws, other, milestone_id="m1", author_only=True)["draft"]       # it never touches the file: it proceeds
+    edits = asked({"title": "Motion", "files": [{"path": "motion.mjs", "edits": [{"old_text": "// MARK", "new_text": "// z"}]}]})
+    with pytest.raises(PlannerUnavailable, match="motion.mjs is too large to show a model") as refused:
+        build_step(ws, edits, milestone_id="m2")
+    assert "prioritized under Author context" in str(refused.value) and "Split it" in str(refused.value)
+    assert len(calls) == 2 and tries_of(ws, "m1") + tries_of(ws, "m2") == len(calls)  # a try only where a model answered
+
+
+def test_a_prioritized_path_that_is_gone_blocks_without_a_try_and_is_named(tmp_path):
+    # Review of J11-B15: no call is made while the owner's own selection names a file that is gone, and the summary of
+    # several blocked milestones names it (it only said "a prioritized file"); a milestone whose tries are used up still
+    # asks for smaller steps instead of reporting the file.
+    import json as _json
+    import uuid
+    from runesmith.app.author_allowance import ordinary_allowance
+    from runesmith.app.building import build_step
+    from runesmith.app.planner import milestone_contract, settled_state
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import save_focus
+    ws = two_steps(tmp_path)
+    (tmp_path / "motion.mjs").write_bytes(b"// MARK\n")
+    save_focus(ws, ["motion.mjs"], collect_snapshot(ws)["digest"], "Builds edit it")
+    (tmp_path / "motion.mjs").unlink()
+    scripted(ws, [{"title": "x", "files": [{"path": "other.py", "content": "x = 1\n"}]}] * 4, roles=("plan",))
+    router = ws.router()
+    calls = counting(router)
+    result = build_step(ws, router)
+    assert "motion.mjs is prioritized but not a file models can be shown" in result["summary"]
+    assert len(calls) == 0 and not list((ws.home / "build-attempts").glob("*.json"))
+    with pytest.raises(PlannerUnavailable, match="motion.mjs is prioritized under Author context") as refused:
+        draft_files(ws, router)
+    assert settled_state(refused.value) == "context_gap" and "Remove it from the prioritized files" in str(refused.value)
+    milestone = ws.plan()["milestones"][0]
+    contract, snapshot = milestone_contract(ws, milestone), source_context(ws)["snapshot_digest"]
+    scope = ordinary_allowance(ws, contract, snapshot)["scope"]
+    (ws.home / "build-attempts").mkdir(parents=True, exist_ok=True)
+    for n in range(3):
+        (ws.home / "build-attempts" / (uuid.uuid4().hex + ".json")).write_text(_json.dumps({
+            "scope": scope, "contract": contract, "context_digest": "c" * 64, "snapshot_digest": snapshot,
+            "state": "failed", "utc": f"2026-10-01T10:0{n}:00Z", "error": "x"}), encoding="utf-8")
+    assert build_step(ws, router, milestone_id="m1").get("replan_needed")
+
+
+def test_a_candidate_hidden_from_the_prompt_is_not_merged_into_the_next_draft(tmp_path):
+    # Review of J11-G37 (fresh review): draft_files chose the candidate to retain by a rule without the expectations
+    # test the prompt uses, so a candidate the model was never shown still had its files merged into the next draft.
+    import json as _json
+    from runesmith.app.acceptance_contracts import publish_expectations
+    ws = planned(tmp_path)
+    (tmp_path / "app.py").write_text("x = 1\n")
+    publish_expectations(ws, "m1", [{"id": "c1", "description": "It prints hello."}], "first")
+    first = {"title": "First", "files": [{"path": "app.py", "edits": [{"old_text": "x = 1", "new_text": "x = 2"}]},
+                                         {"path": "legacy.py", "content": "OLD_BEHAVIOUR = True\n"}]}
+    scripted(ws, [first], roles=("plan",))
+    d1 = draft_files(ws, ws.router())
+    ws._save_draft_state(ws._draft(d1["id"]), "needs_revision")
+    assert _json.loads(draft_prompt(ws, ws.plan()["milestones"][0], source_context(ws)))["candidate_to_revise"]["id"] == d1["id"]
+    publish_expectations(ws, "m1", [{"id": "c1", "description": "It prints goodbye instead."}], "second")
+    assert _json.loads(draft_prompt(ws, ws.plan()["milestones"][0], source_context(ws)))["candidate_to_revise"] is None
+    scripted(ws, [{"title": "Second", "files": [{"path": "app.py", "edits": [{"old_text": "x = 1", "new_text": "x = 3"}]}]}],
+             roles=("plan",))
+    second = draft_files(ws, ws.router())
+    assert [f["path"] for f in second["files"]] == ["app.py"]                # nothing retained from the hidden candidate
+
+
+def test_the_lineage_guard_counts_only_the_candidate_a_build_would_revise(tmp_path, monkeypatch):
+    # Review of J11-G37 (fresh review): the guard picked its candidate by a third rule.
+    from runesmith.app import author_revisions, building
+    from runesmith.app.acceptance_contracts import expectation_digest, publish_expectations
+    from runesmith.app.planner import milestone_contract
+    ws = planned(tmp_path)
+    publish_expectations(ws, "m1", [{"id": "c1", "description": "It prints hello."}], "first")
+    milestone, context = ws.plan()["milestones"][0], source_context(ws)
+    draft = ws.save_draft(title="D", why="w", files=[{"path": "a.py", "content": "x = 1\n", "expected_absent": True}],
+                          drafted_by="x", milestone="m1")
+    ws._save_draft_state(draft, "needs_revision", contract=milestone_contract(ws, milestone), context_digest=context["digest"],
+                         snapshot_digest=context["snapshot_digest"], public_acceptance_digest=expectation_digest(ws, "m1"),
+                         author_request_key="k")
+    guarded = []
+    monkeypatch.setattr(author_revisions, "_lineage", lambda ws_, d: guarded.append(d["id"]))
+    building._ordinary_revision_lineage(ws, ws.drafts(), context["snapshot_digest"], milestone)
+    assert guarded == [draft["id"]]                                          # the candidate the build would revise
+    publish_expectations(ws, "m1", [{"id": "c1", "description": "It prints goodbye instead."}], "second")
+    building._ordinary_revision_lineage(ws, ws.drafts(), context["snapshot_digest"], milestone)
+    assert guarded == [draft["id"]]                                          # hidden from the prompt: not counted
+
+
+def test_another_file_that_can_never_be_shown_is_named_instead_of_the_budget(tmp_path):
+    # Review of J11-B15 (fresh review): "do not fit the source budget together" was said when another file the answer
+    # edits was over the size limit, whichever file came first in the answer; the real obstacle was that file.
+    from runesmith.app.planner import admit_answer_files
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import FOCUSED_FILE_BYTES, select_context
+    ws = planned(tmp_path)
+    crowded(tmp_path)
+    (tmp_path / "zbig.js").write_bytes(b"// y\n" * ((FOCUSED_FILE_BYTES + 400) // 5))
+    context = select_context(ws, collect_snapshot(ws))
+    assert context["omission_reasons"] == {"huge.js": "packet_budget", "zbig.js": "file_limit"}
+    edit = {"edits": [{"old_text": "// y", "new_text": "// z"}]}
+    for order in (["huge.js", "zbig.js"], ["zbig.js", "huge.js"]):
+        with pytest.raises(PlannerUnavailable, match="zbig.js is too large to show a model") as refused:
+            admit_answer_files(ws, context, [dict(edit, path=name) for name in order])
+        assert "together" not in str(refused.value) and not getattr(refused.value, "context_gap", None)
+        assert refused.value.feedback["not_shown"] == "zbig.js"

@@ -67,8 +67,9 @@ def _records(ws, folder, contract=None):
                 raise ValueError('Missing allocation identity')
         except (OSError, ValueError, RecursionError):
             raise WorkspaceError(f'Damaged author allowance receipt {folder}/{path.name}; reconcile it first.') from None
-        if row.get('state') == 'transport_failed':
-            continue                    # no model answered: nothing used up, nothing to reconcile (J2-B9)
+        if row.get('state') in ('transport_failed', 'context_gap'):
+            # No model answered (J2-B9), or it answered for a file it was never shown (J11-B15): nothing used up.
+            continue
         states = {'answered', 'failed', 'recovered'} if folder == 'build-escalations' else {'answered', 'failed'}
         if row.get('state') not in states:
             # An unresolved call blocks its own milestone's allowance, not every milestone's (journey J11-B6). It is

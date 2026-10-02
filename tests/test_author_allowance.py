@@ -278,3 +278,17 @@ def test_an_unresolved_call_blocks_its_own_milestone_not_the_others(tmp_path):
     (folder / 'y.json').write_text('{damaged', encoding='utf-8')
     with _pytest.raises(WorkspaceError, match='Damaged author allowance receipt'):
         ordinary_allowance(ws, other, source)
+
+
+@pytest.mark.parametrize('folder', ['build-attempts', 'build-escalations'])
+@pytest.mark.parametrize('state', ['transport_failed', 'context_gap'])
+def test_a_call_that_got_no_answer_for_a_file_it_was_shown_uses_no_allowance(tmp_path, folder, state):
+    # Journey J11-B15 (and J2-B9 before it): no model answered, or it answered for a file it was never shown.
+    from runesmith.app.author_allowance import ordinary_allowance
+    ws = setup(tmp_path)
+    contract = milestone_contract(ws, ws.plan()['milestones'][0])
+    snapshot = source_context(ws)['snapshot_digest']
+    row = dict(id='e1', state=state, contract=contract, scope='5' * 64, snapshot_digest=snapshot, milestone='m1')
+    _write_json(ws.home / folder / (uuid.uuid4().hex + '.json'), row)
+    allowance = ordinary_allowance(ws, contract, snapshot)
+    assert allowance['used'] == 0 and allowance['remaining'] == 3 and allowance['escalations'] == []

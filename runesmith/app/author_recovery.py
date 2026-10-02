@@ -164,7 +164,7 @@ def resume_author(ws, request_id, *, checkpoint=lambda:None):
     path=ws.home/'author-recoveries'/(request_id+'.json')
     prior=_read_json(path,{})
     if prior.get('state') in ('admitted','rejected','remote_failed'):
-        _settle_attempt(ws,packet,request_id,'answered' if prior['state']=='admitted' else 'failed',
+        _settle_attempt(ws,packet,request_id,'answered' if prior['state']=='admitted' else prior.get('settled') or 'failed',
                         **({'draft':prior['draft']} if prior.get('draft') else {}))
         return {'summary':'Recovery already recorded. No inference, checks or writes repeated.',
                 'draft':prior.get('draft'),'already_used':True}
@@ -192,9 +192,11 @@ def resume_author(ws, request_id, *, checkpoint=lambda:None):
     try:
         draft=admit_packet(ws,packet,outcome.data,author,receipt=outcome.receipt)
     except Exception as error:
-        _write_json(path,dict(receipt,state='rejected',error=str(error)[:500],
+        from runesmith.app.planner import settled_state
+        settled=settled_state(error)          # a file the model was not shown uses up no try (journey J11-B15)
+        _write_json(path,dict(receipt,state='rejected',error=str(error)[:500],settled=settled,
                              feedback=getattr(error,'feedback',None)))
-        _settle_attempt(ws,packet,request_id,'failed',error=str(error)[:500],
+        _settle_attempt(ws,packet,request_id,settled,error=str(error)[:500],
                         feedback=getattr(error,'feedback',None))
         raise
     _write_json(path,dict(receipt,state='admitted',draft=draft['id']))

@@ -301,7 +301,7 @@ function drawDrafts(body, w, reload, ctx) {
       const q = d.check_allocation.quote;
       actions.append(h('button.btn', {onclick: (e) => withBusy(e.currentTarget, async () => {
         const reason = await askText({title: 'Reserve a separate verification budget',
-          text: `Project ceiling ${q.project_timeout_s}s; owner ceiling ${q.owner_timeout_s}s; maximum ${q.maximum_check_s}s of check execution. Basis: ${q.baseline_elapsed_s}s current-source measurement, equal host-variation allowance, plus ${q.unmeasured_candidate_allowance_s}s for unmeasured additions (rounded up, minimum ${q.minimum_project_s}s); owner time is a separate fixed allowance. All tests run anew. Earlier timeouts and budgets stay spent. One allocation per draft. Passing may apply only under the existing build grant.`,
+          text: `Project ceiling ${q.project_timeout_s}s; owner ceiling ${q.owner_timeout_s}s; maximum ${q.maximum_check_s}s of check execution. Basis: ${q.baseline_elapsed_s}s current-source measurement, equal host-variation allowance, plus ${q.unmeasured_candidate_allowance_s}s for unmeasured additions (rounded up, minimum ${q.minimum_project_s}s); owner time is a separate allowance, at least 240s and more for a large bundle of owner checks. All tests run anew. Earlier timeouts and budgets stay spent. One allocation per draft. Passing may apply only under the existing build grant.`,
           confirm: 'Reserve and run once'});
         if (!reason?.trim()) return;
         await post('/api/worker/run', {job: 'allocate_check', params: {draft_id: d.id, quote_id: q.id, reason}});
@@ -311,7 +311,7 @@ function drawDrafts(body, w, reload, ctx) {
     if(d.check_resume?.eligible) actions.append(h('button.btn',{
       onclick:(e)=>withBusy(e.currentTarget,async()=>{
         const reason=await askText({title:'One extended check, no model call',
-          text:'Grant up to 240 seconds per phase (project and owner checks), once for this saved candidate. Existing author budgets remain spent. Passing may apply only under your existing build grant. A second timeout stays inconclusive.',
+          text:`Grant up to ${d.check_resume.timeout_s||240} seconds for the project checks and up to ${d.check_resume.owner_timeout_s||d.check_resume.timeout_s||240} seconds for the owner checks (more than 240 only for a large bundle of them), once for this saved candidate. Existing author budgets remain spent. Passing may apply only under your existing build grant. A second timeout stays inconclusive.`,
           confirm:'Grant one check extension'});
         if(!reason?.trim())return;
         await post('/api/worker/run',{job:'resume_check',params:{draft_id:d.id,reason}});

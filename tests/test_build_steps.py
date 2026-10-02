@@ -123,13 +123,20 @@ def test_default_build_only_proposes(tmp_path):
 def test_timed_out_verification_is_inconclusive_and_does_not_reauthor(tmp_path,monkeypatch,timeout_phase):
     from runesmith.app.building import recheck_draft
     ws=setup(tmp_path,acceptance=True);enable(ws)
-    def checks(stage,kind,logs):
+    limits={}
+    def checks(stage,kind,logs,**options):
+        limits[kind=='project']=options.get('timeout_s')
         if (kind=='project') == (timeout_phase=='project'):
             return {'status':'timeout','ok':False,'elapsed_s':120,'limit_s':120,'output':'unfinished'}
         return {'status':'passed','ok':True,'ran':1,'elapsed_s':1,'limit_s':120}
     monkeypatch.setattr('runesmith.app.building._run_checks',checks)
     first=build_step(ws,ws.router())
     assert first['verification']['status']=='inconclusive'
+    # The owner run's limit comes from its number of checks (journey J11-B17); the project run keeps the default.
+    assert limits[True] is None
+    if timeout_phase=='acceptance':
+        from runesmith.app.building import CHECK_TIMEOUT_S
+        assert limits[False]==CHECK_TIMEOUT_S             # one small file: the 120 s floor
     assert ws._draft(first['draft'])['state']=='waiting'
     attempts={p.name:p.read_bytes() for p in (ws.home/'build-attempts').glob('*.json')}
     class NoCall:

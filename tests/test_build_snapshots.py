@@ -85,7 +85,7 @@ def test_unseen_replacement_is_still_refused_with_full_local_snapshot(tmp_path):
     ws=setup(tmp_path)
     (tmp_path/'large.py').write_text('# filler\n'*5000)
     scripted(ws,[{'title':'blind edit','files':[{'path':'large.py','content':'x=2\n'}]}],roles=('plan',))
-    with pytest.raises(PlannerUnavailable,match='unseen'):draft_files(ws,ws.router())
+    with pytest.raises(PlannerUnavailable,match='large.py is too large to show a model'):draft_files(ws,ws.router())   # J11-B15
 
 
 def test_byte_hash_prevents_line_ending_race(tmp_path):

@@ -60,10 +60,16 @@ def measure_current_source(ws, reason, *, checkpoint=lambda: None):
         snapshot = collect_snapshot(ws)
         folder = ws.home / 'source-baseline-runs' / snapshot['digest']
         receipt_path = folder / 'BASELINE.json'
+        runner = hashlib.sha256(building.RUNNER.encode()).hexdigest()
         if receipt_path.exists():
             prior = _read_json(receipt_path, {})
-            return {'summary': 'This source snapshot already has a reserved measurement. Nothing rerun.',
-                    'already_used': True, 'baseline': prior}
+            if isinstance(prior, dict) and prior.get('state') == 'completed' and prior.get('runner_sha256') != runner:
+                # Measured by a runner this Runesmith no longer has, so allocations refuse it, and the snapshot would
+                # never be measured again: one new measurement, the old receipt kept beside it (review of J11-B17).
+                receipt_path.replace(folder / f"BASELINE.runner-{str(prior.get('runner_sha256') or 'unknown')[:8]}.json")
+            else:
+                return {'summary': 'This source snapshot already has a reserved measurement. Nothing rerun.',
+                        'already_used': True, 'baseline': prior}
         checkpoint()
         freeze_snapshot(ws, snapshot)
         receipt = {'id': 'source-' + snapshot['digest'], 'kind': 'source_baseline_diagnostic',
@@ -72,7 +78,7 @@ def measure_current_source(ws, reason, *, checkpoint=lambda: None):
             'timeout_s': TIMEOUT_S, 'max_phases': 1, 'inference_calls': 0,
             'candidate_applied': False, 'milestone_advanced': False, 'author_budget_reset': False,
             'coverage': COVERAGE, 'interpreter': sys.executable, 'python': sys.version,
-            'runner_sha256': hashlib.sha256(building.RUNNER.encode()).hexdigest(),
+            'runner_sha256': runner,
             'host_contention': 'Other-process workload is not measured; caller serializes workspace checks.',
             'evidence_dir': folder.relative_to(ws.home).as_posix()}
         folder.mkdir(parents=True, exist_ok=True)

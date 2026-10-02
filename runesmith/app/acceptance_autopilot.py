@@ -374,11 +374,16 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
 
 
 def rounds_used(ws, milestone_id) -> int:
-    """Proposals the autopilot turned down since the last approval of this milestone's checks."""
+    """Proposals the autopilot turned down since the last approval of this milestone's checks, and since the owner
+    last withdrew them."""
     from runesmith.app.acceptance_proposals import _proposal_rows
+    # A turn-down made after the approval but before the owner's withdrawal sits behind the withdrawn row in the list,
+    # and was judged by checks he took back: the withdrawal marks every row then made, and only the rows after the
+    # newest mark count. A mark, not a position: the record keeps ten rows, and a position moves when it trims
+    # (review of J11-G37).
     used = 0
     for row in reversed(_proposal_rows(ws, milestone_id)):
-        if row.get('state') in ('approved', 'replaced'):
+        if row.get('state') in ('approved', 'replaced', 'withdrawn') or row.get('before_withdrawal'):
             break
         used += (row.get('autopilot') or {}).get('decision') == 'turned_down'
     return used

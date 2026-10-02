@@ -23,12 +23,26 @@ def large_source(ws, name='cli.py', size=20554):
 def test_default_selection_and_digest_are_preserved(tmp_path):
     ws = planned(tmp_path)
     (tmp_path / 'a.py').write_text('answer=1\n')
-    large_source(ws)
+    large_source(ws, size=40001)                    # over even the prioritized cap: never shown (J11-B15)
     context = source_context(ws)
     assert context['files'] == {'a.py': 'answer=1\n'}
     assert context['digest'] == hashlib.sha256(json.dumps(context['files'], sort_keys=True).encode()).hexdigest()
     assert context['omission_reasons']['cli.py'] == 'file_limit'
     assert 'rows' not in context['selection']  # full display metadata does not inflate model packets
+
+
+def test_a_file_over_the_normal_cap_is_shown_after_the_others_when_the_budget_has_room(tmp_path):
+    # Journey J11-B15: motion.mjs passed 20,000 bytes and was never shown again, so every build that edited it was refused.
+    ws = planned(tmp_path)
+    (tmp_path / 'a.py').write_text('answer=1\n')
+    large_source(ws)                                # 20,554 bytes: over the normal cap, under the prioritized one
+    context = source_context(ws)
+    assert list(context['files']) == ['a.py', 'cli.py'] and context['omission_reasons'] == {}
+    large_source(ws, 'big.py', 30000)               # read before cli.py: together over the budget, so cli.py is left out
+    context = source_context(ws)
+    assert list(context['files']) == ['a.py', 'big.py'] and context['omission_reasons'] == {'cli.py': 'packet_budget'}
+    save_focus(ws, ['cli.py'], collect_snapshot(ws)['digest'], 'Builds of this milestone edit it')
+    assert 'cli.py' in source_context(ws)['files']  # prioritizing it is the remedy the refusal names
 
 
 def test_focused_file_is_in_the_real_author_packet_without_larger_total_budget(tmp_path):
@@ -64,7 +78,7 @@ def test_invalid_or_private_focus_is_rejected_before_saving(tmp_path, paths):
 @pytest.mark.parametrize('kind', ['too_large', 'total_budget', 'not_utf8'])
 def test_focus_never_silently_expands_caps_or_truncates_required_files(tmp_path, kind):
     ws = planned(tmp_path)
-    if kind == 'too_large':large_source(ws, size=32001); paths = ['cli.py']
+    if kind == 'too_large':large_source(ws, size=40001); paths = ['cli.py']
     elif kind == 'total_budget':
         large_source(ws, 'a.py', 30000); large_source(ws, 'b.py', 30000); paths = ['a.py', 'b.py']
     else:(tmp_path / 'cli.py').write_bytes(b'\xff'); paths = ['cli.py']
@@ -110,7 +124,7 @@ def test_damaged_settings_are_visible_and_can_be_explicitly_cleared(tmp_path):
 def test_retained_answer_uses_its_original_selection_after_focus_changes(tmp_path):
     from runesmith.app.author_recovery import prepare_packet, admit_packet
     from runesmith.app.acceptance_contracts import expectation_digest
-    ws = planned(tmp_path); large_source(ws)
+    ws = planned(tmp_path); large_source(ws); large_source(ws, 'big.py', 30000)     # cli.py does not fit beside big.py
     (tmp_path / 'small.py').write_text('value=1\n')
     snapshot = collect_snapshot(ws); freeze_snapshot(ws, snapshot)
     context = source_context(ws, snapshot=snapshot); milestone = ws.plan()['milestones'][0]
@@ -119,7 +133,7 @@ def test_retained_answer_uses_its_original_selection_after_focus_changes(tmp_pat
     save_focus(ws, ['cli.py'], snapshot['digest'], 'Next request should include the CLI')
     assert source_context(ws)['digest'] != context['digest']
     draft = admit_packet(ws, packet, {'title': 'Earlier answer', 'files': [{'path': 'new.py', 'content': 'new=1\n'}]}, 'synthetic')
-    assert draft['shown_files'] == ['small.py'] and draft['context_digest'] == context['digest']
+    assert draft['shown_files'] == ['big.py', 'small.py'] and draft['context_digest'] == context['digest']
     assert not (tmp_path / 'new.py').exists()
 
 
@@ -155,3 +169,13 @@ def test_plan_readiness_matches_dependencies_and_closed_states():
     assert not states['done']['ready'] and not states['drop']['ready']
     plan['milestones'][0]['status'] = 'done'
     assert plan_readiness(plan)['b']['ready']
+
+
+def test_the_author_context_refusals_read_with_their_spaces(tmp_path):
+    # Review of J11-B15: "Choose up to12 ..." and "between0 and48000" in the Studio's errors, beside the fixed line.
+    from runesmith.app.source_focus import select_context
+    ws = planned(tmp_path)
+    with pytest.raises(WorkspaceError, match='Choose up to 12 unique model-visible relative file paths'):
+        save_focus(ws, [f'f{n}.py' for n in range(13)], collect_snapshot(ws)['digest'], 'Too many')
+    with pytest.raises(WorkspaceError, match='between 0 and 48000 characters'):
+        select_context(ws, collect_snapshot(ws), limit=48001)

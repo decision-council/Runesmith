@@ -325,3 +325,35 @@ def test_missing_attempt_evidence_cannot_downgrade_to_ordinary_recovery(tmp_path
     gateway.fail_poll = False
     with pytest.raises(WorkspaceError): resume_author(ws, pending['id'])
     assert len(ws.drafts()) == 1 and [m for m, _ in gateway.requests].count('POST') == 1
+
+
+@pytest.mark.parametrize('folder', ['build-attempts', 'build-escalations', 'build-corrections', 'build-supplements'])
+@pytest.mark.parametrize('state', ['context_gap', 'transport_failed'])
+def test_a_call_that_got_no_answer_does_not_block_a_revision(tmp_path, monkeypatch, folder, state):
+    # Review of J11-B15: _unresolved took every such row for an unfinished call and refused every revision.
+    from runesmith.app.author_revisions import _unresolved
+    ws, draft = setup(tmp_path, monkeypatch)
+    _write_json(ws.home / folder / (uuid.uuid4().hex + '.json'),
+                {'state': state, 'contract': 'c' * 64, 'scope': '5' * 64, 'snapshot_digest': 'd' * 64})
+    _unresolved(ws)
+    assert revision_status(ws, draft['id'])['eligible']
+
+
+def test_an_author_only_revision_refused_for_an_unshown_file_uses_no_try(tmp_path, monkeypatch):
+    # Review of J11-B15: a revision's refusal for an unshown file was recorded as a used "failed" try.
+    from runesmith.app.author_revisions import _unresolved
+    from runesmith.app.planner import _not_shown
+    ws, parent = setup(tmp_path, monkeypatch)
+    before = revision_status(ws, parent['id'])['allowance']
+    job = request(ws, parent['id'])
+    def refused(*args, **kwargs):
+        raise _not_shown('huge.js', {'omission_reasons': {'huge.js': 'packet_budget'}})
+    monkeypatch.setattr('runesmith.app.planner.draft_files', refused)
+    with pytest.raises(PlannerUnavailable, match='huge.js was not shown'):
+        execute_build_job(ws, job)
+    [operation] = (ws.home / 'build-revisions').glob('*.json')
+    assert _read_json(operation, {})['state'] == 'context_gap'
+    assert [_read_json(p, {})['state'] for p in (ws.home / 'build-attempts').glob('*.json')].count('context_gap') == 1
+    _unresolved(ws)
+    after = revision_status(ws, parent['id'])
+    assert after['eligible'] and after['allowance']['remaining'] == before['remaining']

@@ -248,10 +248,21 @@ def plan_prompt(ws) -> str:
     return text
 
 
+def revisable_candidates(ws, drafts, milestone, snapshot_digest) -> list[dict[str, Any]]:
+    """The saved drafts a new author call revises, newest rule in one place: a candidate of this milestone's present
+    wording, kept for revision, made on today's source and checked by the expectations now in force. The prompt shows
+    it, the packet retains its files and the lineage guard counts it by this one rule: a candidate hidden from the
+    prompt was still merged into the next draft when each side chose its own (review of J11-G37)."""
+    from runesmith.app.acceptance_contracts import expectation_digest
+    contract, public = milestone_contract(ws, milestone), expectation_digest(ws, milestone['id'])
+    return [d for d in drafts if d.get('contract') == contract and d.get('state') == 'needs_revision'
+            and d.get('snapshot_digest') == snapshot_digest and d.get('public_acceptance_digest') == public]
+
+
 def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, memories=None, revision=None,
                  revision_view=None, ignored_attempt_ids=()) -> str:
     from runesmith.app.work_modes import prompt_context
-    from runesmith.app.acceptance_contracts import expectations, owner_feedback
+    from runesmith.app.acceptance_contracts import draft_owner_feedback, expectations
     from runesmith.app.workspace import _read_json
     from runesmith.app.build_memory import _check_summary, recall_for_milestone
     memories = recall_for_milestone(ws, milestone) if memories is None else memories
@@ -263,8 +274,9 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
     # (journey J11-G33: shown a candidate from older source, the model edited that candidate's code, and every answer
     # was refused against the current file, seven times). An older one stays in previous_attempts with its feedback.
     today = (context if context is not None else source_context(ws)).get('snapshot_digest')
-    revisions = [d for d in ws.drafts() if d.get('contract') == milestone_contract(ws,milestone)
-                 and d.get('state') == 'needs_revision' and d.get('snapshot_digest') == today]
+    # Nor one checked by expectations the owner has since withdrawn or replaced: its feedback quotes their sentences
+    # (journey J11-G37).
+    revisions = revisable_candidates(ws, ws.drafts(), milestone, today)
     if revision is not None:
         revisions = [revision]
     candidate = None
@@ -276,7 +288,7 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
             'status': verification.get('status', 'unknown'),
             'detail': str(verification.get('detail') or '')[:400],
             'project_checks': _check_summary(verification.get('project_checks')),
-            'owner_acceptance': owner_feedback(ws, verification),
+            'owner_acceptance': draft_owner_feedback(ws, previous),     # a supplement's draft too (J11-G37 review)
             'instruction': ('Resolve every listed owner-acceptance failure while preserving passing behavior. '
                             'The candidate is unapplied; revise it against the supplied current source.'),
         }
@@ -318,7 +330,7 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
         "previous_attempts": [{"id":d.get("id"), "title":d.get("title"), "state":d.get("state"),
                                "verification":{"status":(d.get("verification") or {}).get("status"),
                                   "project_checks":_check_summary((d.get("verification") or {}).get("project_checks")),
-                                  "owner_acceptance":owner_feedback(ws, d.get("verification") or {})}}
+                                  "owner_acceptance":draft_owner_feedback(ws, d)}}
                               for d in ws.drafts() if d.get("milestone") == milestone.get("id")][:3],
         "rules": ["never write inside .runesmith, .git or outside the folder",
                   "never replace an existing file not included in source_context.files or under BLUEPRINT DOCUMENTS (documents the owner shared); request narrower context instead",
@@ -364,6 +376,13 @@ def nothing_ran(error) -> bool:
         return int(remote.get('tokens_in') or 0) == 0 and int(remote.get('tokens_out') or 0) == 0
     except (TypeError, ValueError):
         return False
+
+
+def settled_state(error, otherwise='failed') -> str:
+    """The state a refused author call is recorded in: `context_gap` when the model was not shown a file its answer
+    changed and the owner can show it, or no model was asked because prioritized files cannot be shown, which uses up
+    no try (journey J11-B15), else `otherwise`."""
+    return 'context_gap' if getattr(error, 'context_gap', None) else otherwise
 
 
 def why_no_answer(error) -> str:
@@ -677,6 +696,97 @@ def _reindented(text: str, old, new) -> str | None:
     return "\n".join(lines)
 
 
+def _owner_can_show(ws, wanted):
+    """Whether prioritizing these files, beside the ones already prioritized, would show models all of them: what
+    Author context accepts (at most 12 files, each within the size limit, together within the source budget)."""
+    from runesmith.app.snapshots import SnapshotUnsupported, collect_snapshot
+    from runesmith.app.source_focus import MAX_FOCUS_PATHS, focus_settings, select_context
+    from runesmith.app.workspace import WorkspaceError
+    try:
+        paths = list(dict.fromkeys(list(focus_settings(ws)['paths']) + list(wanted)))
+        if len(paths) > MAX_FOCUS_PATHS:
+            return False
+        return not select_context(ws, collect_snapshot(ws), focus_paths=paths)['focus_errors']
+    except (WorkspaceError, SnapshotUnsupported):
+        return True                     # cannot judge: the owner sees the same error under Author context
+
+
+def focus_missing(context):
+    """Prioritized paths that are gone or hidden. A file that is there but too large, not text or crowded out is an
+    omitted file like any other (journey J11-B15 review: a prioritized file passed 40,000 bytes and blocked every
+    milestone, also those that never touch it): a milestone that edits it is refused by `_not_shown`."""
+    return sorted(path for path, reason in (context.get('focus_errors') or {}).items() if reason == 'not_model_visible')
+
+
+def focus_problem(context):
+    """Plain words for prioritized paths that are no longer files, or None: no call is made while the owner's own
+    selection names them, and that uses up no try."""
+    missing = focus_missing(context)
+    if not missing:
+        return None
+    return (', '.join(missing) + (' is' if len(missing) == 1 else ' are') + ' prioritized under Author context but is not a '
+            'file models can be shown (gone, or hidden). Remove it from the prioritized files under Goals & plan, Author '
+            'context. No model was asked, so this used up no try.')
+
+
+def _prioritized(ws, context, rel):
+    """Whether the owner prioritized this file under Author context (a retained selection has no focus of its own)."""
+    from runesmith.app.source_focus import focus_settings
+    from runesmith.app.workspace import WorkspaceError
+    if rel in (context.get('focus_errors') or {}):
+        return True
+    try:
+        return ws is not None and rel in focus_settings(ws)['paths']
+    except WorkspaceError:
+        return False
+
+
+def _not_shown(rel, context, ws=None, needed=()):
+    """The refusal for an answer that edits or replaces a file the model was not shown (journey J11-B15).
+
+    When the source budget alone kept the file out and the owner can show it (prioritize it, beside the other files
+    this change needs), the gap is Runesmith's: the refusal uses up no try, and the milestone waits (`context_gap`).
+    A file over the size limit or not UTF-8 can never be shown, and files that cannot be shown together are no gap
+    the owner can close: waiting would leave the milestone stuck, so those stay an ordinary failed try, and the words
+    say what to change.
+    """
+    from runesmith.app.source_focus import FOCUSED_FILE_BYTES
+    reasons = context.get('omission_reasons') or {}
+    reason = reasons.get(rel) or 'packet_budget'
+    seen = set(context.get('files') or ()) | set(context.get('omitted') or ())
+    # Another file this change needs that can never be shown is the real obstacle, whichever file is met first (review).
+    hard = next((p for p in needed if p != rel and reasons.get(p) in ('file_limit', 'not_utf8')), None)
+    if reason == 'packet_budget' and hard:
+        rel, reason = hard, reasons[hard]
+    if (reason == 'packet_budget' and ws is not None
+            and not _owner_can_show(ws, [rel] + [p for p in needed if p != rel and p in seen])):
+        reason = 'budget_together'
+    if reason == 'budget_together':
+        words = (f"{rel}, the other files this change needs and the files already prioritized do not fit the source "
+                 "budget together, so no model can be shown them all and a change to them cannot be checked. Remove "
+                 "prioritized files this step does not need, or split this step into smaller ones.")
+    elif reason == 'file_limit':
+        words = (f"{rel} is too large to show a model ({FOCUSED_FILE_BYTES:,} bytes at most), so a change to it cannot be "
+                 "checked against it. Split it into smaller files.")
+        if _prioritized(ws, context, rel):
+            words += " It is prioritized under Author context, which cannot show it either: take it out of the list once it is split."
+    elif reason == 'not_utf8':
+        words = (f"{rel} is not UTF-8 text, so it cannot be shown to a model, and a change to it cannot be checked "
+                 "against it. Save it as UTF-8 text, or keep it out of this milestone.")
+        if _prioritized(ws, context, rel):
+            words += " It is prioritized under Author context, which cannot show it either: take it out of the list."
+    else:
+        words = (f"{rel} was not shown to the model (the other files filled the source budget), so its change cannot be "
+                 f"checked against it. Prioritize {rel} under Goals & plan, Author context, so models see it; this used "
+                 "up no try.")
+    failure = PlannerUnavailable(words)
+    # No "path": that names a refusal a correction can repair, and no correction can show the model a file.
+    failure.feedback = {'not_shown': rel, 'reason': reason}
+    if reason == 'packet_budget':
+        failure.context_gap = {'path': rel, 'reason': reason}
+    return failure
+
+
 def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths: set[str] | None = None,
                        revision_files: dict[str, dict] | None = None):
     """Turn one immutable model answer into host-bound candidate bytes.
@@ -688,6 +798,7 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
     """
     context = _with_shared_documents(ws, context)
     files = copy.deepcopy([f for f in (raw_files or []) if isinstance(f, dict)])
+    touched = [r for r in dict.fromkeys(ws._safe_rel(str(f.get("path") or "")) for f in files) if r and (ws.root / r).exists()]
     admitted = []
     for f in files:
         rel = ws._safe_rel(str(f.get("path") or ""))
@@ -697,6 +808,8 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
             raise PlannerUnavailable(f"the corrected answer broadened its path set: {rel}")
         if 'edits' in f:
             candidate=(revision_files or {}).get(rel,{}).get('content')
+            if rel not in context['files'] and not isinstance(candidate,str) and rel in (context.get('omitted') or []):
+                raise _not_shown(rel, context, ws, touched)
             if 'content' in f or (rel not in context['files'] and not isinstance(candidate,str)):
                 raise PlannerUnavailable('Exact edits require a fully shown current or candidate file and no content field.')
             edit_index = None
@@ -760,6 +873,8 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
             f["base"] = context["files"][rel]
             f["expected_sha256"] = context['file_hashes'][rel]
         elif (ws.root / rel).exists():
+            if rel in (context.get('omitted') or []):
+                raise _not_shown(rel, context, ws, touched)
             raise PlannerUnavailable(f"refused an unseen replacement: {rel}; narrow the milestone or source packet")
         else:
             f.pop("base", None)
@@ -788,6 +903,8 @@ def admit_revision_answer(ws,context,raw_files,revision=None,*,allowed_paths=Non
             retained=copy.deepcopy(prior);retained.pop('base',None);retained.pop('expected_sha256',None)
             retained['expected_absent']=True
         else:
+            if rel in (context.get('omitted') or []):       # as an edit to it is: no try, and the remedy named (J11-B15)
+                raise _not_shown(rel, context, ws, [p for p in dict.fromkeys([*returned, *revision_files]) if (ws.root/p).exists()])
             raise PlannerUnavailable(f'refused an unseen retained candidate path: {rel}')
         retained['retained_from']=revision['id'];files.append(retained)
     return files
@@ -808,8 +925,12 @@ def draft_files(ws, router, milestone_id: str | None = None, *, revision=None, a
     from runesmith.app.snapshots import collect_snapshot, freeze_snapshot
     snapshot = collect_snapshot(ws)
     context = source_context(ws, snapshot=snapshot)
-    if context.get('focus_errors'):
-        raise PlannerUnavailable('Selected author source cannot fit or is unavailable; inspect Author context before another call.')
+    if focus_missing(context):
+        # No model is asked: this uses up no try (journey J11-B15 review: a prioritized file went away and every build
+        # used up a try with no call made).
+        failure = PlannerUnavailable('Selected author source cannot fit or is unavailable: ' + focus_problem(context))
+        failure.context_gap = {'reason': 'focus_errors', 'paths': focus_missing(context)}
+        raise failure
     contract = milestone_contract(ws, milestone)
     public_digest = expectation_digest(ws, milestone['id'])
     if attempt_id is not None:
@@ -848,8 +969,7 @@ def draft_files(ws, router, milestone_id: str | None = None, *, revision=None, a
     exposure_path = ws.home / 'build-memory-exposures' / (request_key + '.json')
     _write_json(exposure_path, exposure)
     ws.ledger.append('build.memory_packet_prepared', {k:v for k,v in exposure.items() if k!='observations'})
-    revision=revision or next((d for d in ws.drafts() if d.get('contract')==contract and d.get('state')=='needs_revision'
-                   and d.get('snapshot_digest')==snapshot['digest']),None)
+    revision=revision or next(iter(revisable_candidates(ws,ws.drafts(),milestone,snapshot['digest'])),None)
     packet=prepare_packet(ws,request_key,milestone=milestone,context=context,contract=contract,
         public_digest=public_digest,exposure=exposure_path.relative_to(ws.home).as_posix(),
         revision=revision,explicit_revision=explicit_revision,attempt_id=attempt_id,revision_view=revision_view,

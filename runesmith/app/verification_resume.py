@@ -16,6 +16,15 @@ from runesmith.app import building
 RESUME_TIMEOUT_S = 240
 
 
+def owner_limit(ws, milestone_id):
+    """What the owner phase of the extension may take: no less than 240 s, and what an ordinary build gets for a large
+    bundle of owner checks (journey J11-B17 review)."""
+    try:
+        return max(RESUME_TIMEOUT_S, building.owner_check_limit(building._acceptance_files(ws, milestone_id)))
+    except (KeyError, TypeError, OSError):
+        return RESUME_TIMEOUT_S
+
+
 def resume_status(ws, draft):
     path=ws.home/'build-check-resumes'/(draft['id']+'.json')
     used=path.exists()
@@ -30,7 +39,7 @@ def resume_status(ws, draft):
     shorter=bool(limits) and all(isinstance(v,(int,float)) and v<RESUME_TIMEOUT_S for v in limits)
     return {'eligible':bool(not used and draft.get('state') in ('waiting','needs_revision')
                             and building.verification_inconclusive(prior) and shorter),
-            'used':used,'receipt':receipt,'timeout_s':RESUME_TIMEOUT_S,
+            'used':used,'receipt':receipt,'timeout_s':RESUME_TIMEOUT_S,'owner_timeout_s':owner_limit(ws,draft.get('milestone')),
             'max_phases':2,'inference_calls':0}
 
 
@@ -74,19 +83,22 @@ def resume_verification(ws, draft_id, reason, *, checkpoint=lambda:None):
         if not unchanged:
             raise WorkspaceError('Candidate, source or acceptance changed; review new evidence before continuing.')
         checkpoint()
+        # An ordinary build gives the owner phase more than 240 s once its bundle is large (journey J11-B17 review): an
+        # extension that gave less could time out a bundle the ordinary limit lets finish, and it is used only once.
+        owner_s=owner_limit(ws,milestone['id'])
         receipt={'id':'check-'+draft['id'],'draft':draft['id'],'milestone':milestone['id'],
                  'state':'started','utc':_now(),'reason':reason.strip()[:2000],
                  'prior_evidence':prior.get('evidence_dir'),'snapshot_digest':snapshot['digest'],
                  'candidate_digest':candidate_digest,'contract':contract,
                  'public_acceptance_digest':draft.get('public_acceptance_digest'),
                  'acceptance_bundle':prior.get('acceptance_bundle',{}),
-                 'timeout_s_per_phase':RESUME_TIMEOUT_S,'max_phases':2,
+                 'timeout_s_per_phase':RESUME_TIMEOUT_S,'owner_timeout_s':owner_s,'max_phases':2,
                  'inference_calls':0,'author_budget_reset':False}
         _write_json(path,receipt)
         ws.ledger.append('build.check_resume_started',receipt)
     try:
         result=building._check_and_record(ws,draft,milestone,contract,checkpoint=checkpoint,
-                                         check_timeout_s=RESUME_TIMEOUT_S)
+                                         check_timeout_s=RESUME_TIMEOUT_S,owner_timeout_s=receipt['owner_timeout_s'])
     except BaseException as error:
         receipt.update(state='interrupted',finished=_now(),error=type(error).__name__)
         _write_json(path,receipt)

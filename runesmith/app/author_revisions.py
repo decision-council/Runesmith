@@ -115,20 +115,23 @@ def _unresolved(ws):
                'build-corrections': {'answered', 'refused', 'candidate', 'abandoned'},
                'build-escalations': {'answered', 'failed', 'recovered'},
                'build-supplements': {'answered', 'failed'}}
+    unanswered = {'transport_failed', 'context_gap'}      # no model answered, or for a file it was never shown (J11-B15)
     for folder, states in settled.items():
         for path in (ws.home / folder).glob('*.json'):
             row = _read_json(path, None)
-            if not isinstance(row, dict) or row.get('state') not in states:
+            if not isinstance(row, dict) or row.get('state') not in states | unanswered:
                 raise WorkspaceError('Reconcile unfinished or damaged author allocations first.')
     for path in (ws.home / 'build-revisions').glob('*.json'):
         row = _read_json(path, None)
-        if not isinstance(row, dict) or row.get('state') not in {'reserved', 'submitted', 'uncertain', 'admitted', 'failed'}:
+        if not isinstance(row, dict) or row.get('state') not in {'reserved', 'submitted', 'uncertain', 'admitted', 'failed',
+                                                                  'context_gap'}:
             raise WorkspaceError('A revision reservation is damaged; no automatic replay.')
         attempt_id = row.get('attempt_id')
         if not isinstance(attempt_id, str) or not re.fullmatch(r'[0-9a-f]{32}\.json', attempt_id):
             raise WorkspaceError('A revision attempt reference is damaged; no automatic replay.')
         attempt = _read_json(ws.home / 'build-attempts' / attempt_id, {})
-        if row.get('state') in ('reserved', 'submitted', 'uncertain') and attempt.get('state') not in ('answered', 'failed'):
+        if (row.get('state') in ('reserved', 'submitted', 'uncertain')
+                and attempt.get('state') not in ('answered', 'failed', 'context_gap')):
             raise WorkspaceError('A revision reservation is unresolved; recover its original receipt.')
 
 
@@ -261,7 +264,8 @@ def revise_author_only(ws, draft_id, quote_id, instrument, operation_id, reason,
         from runesmith.app.author_recovery import pending_authors
         uncertain = (bool(remote.get('unresolved')) or (once.dispatched and not once.returned)
                      or any(row['key'] == record.get('request_key') for row in pending_authors(ws)))
-        attempt.update(state='uncertain' if uncertain else 'failed', finished=_now(),
+        from runesmith.app.planner import settled_state
+        attempt.update(state='uncertain' if uncertain else settled_state(error), finished=_now(),
                        error=type(error).__name__ + ': ' + str(error)[:400], remote_receipt=remote)
         record.update(state=attempt['state'], finished=_now(), error=attempt['error'], remote_receipt=remote)
         _write_json(attempt_path, attempt); _write_json(path, record)

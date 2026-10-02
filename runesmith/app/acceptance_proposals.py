@@ -234,15 +234,49 @@ def _proposal_rows(ws, milestone_id) -> list[dict[str, Any]]:
     return _record(ws, milestone_id)['proposals']
 
 
+def _kept_beyond_window(rows) -> set[int]:
+    """The rows the record keeps beyond its last ten (review of J11-G37): the row of the checks in force, which
+    Withdraw and the provenance read, and the newest withdrawal, whose reason the next Checker reads, until checks are
+    approved after it."""
+    kept = [r for r in rows[:-10] if r.get('state') == 'approved'][-1:]
+    withdrawn = [i for i, r in enumerate(rows) if r.get('state') == 'withdrawn']
+    if (withdrawn and withdrawn[-1] < len(rows) - 10
+            and not any(r.get('state') in ('approved', 'replaced') for r in rows[withdrawn[-1] + 1:])):
+        kept.append(rows[withdrawn[-1]])
+    return {id(r) for r in kept}
+
+
+def _withdrawals(ws, milestone_id) -> int:
+    """How many times the owner withdrew this milestone's checks: a count on the record, which the window of kept
+    proposals does not trim."""
+    return _record(ws, milestone_id).get('withdrawals') or 0
+
+
+def _owner_words(row) -> list[tuple[str, int, str]]:
+    """(when, order, what) the owner wrote on one proposal row, newest first: why he discarded or withdrew it, and why
+    it replaced earlier checks. An approved row he later withdrew carries both (review of J11-G37: the replacement's
+    reason vanished once its checks were withdrawn). Times are whole seconds: of two words in one second, a withdrawal
+    is the later (order 1), since it is written last."""
+    words = []
+    if row.get('state') in ('discarded', 'withdrawn'):
+        words.append((str(row.get('discarded_utc') or row.get('withdrawn_utc') or ''),
+                      int(row.get('state') == 'withdrawn'), row.get('reason')))
+    words.append((str(row.get('approved_utc') or row.get('utc') or ''), 0, row.get('replace_reason')))
+    return [(when, order, text.strip()) for when, order, text in words if isinstance(text, str) and text.strip()]
+
+
 def _owner_reasons(ws, milestone_id, limit=3) -> list[str]:
     """What the owner said when turning down or replacing earlier checks for this milestone, newest first. Asked
     again, the Checker was never told (journey J11-G14: "x goes from 0 to 100 over 2 seconds, so at 1 second it is
     50, not 1")."""
+    # By time: the row of withdrawn checks sits where they were proposed, behind every proposal made while they stood,
+    # and by position its reason was crowded out by three later turn-downs (review of J11-G37). A stable sort keeps
+    # the newest-by-position order for rows with no time.
+    pairs = [pair for row in reversed(_proposal_rows(ws, milestone_id)) for pair in _owner_words(row)]
     said = []
-    for row in reversed(_proposal_rows(ws, milestone_id)):
-        reason = row.get('reason') if row.get('state') == 'discarded' else row.get('replace_reason')
-        if isinstance(reason, str) and reason.strip() and reason.strip()[:600] not in said:
-            said.append(reason.strip()[:600])
+    for _, _, reason in sorted(pairs, key=lambda pair: pair[:2], reverse=True):
+        if reason[:600] not in said:
+            said.append(reason[:600])
     return said[:limit]
 
 
@@ -255,10 +289,8 @@ def _owner_reasons_elsewhere(ws, milestone_id, limit=3) -> list[dict[str, str]]:
         if other.get('id') == milestone_id or not isinstance(other.get('id'), str) or not MILESTONE_ID.fullmatch(other['id']):
             continue
         for row in _proposal_rows(ws, other['id']):
-            reason = row.get('reason') if row.get('state') == 'discarded' else row.get('replace_reason')
-            if isinstance(reason, str) and reason.strip():
-                said.append((str(row.get('discarded_utc') or row.get('approved_utc') or row.get('utc') or ''),
-                             {'milestone': other.get('title'), 'said': reason.strip()[:600]}))
+            for when, order, reason in _owner_words(row):
+                said.append(((when, order), {'milestone': other.get('title'), 'said': reason[:600]}))
     return [row for _, row in sorted(said, key=lambda pair: pair[0], reverse=True)][:limit]
 
 
@@ -379,6 +411,7 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
     if ws.settings().get('autonomy') == 'observe':
         from runesmith.app.workspace import OBSERVE_NO_CALLS
         raise WorkspaceError(OBSERVE_NO_CALLS)
+    withdrawals = _withdrawals(ws, milestone_id)         # before the packet: a later withdrawal is then seen
     data = packet(ws, milestone_id, style)
     text = json.dumps(data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
@@ -448,9 +481,17 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
         clean.setdefault('answer', _bounded(out.data))     # the model's own words, kept for review and re-scoring
     proposal = dict(clean, id=key, state='proposed', utc=_now(), milestone=milestone_id, input_sha256=digest,
                     drafted_by=drafted_by)
-    record = _read_json(path, {'milestone': milestone_id, 'proposals': []})
-    record['proposals'] = (record['proposals'] + [proposal])[-10:]
-    _write_json(path, record)
+    with ws._lock:                  # withdraw() holds it too
+        if _withdrawals(ws, milestone_id) != withdrawals:
+            # Its answer never read the owner's reason, and a waiting proposal would let the autopilot approve checks
+            # again at once (review of J11-G37).
+            raise WorkspaceError('You withdrew checks for this milestone while these were being written, so they never '
+                                 'read your reason: nothing was proposed. Ask again.')
+        record = _record(ws, milestone_id, {'milestone': milestone_id, 'proposals': []})
+        rows = record['proposals'] + [proposal]
+        keep = _kept_beyond_window(rows)
+        record['proposals'] = [r for i, r in enumerate(rows) if i >= len(rows) - 10 or id(r) in keep]
+        _write_json(path, record)
     ws.ledger.append('acceptance.proposed', {'milestone': milestone_id, 'proposal': key, 'checks': len(clean['checks']),
                                              'code_sha256': clean['code_sha256'], 'proposed_by': proposal['drafted_by']})
     return proposal
@@ -560,19 +601,49 @@ def _mark_passing_today(proposal):
 
 
 # Appended to an approved file: a failing check is reported to the builder by its sentence, never by its assertion.
+# Inside a function, so no module name is left holding a test class: a loop variable at module level made unittest
+# load the class twice, and every check ran twice (journey J11-B17).
 FOOTER = '''
 
-import unittest as _acceptance_unittest
-for _case in [v for v in list(globals().values()) if isinstance(v, type) and v.__module__ == __name__
-              and issubclass(v, _acceptance_unittest.TestCase)]:
-    _case.PUBLIC_CRITERIA = {_name: ["check." + _name] for _name in dir(_case) if _name.startswith("test")}
+def _acceptance_public_criteria():
+    import unittest
+    for case in [v for v in list(globals().values()) if isinstance(v, type) and v.__module__ == __name__
+                 and issubclass(v, unittest.TestCase)]:
+        case.PUBLIC_CRITERIA = {name: ["check." + name] for name in dir(case) if name.startswith("test")}
+
+
+_acceptance_public_criteria()
 '''
+
+
+def _owner_criteria(ws, milestone_id) -> list[dict[str, str]]:
+    """The criteria the owner stated himself: every public one except the sentences of approved checks."""
+    return [c for c in (expectations(ws, milestone_id) or {}).get('criteria', [])
+            if not c['id'].startswith(('check.', 'assumes.'))]
+
+
+def _interfaces_kept(ws, milestone_id, criteria):
+    """(interfaces, lost): the owner's public interfaces for these criteria, and what had to go. Links to sentences that
+    are no longer public go, and an interface left with none goes; `lost` says which, as {interface, removed,
+    dropped}, so the owner is told (interfaces is None when the milestone declares none)."""
+    before = expectations(ws, milestone_id) or {}
+    if 'interfaces' not in before:
+        return None, []
+    ids = {c['id'] for c in criteria}
+    kept, lost = [], []
+    for row in before['interfaces']:
+        links = [k for k in row['criterion_ids'] if k in ids]
+        if len(links) < len(row['criterion_ids']):
+            lost.append({'interface': row.get('id'), 'removed': [k for k in row['criterion_ids'] if k not in ids],
+                         'dropped': not links})
+        if links:
+            kept.append(dict(row, criterion_ids=links))
+    return kept, lost
 
 
 def public_criteria(ws, milestone_id, proposal) -> list[dict[str, str]]:
     """The milestone's public expectations after approval: the owner's own criteria, plus these sentences."""
-    kept = [c for c in (expectations(ws, milestone_id) or {}).get('criteria', [])
-            if not c['id'].startswith(('check.', 'assumes.'))]
+    kept = _owner_criteria(ws, milestone_id)
     ours = [{'id': 'check.' + c['test'], 'description': (c['says'] + (' Checked exactly: ' + c['exact'] if c.get('exact') else '')
                                                            + (' It requires the exact text: ' + ', '.join(
                  f'“{text}”' for text in c['unstated']) + '.' if c.get('unstated') else '')
@@ -598,12 +669,20 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
     proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
     if proposal is None or proposal.get('state') != 'proposed':
         raise WorkspaceError('That proposal is not waiting for approval.')
+    if proposal.get('before_withdrawal'):
+        # Whoever asks, the owner or the autopilot: it was written before the owner withdrew checks, so it never read
+        # his reason (review of J11-G37).
+        raise WorkspaceError('The owner withdrew checks after these were written, so they never read the reason: ask for '
+                             'new ones.')
     target = acceptance_file(ws, milestone_id)
     if target.is_file() and not replace:
         raise WorkspaceError('This milestone already has acceptance checks. Replacing them needs a reason.')
     if target.is_file() and not reason.strip():
         raise WorkspaceError('Say why the existing checks are replaced; the old file is kept.')
     criteria = public_criteria(ws, milestone_id, proposal)
+    # Settled before the file is touched: an interface linked to a sentence these checks do not have refused the
+    # publication after the file was replaced, leaving checks nobody could withdraw (review of J11-G37).
+    interfaces, lost = _interfaces_kept(ws, milestone_id, criteria)
     # Checks the autopilot approved never read as the owner's, not even in the file's first words (review of the
     # autopilot).
     title = 'Owner acceptance' if by == 'owner' else 'Runesmith check-autopilot acceptance (not owner-reviewed)'
@@ -612,7 +691,8 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
               "# Builds of this milestone are judged by this file; build authors never see it, only its sentences.\n")
     body = (header + proposal['code'].rstrip('\n') + '\n' + FOOTER).encode('utf-8')
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_file():
+    replacing = target.is_file()
+    if replacing:
         keep = target.with_name(f"{target.stem}.replaced-{uuid.uuid4().hex[:6]}.py.txt")
         keep.write_bytes(target.read_bytes())
     temporary = target.with_name(target.name + f'.{uuid.uuid4().hex[:6]}.tmp')
@@ -621,7 +701,8 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
     file_sha = hashlib.sha256(body).hexdigest()
     published = publish_expectations(ws, milestone_id, criteria, 'The owner approved these acceptance checks in plain words.'
                                      if by == 'owner' else 'Runesmith’s check autopilot approved these acceptance checks.',
-                                     by='owner (approved acceptance checks)' if by == 'owner' else 'check autopilot (approved acceptance checks)')
+                                     by='owner (approved acceptance checks)' if by == 'owner' else 'check autopilot (approved acceptance checks)',
+                                     interfaces=interfaces)
     proposal.update(state='approved', approved_utc=_now(), approved_by=by, file_sha256=file_sha, replace_reason=reason.strip() or None,
                     expectations_version=published['version'])
     for other in record['proposals']:
@@ -630,10 +711,14 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
         elif other is not proposal and other.get('state') == 'approved':
             other.update(state='replaced', replaced_utc=_now())      # its file is kept as *.replaced-*.py.txt
     _write_json(path, record)
+    if replacing:           # builders keep no memory of the sentences just replaced (review of J11-G37)
+        from runesmith.app.build_memory import retire_for_milestone
+        retire_for_milestone(ws, milestone_id, 'The owner replaced the checks these observations quote.')
     ws.ledger.append('acceptance.approved', {'milestone': milestone_id, 'proposal': proposal_id, 'sha256': file_sha,
                                              'proposed_by': proposal.get('drafted_by'), 'replaced': bool(reason.strip()),
-                                             'approved_by': by})
-    return {'ok': True, 'sha256': file_sha, 'checks': proposal['checks']}
+                                             'approved_by': by, **({'interface_links_removed': lost} if lost else {})})
+    # The owner's interface links to sentences these checks do not have are gone, and he is told which.
+    return {'ok': True, 'sha256': file_sha, 'checks': proposal['checks'], **({'interface_links_removed': lost} if lost else {})}
 
 
 def note_autopilot(ws, milestone_id, proposal_id, note) -> None:
@@ -647,6 +732,61 @@ def note_autopilot(ws, milestone_id, proposal_id, note) -> None:
     _write_json(path, record)
     ws.ledger.append('acceptance.autopilot', {'milestone': milestone_id, 'proposal': proposal_id,
                                               'decision': note.get('decision'), 'reason': str(note.get('reason') or '')[:300]})
+
+
+def withdraw(ws, milestone_id, *, reason: str) -> dict[str, Any]:
+    """The owner takes back approved checks that are wrong, saying why (journey J11-G37: Envelope's checks put the
+    envelope where the milestone does not, and could only be replaced, never withdrawn with a reason).
+
+    The file is kept beside it as *.withdrawn-*.py.txt; the sentences builders were shown are taken back (their
+    history stays; the milestone's memories of builds checked by them are retired), the owner's own criteria and
+    interfaces are published again without them; the reason is read by the next Checker; the milestone then needs
+    checks again.
+    """
+    _milestone(ws, milestone_id)
+    if not isinstance(reason, str) or not reason.strip():
+        raise WorkspaceError('Say why these checks are wrong: the next checks are written with your reason.')
+    from runesmith.app.build_memory import backfill_quoted
+    backfill_quoted(ws, milestone_id)       # the receipts older memories need are read before the lock is taken
+    with ws._lock:              # an apply may be judging a build by this file right now (review of J11-G37)
+        path = _record_path(ws, milestone_id)
+        record = _record(ws, milestone_id)
+        proposal = next((p for p in reversed(record['proposals']) if p.get('state') == 'approved'), None)
+        target = acceptance_file(ws, milestone_id)
+        if proposal is None or not target.is_file():
+            raise WorkspaceError('This milestone has no approved checks to withdraw.')
+        body = target.read_bytes()
+        if hashlib.sha256(body).hexdigest() != proposal.get('file_sha256'):
+            # The studio hides the button, but the server decides: a file the owner wrote or edited is his own to remove.
+            raise WorkspaceError('This checks file is not the one that was approved here: you wrote or changed it yourself, '
+                                 'so remove or replace it yourself.')
+        keep = target.with_name(f"{target.stem}.withdrawn-{uuid.uuid4().hex[:6]}.py.txt")
+        keep.write_bytes(body)
+        target.unlink()
+        owned = _owner_criteria(ws, milestone_id)
+        if owned:               # the owner's own criteria (and the interfaces on them) stay in force; a new version
+            interfaces, lost = _interfaces_kept(ws, milestone_id, owned)
+            publish_expectations(ws, milestone_id, owned, 'Checks withdrawn: ' + reason.strip(),
+                                 by='owner (withdrew checks)', interfaces=interfaces)
+        else:                   # nothing else was stated: no public expectations, every version stays in its history
+            lost = []
+            contract = ws.home / 'acceptance-contracts' / (milestone_id + '.json')
+            if contract.is_file():
+                contract.unlink()
+        from runesmith.app.build_memory import retire_for_milestone
+        retire_for_milestone(ws, milestone_id, 'The owner withdrew the checks these observations quote.')
+        # (A record written by an interim tree carried `rows_at_withdrawal` instead of these marks; that tree was never
+        # released, so no home has one and it is not read.)
+        for row in record['proposals']:     # all judged by checks he took back; the mark survives the window's trim
+            row['before_withdrawal'] = True
+            if row.get('state') == 'proposed':      # written before his reason: neither he nor the autopilot approves it
+                row.update(state='stale', stale_note='Written before the owner withdrew checks, so it never read his reason.')
+        record['withdrawals'] = (record.get('withdrawals') or 0) + 1
+        proposal.update(state='withdrawn', withdrawn_utc=_now(), reason=reason.strip()[:1000])
+        _write_json(path, record)
+        ws.ledger.append('acceptance.withdrawn', {'milestone': milestone_id, 'proposal': proposal.get('id'), 'kept': keep.name,
+                                                  **({'interface_links_removed': lost} if lost else {})})
+    return {'ok': True, 'kept': keep.name, **({'interface_links_removed': lost} if lost else {})}
 
 
 def discard(ws, milestone_id, proposal_id, *, reason: str = '') -> dict[str, Any]:

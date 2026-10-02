@@ -105,3 +105,25 @@ def test_supplement_author_only_rejects_truthy_strings(tmp_path):
     ws=setup(tmp_path)
     with pytest.raises(WorkspaceError,match='boolean'):
         supplement_build(ws,None,'absent','reason',author_only='false')
+
+
+def test_a_supplement_refused_for_an_unshown_file_is_not_used(tmp_path, monkeypatch):
+    # Review of J11-B15: the owner's one clarification call was recorded as "failed" and so spent, though the model
+    # answered for a file it was never shown.
+    from runesmith.app.building import supplement_status
+    from runesmith.app.planner import PlannerUnavailable, _not_shown
+    ws=setup(tmp_path,acceptance=True);enable(ws)
+    draft=draft_files(ws,ws.router())
+    ws._save_draft_state(draft,'needs_revision',verification={'status':'failed'})
+    publish_expectations(ws,'m1',CRITERIA,'Make the expected output public')
+    def refused(*args, **kwargs):
+        raise _not_shown('huge.js',{'omission_reasons':{'huge.js':'packet_budget'}})
+    monkeypatch.setattr('runesmith.app.building.draft_files',refused)
+    with pytest.raises(PlannerUnavailable,match='huge.js was not shown'):
+        supplement_build(ws,ws.router(),draft['id'],'Owner grants one clarification revision')
+    receipt=json.loads(next((ws.home/'build-supplements').glob('*.json')).read_text())
+    assert receipt['state']=='context_gap'
+    state=supplement_status(ws,ws._draft(draft['id']))
+    assert state['eligible'] and not state['used']
+    monkeypatch.undo()
+    assert supplement_build(ws,ws.router(),draft['id'],'Asked again once the file is shown')['advanced']

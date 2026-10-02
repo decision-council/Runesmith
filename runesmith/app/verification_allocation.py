@@ -87,6 +87,8 @@ def allocation_status(ws, draft):
         if project_s > 600:
             return result | {'detail': 'The proposed project budget exceeds the supported ceiling.'}
         grant = building.status(ws)
+        # Not less than an ordinary build gives the owner phase of a large bundle (journey J11-B17 review).
+        owner_s = max(240, building.owner_check_limit(building._acceptance_files(ws, milestone['id'])))
         quote = {'schema': 1, 'policy': 'baseline_resource_quote_v1', 'draft': draft['id'],
             'milestone': milestone['id'], 'snapshot_digest': snapshot['digest'],
             'candidate_digest': candidate_digest, 'contract': contract,
@@ -96,10 +98,11 @@ def allocation_status(ws, draft):
             'baseline_evidence': baseline['evidence_dir'], 'baseline_receipt_digest': _digest(baseline),
             'prior_evidence': prior.get('evidence_dir'), 'prior_history': draft.get('verification_history', []),
             'spent_continuation_digest': _digest(resumed), 'project_timeout_s': project_s,
-            'owner_timeout_s': 240, 'maximum_check_s': project_s + 240, 'max_phases': 2,
+            'owner_timeout_s': owner_s, 'maximum_check_s': project_s + owner_s, 'max_phases': 2,
             'baseline_elapsed_s': elapsed, 'host_variation_allowance_s': elapsed,
             'unmeasured_candidate_allowance_s': 90, 'round_up_s': 30, 'minimum_project_s': 300,
-            'owner_basis': 'Fixed 240s allowance for unmeasured cumulative owner phase; not a runtime estimate.',
+            'owner_basis': 'At least 240s for the unmeasured cumulative owner phase, more for a large bundle of owner '
+                           'checks (the limit an ordinary build gets); not a runtime estimate.',
             'grant': grant.get('grant'), 'apply_permitted': bool(grant['apply'] and ws.settings()['autonomy'] == 'propose'),
             'inference_calls': 0, 'author_budget_reset': False,
             'scope': 'Prospective operational resource allowance, not a statistical estimate or changed assertion. '

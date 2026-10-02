@@ -22,7 +22,7 @@ const errors=[],requests=[],loops=[];let revision=1;
 let manualRequests=[];
 let reviewNotes=[];
 let reconciliationConflict=false;
-let authorRevisionConflict=false,authorRevisionBlocked=false,milestoneRefusal=null;
+let authorRevisionConflict=false,authorRevisionBlocked=false,milestoneRefusal=null,authorFocusErrors={};
 const authorRevisionFixture={eligible:true,blockers:[],parent:'fixtureDraft',instrument:'fixture-author',
   instruments:[{name:'fixture-author',kind:'scripted',model:'Fixture free model'},
     {name:'alternate-author',kind:'manual',model:'Chat relay'}],
@@ -237,6 +237,9 @@ await context.route('**/*',async route=>{
     exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark'};
   else if(p==='/api/map/environment')data={map:{objects:fixtureMapObjects||[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
   else if(p==='/api/build')data={apply:false,acceptance_folder:'.runesmith/acceptance',last:null};
+  else if(p==='/api/author-context'&&req.method()==='GET')data={focus:{paths:[],reason:'',utc:null},focus_errors:authorFocusErrors,settings_error:null,
+    truncated_inventory:false,snapshot_digest:'a'.repeat(64),included_count:1,omitted_count:0,used_chars:20316,budget_chars:48000,
+    max_focus_paths:12,focused_file_bytes:40000,normal_file_bytes:20000,rows:[{path:'motion.mjs',bytes:20316,included:true,focused:false,reason:null}]};
   else if(p==='/api/notes')data={notes:reviewNotes,counts:{},read_notes:true};
   else if(/^\/api\/plan\/milestones\/[^/]+\/expectations$/.test(p)){
     const id=p.split('/')[4],old=fixtureExpectations[id];
@@ -271,7 +274,7 @@ await context.route('**/*',async route=>{
   } else if(/^\/api\/manual\/[^/]+\/skip$/.test(p)){
     const id=p.split('/')[3];manualRequests=manualRequests.filter(r=>r.id!==id);data={skipped:true};
   }
-  else if(/^\/api\/plan\/milestones\/[^/]+\/acceptance\/(approve|discard)$/.test(p))data={ok:true,fixture_only:true};
+  else if(/^\/api\/plan\/milestones\/[^/]+\/acceptance\/(approve|discard|withdraw)$/.test(p))data={ok:true,fixture_only:true};
   else if(p==='/api/fix-tests'&&req.method()==='GET')data=fixFixture;
   else if(p==='/api/fix-tests')data={milestone:'m9',frozen_files:4,code_paths:['invoice'],allow_apply:body.allow_apply===true};
   else if(p==='/api/try')data=tryFixture;
@@ -931,6 +934,18 @@ try{
     await page.keyboard.press('Escape');
     assert(requests.slice(start).filter(r=>r.method==='POST').every(r=>r.path==='/api/worker/run'&&r.body.job==='revise'));
     loops.push({id:'B9.08',case:'Author-review controls fit desktop, tablet and phone without additional actions',result:'passed'});
+    // B9.09 (review of J11-B17): the one-time extension no longer promises 240 s per phase when the owner phase may take more
+    await page.setViewportSize({width:1440,height:1000});
+    fixtureWork.drafts=[{...recoveryDraft,state:'needs_revision',verified:false,verification:null,check_reconciliation:null,
+      check_allocation:null,check_resume:{eligible:true,used:false,timeout_s:240,owner_timeout_s:460}}];
+    await mount();
+    await page.getByRole('button',{name:'Resume timed-out check once',exact:true}).click();
+    const grant=page.getByRole('dialog');await grant.waitFor();
+    const grantText=await grant.innerText();
+    assert(grantText.includes('up to 240 seconds for the project checks and up to 460 seconds for the owner checks'),grantText);
+    assert(!grantText.includes('240 seconds per phase'),grantText);
+    await page.keyboard.press('Escape');
+    loops.push({id:'B9.09',case:'The one-time check extension names the project and owner limits, the owner phase longer for a large bundle',result:'passed'});
     fixtureWork.drafts=oldDrafts;
   }
   if(selected.has('B10')){
@@ -1965,6 +1980,49 @@ try{
     const asked=posts().filter(r=>r.path==='/api/worker/run').at(-1);
     assert.deepEqual(asked.body,{job:'propose_acceptance',params:{milestone:'m1'}});
     loops.push({id:'B20.03',case:'Approved checks offer Ask for new checks, which only queues a proposal',result:'passed'});
+    // B20.13 (journey J11-G37): approved checks can be withdrawn with a reason
+    await block().getByRole('button',{name:'Withdraw these checks',exact:true}).click();
+    const why=page.getByRole('dialog');
+    await why.locator('textarea').fill('The milestone keeps the envelope inside project.');
+    await why.getByRole('button',{name:'Withdraw',exact:true}).click();await why.waitFor({state:'hidden'});
+    await page.waitForFunction(()=>!document.querySelector('[aria-label="Acceptance checks for Books per month"] button.busy'));
+    const withdrawn=posts().filter(r=>r.path==='/api/plan/milestones/m1/acceptance/withdraw').at(-1);
+    assert.deepEqual(withdrawn.body,{reason:'The milestone keeps the envelope inside project.'});
+    await page.locator('.toast',{hasText:'Checks withdrawn. Press “Propose acceptance checks” to have new ones written with your reason.'}).waitFor();
+    // A blank reason says so and sends nothing (review: the dialog closed silently)
+    const sent=posts().length;
+    await block().getByRole('button',{name:'Withdraw these checks',exact:true}).click();
+    await page.getByRole('dialog').getByRole('button',{name:'Withdraw',exact:true}).click();
+    await page.locator('.toast',{hasText:'Say what is wrong with the checks; it is kept with them.'}).waitFor();
+    assert.equal(posts().length,sent);
+    // A done or a dropped milestone gets no new checks until it is reopened (review: the toast promised new ones, and
+    // a dropped milestone, where J11's wrong checks wait, had no button)
+    for(const status of ['done','dropped']){
+      fixturePlan.milestones[0].status=status;await page.evaluate(()=>window.mount('goals'));
+      await block().getByRole('button',{name:'Withdraw these checks',exact:true}).click();
+      await page.getByRole('dialog').locator('textarea').fill('A later milestone moved the envelope.');
+      await page.getByRole('dialog').getByRole('button',{name:'Withdraw',exact:true}).click();
+      await page.locator('.toast',{hasText:`This milestone is ${status}: set its status to open to have new checks written with your reason.`}).waitFor();
+    }
+    fixturePlan.milestones[0].status='open';await page.evaluate(()=>window.mount('goals'));
+    loops.push({id:'B20.13',case:'Approved checks can be withdrawn with a reason (a blank one says so and sends nothing), also on a done or dropped milestone, which is told to reopen it for new ones',result:'passed'});
+    // B20.14: the Author context drawer says files over the normal cap are still shown when the budget has room
+    await page.getByRole('button',{name:'Author context',exact:true}).click();
+    const context=page.getByRole('dialog',{name:'Author context'});await context.waitFor();
+    const contextText=await context.innerText();
+    assert(contextText.includes('Other files over 20000 bytes are still shown, up to the same size, when the source budget has room after the rest'),contextText);
+    assert(!contextText.includes('retain the'),contextText);
+    assert(!contextText.includes('cannot be shown'),contextText);                // nothing to warn about yet
+    await context.getByRole('button',{name:'Close'}).click();await context.waitFor({state:'hidden'});
+    // A prioritized file that cannot be shown is named, with its remedy (review: the callout only said "some files")
+    authorFocusErrors={'motion.mjs':'file_limit','gone.mjs':'not_model_visible'};
+    await page.getByRole('button',{name:'Author context',exact:true}).click();
+    const warned=page.getByRole('dialog',{name:'Author context'});await warned.waitFor();
+    const warning=await warned.locator('.callout.warn').innerText();
+    assert(warning.includes('motion.mjs is over 40000 bytes: split it, then take it out of the list.'),warning);
+    assert(warning.includes('gone.mjs is gone or hidden: take it out of the list.'),warning);
+    await warned.getByRole('button',{name:'Close'}).click();await warned.waitFor({state:'hidden'});authorFocusErrors={};
+    loops.push({id:'B20.14',case:'The Author context drawer says a file over the normal cap is still shown when the source budget has room, and names each prioritized file that cannot be shown with what to do',result:'passed'});
     fixtureAcceptance={m1:{approved:{provenance:'model-proposed, owner-approved',proposed_by:'Fixture chat',checks},
       proposal:{id:'p2',checks:[{...checks[0],missing_input:undefined,exact:'running python -m readinglog months: a line with “2026-01” shows the number 1'}],assumes:[],dry_run:{verdict:'passes_now',ran:1,failures:0,errors:0},
         revision:{after:'passes_now'},code:'import unittest',drafted_by:'Fixture chat'}}};
@@ -2097,6 +2155,7 @@ try{
     await page.getByRole('button',{name:'Milestone',exact:true}).click();
     const counting=page.locator('.modal',{hasText:'Add a milestone'});
     await counting.waitFor();
+    await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Title');   // the form's own focus first
     assert((await counting.innerText()).includes('0 of 400 characters'));
     await counting.getByLabel('Done when',{exact:true}).fill('x'.repeat(401));
     await counting.locator('.warn',{hasText:'401 of 400 characters: too long, shorten it'}).waitFor();

@@ -512,6 +512,14 @@ def api_acceptance_approve(s: Studio,q,body,milestone_id):
     return result
 
 
+@route('POST', r'/api/plan/milestones/([A-Za-z0-9_-]+)/acceptance/withdraw')
+def api_acceptance_withdraw(s: Studio,q,body,milestone_id):
+    from runesmith.app.acceptance_proposals import withdraw
+    result=withdraw(_ws(s),milestone_id,reason=str(body.get('reason') or ''))       # journey J11-G37
+    s.bus.publish('plan',{})
+    return result
+
+
 @route('POST', r'/api/plan/milestones/([A-Za-z0-9_-]+)/acceptance/discard')
 def api_acceptance_discard(s: Studio,q,body,milestone_id):
     from runesmith.app.acceptance_proposals import discard

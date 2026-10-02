@@ -245,3 +245,40 @@ def test_a_late_answer_holds_back_only_its_own_milestone(tmp_path,monkeypatch):
     assert json.loads(attempt.read_text())['state']=='uncertain' and pending_authors(ws,milestone='m1')
     only_m1=building.build_step(ws,Router({},{}),milestone_id='m1')
     assert 'has not arrived yet' in only_m1['summary']           # its own milestone still waits for it
+
+
+def edit_answer(name):
+    return {'title': 'Edit', 'files': [{'path': name, 'edits': [{'old_text': '// y', 'new_text': '// z'}]}]}
+
+
+def tries_used(ws):
+    from runesmith.app.author_allowance import ordinary_allowance
+    from runesmith.app.planner import milestone_contract, source_context
+    contract = milestone_contract(ws, ws.plan()['milestones'][0])
+    return ordinary_allowance(ws, contract, source_context(ws)['snapshot_digest'])['used']
+
+
+def test_a_late_answer_for_a_file_the_budget_left_out_settles_its_attempt_without_a_try(tmp_path, monkeypatch):
+    # Review of J11-B15: _settle_attempt recorded such a late answer as a used "failed" try, and a replay of the
+    # recovery would have turned a settled "context_gap" back into one.
+    for name in ('a_pad.js', 'huge.js'):
+        (tmp_path / name).write_bytes(b'// y\n' * 5600)         # 28,000 bytes each: the second does not fit the budget
+    ws, gateway, inst, row, attempt = interrupted_build(tmp_path, monkeypatch)
+    gateway.answer = edit_answer('huge.js')
+    gateway.fail_poll = False
+    with pytest.raises(PlannerUnavailable, match='huge.js was not shown to the model'):
+        resume_author(ws, row['id'])
+    assert json.loads(attempt.read_text())['state'] == 'context_gap' and tries_used(ws) == 0
+    assert resume_author(ws, row['id'])['already_used']
+    assert json.loads(attempt.read_text())['state'] == 'context_gap'
+
+
+def test_a_late_answer_for_a_file_that_can_never_be_shown_is_an_ordinary_failed_try(tmp_path, monkeypatch):
+    # Review of J11-B15: the retained selection's reasons are as select_context gives them, not always the budget.
+    (tmp_path / 'huge.js').write_bytes(b'// y\n' * 8200)       # 41,000 bytes: over what any model is shown
+    ws, gateway, inst, row, attempt = interrupted_build(tmp_path, monkeypatch)
+    gateway.answer = edit_answer('huge.js')
+    gateway.fail_poll = False
+    with pytest.raises(PlannerUnavailable, match='huge.js is too large to show a model'):
+        resume_author(ws, row['id'])
+    assert json.loads(attempt.read_text())['state'] == 'failed' and tries_used(ws) == 1

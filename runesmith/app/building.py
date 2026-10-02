@@ -10,13 +10,15 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
 
-from runesmith.app.planner import draft_files, draft_plan, milestone_contract, source_context, next_milestone, milestone_ready, ready_milestones
+from runesmith.app.planner import (draft_files, draft_plan, focus_missing, focus_problem, milestone_contract, source_context,
+                                   next_milestone, milestone_ready, ready_milestones, revisable_candidates)
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 from runesmith.app.snapshots import (SnapshotUnsupported, collect_snapshot, digest_files,
                                      load_snapshot, path_kind)
@@ -26,13 +28,26 @@ from runesmith.app.check_progress import PROGRESS_RUNNER, read_progress
 from runesmith.app.author_allowance import ordinary_allowance
 
 CHECK_TIMEOUT_S = 120
+# Every done milestone's checks judge each build, so the owner run grows with the plan: a fixed 120 s stopped every
+# J11 build once 41 milestones had checks (journey J11-B17). Per check, about three times what J11 measured (0.64 s).
+OWNER_CHECK_S = 2
+OWNER_LIMIT_S = 600
+
+
+def owner_check_limit(bundle) -> int:
+    """The time limit for an owner acceptance bundle ({file name: bytes}), from the number of checks in it."""
+    # Also in the one-line form a frozen project suite is embedded in (escaped newlines), and async tests: both ran
+    # and were not counted, so such a bundle got the old 120 s (review of J11-B17).
+    tests = sum(len(re.findall(rb'(?:^|\\n)[ \t]+(?:async[ \t]+)?def test', data, re.M)) for data in bundle.values())
+    return min(OWNER_LIMIT_S, max(CHECK_TIMEOUT_S, 60 + OWNER_CHECK_S * tests))
+
 # A check outcome in the owner's words, for the live log (journey J4-F17); receipts keep the raw status.
 OUTCOME_WORDS = {'acceptance_passed': 'your acceptance checks passed', 'self_checks_passed': 'its own tests passed',
                  'unchecked': 'nothing checked it yet: add acceptance checks', 'failed': 'checks failed',
                  'inconclusive': 'checks did not finish', 'stale': 'its inputs changed since it was drafted',
                  'unsupported': 'it could not be checked here', 'refused': 'it was refused'}
 
-RUNNER = '''import importlib.util,json,sys,unittest
+RUNNER = '''import importlib.util,json,sys,types,unittest
 from pathlib import Path
 sys.path[:0]=[str(Path.cwd()),str(Path.cwd()/"src")]
 ''' + PROGRESS_RUNNER + '''
@@ -44,7 +59,18 @@ else:
     for index,path in enumerate(paths):
         spec=importlib.util.spec_from_file_location("owner_acceptance_"+str(index),path)
         module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
-        suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(module))
+        # Each test class once: the approved files' footer leaves its loop variable _case naming the same class, and
+        # loading by name ran every check twice (journey J11-B17: 188 runs of 94 checks passed the time limit). The
+        # module is loaded through a view that omits a second name for a class, so a module with its own load_tests
+        # (which gets that view's standard suite, and runs in the module's own globals) is loaded once too.
+        seen=set();skip=set()
+        for name in dir(module):
+            value=getattr(module,name)
+            if isinstance(value,type) and issubclass(value,unittest.TestCase):
+                if value in seen:skip.add(name)
+                else:seen.add(value)
+        view=types.ModuleType(module.__name__);view.__dict__.update({k:v for k,v in vars(module).items() if k not in skip})
+        suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(view))
 progress.planned=suite.countTestCases();progress.phase="fixtures_or_between_tests"
 progress.event("discovery_completed")
 if len(sys.argv)>3:
@@ -254,7 +280,7 @@ def verify_draft(ws, draft, *, check_timeout_s=None, project_timeout_s=None, own
             return record({'status':'failed', 'detail':str(error)[:500]})
         frozen_files = {p.relative_to(stage).as_posix():p.read_bytes() for p in stage.rglob('*') if p.is_file()}
         check_options={} if check_timeout_s is None else {'timeout_s':check_timeout_s}
-        owner_options=dict(check_options)
+        owner_options=dict(check_options) or {'timeout_s':owner_check_limit(acceptance_bundle)}
         if project_timeout_s is not None:check_options={'timeout_s':project_timeout_s}
         if owner_timeout_s is not None:owner_options={'timeout_s':owner_timeout_s}
         def enter_phase(name, completed=None):
@@ -364,12 +390,12 @@ def verification_inconclusive(verification):
         (value.get(key) or {}).get('status')=='timeout' for key in ('project_checks','acceptance')))
 
 
-def _ordinary_revision_lineage(ws, drafts, snapshot):
+def _ordinary_revision_lineage(ws, drafts, snapshot, milestone):
     """A normal build must not bypass the focused revision lineage guard."""
     # Only drafts from ordinary author attempts have that lineage. A correction's draft has no author request key,
     # and the guard failed on it with "Invalid author request key" (journey J2-B7); the allowance still applies.
-    revision=next((d for d in drafts if d.get('state')=='needs_revision'
-                   and d.get('snapshot_digest')==snapshot and d.get('author_request_key')),None)
+    # The candidate is the one the build would revise, by the one rule (review of J11-G37).
+    revision=next((d for d in revisable_candidates(ws,drafts,milestone,snapshot) if d.get('author_request_key')),None)
     if revision:
         from runesmith.app.author_revisions import _lineage
         _lineage(ws,revision)
@@ -458,6 +484,24 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False, milest
     return result
 
 
+def _context_gap(ws, contract, context):
+    """The file this milestone's latest answer could not change because the model was not shown it, when it still
+    is not shown; else None (journey J11-B15)."""
+    rows = []
+    for path in (ws.home / 'build-attempts').glob('*.json'):
+        row = _read_json(path, {})
+        if isinstance(row, dict) and row.get('contract') == contract and row.get('snapshot_digest') == context['snapshot_digest']:
+            rows.append((str(row.get('utc') or ''), path.stat().st_mtime_ns, row))
+    if not rows:
+        return None
+    latest = max(rows, key=lambda r: (r[0], r[1]))[2]
+    feedback = latest.get('feedback') if isinstance(latest.get('feedback'), dict) else {}
+    path = feedback.get('not_shown')
+    if latest.get('state') == 'context_gap' and isinstance(path, str) and path not in context['files']:
+        return path
+    return None
+
+
 def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only):
     """(result, None) after building or checking this milestone, or (result, reason) when it needs the owner."""
     contract = milestone_contract(ws, milestone)
@@ -476,16 +520,23 @@ def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only)
         return {'summary':'Saved candidate has an inconclusive check. Explicitly recheck it without inference; no new author call or automatic check retry.',
                 'draft':inconclusive['id'],'milestone':milestone['id'],'verification_required':True}, \
             'an inconclusive check to recheck'
+    pending = next((d for d in previous if d.get('state') == 'waiting' and d.get('snapshot_digest') == context['snapshot_digest']
+                  and d.get('context_digest') == context['digest']
+                  and d.get('public_acceptance_digest') == expectation_digest(ws,milestone['id'])), None)
+    gap = None if pending else _context_gap(ws, contract, context)      # a draft that waits needs no new call (J11-B15 review)
+    if gap:
+        # The last answer edited a file the model was not shown, and it still is not: a new call would fail the same
+        # way, and such a refusal uses up no try, so the milestone waits for the owner (journey J11-B15).
+        return {'summary': f"{gap} is not shown to the models, so builds of this milestone cannot change it. Prioritize "
+                           f"{gap} under Goals & plan, Author context.", 'milestone': milestone['id']}, \
+            f'{gap} is not shown to the models (prioritize it under Author context)'
     try:
         allowance = ordinary_allowance(ws, contract, context['snapshot_digest'])
     except WorkspaceError as error:
         return {'summary':str(error), 'allowance_blocked':True, 'milestone':milestone['id']}, str(error)[:120]
     scope = allowance['scope']
-    pending = next((d for d in previous if d.get('state') == 'waiting' and d.get('snapshot_digest') == context['snapshot_digest']
-                  and d.get('context_digest') == context['digest']
-                  and d.get('public_acceptance_digest') == expectation_digest(ws,milestone['id'])), None)
     if not pending:
-        try:_ordinary_revision_lineage(ws,previous,context['snapshot_digest'])
+        try:_ordinary_revision_lineage(ws,previous,context['snapshot_digest'],milestone)
         except (WorkspaceError,ValueError,KeyError,TypeError,OSError) as error:
             return {'summary':str(error),'allowance_blocked':True,'milestone':milestone['id']}, str(error)[:120]
     if pending is not None and (unchanged := _unchanged_verdict(ws, pending, milestone, contract, context, checkpoint)):
@@ -493,6 +544,13 @@ def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only)
     if not pending and not allowance['remaining']:
         return {'summary':'Ordinary author allowance exhausted on this source and milestone. Review retained evidence; changing feedback does not grant more calls.',
                 'replan_needed':True,'milestone':milestone['id']}, 'its three tries are used up'
+    unshowable = None if pending else focus_problem(context)
+    if unshowable:
+        # A prioritized path is gone or hidden: no call can be made, and recording one as a failed try used up every
+        # milestone's three with no model asked (journey J11-B15 review). It waits for the owner; after the exhausted
+        # verdict above, which still asks for smaller steps.
+        return {'summary': 'Selected author source cannot fit or is unavailable: ' + unshowable, 'milestone': milestone['id']}, \
+            ', '.join(focus_missing(context)) + ' is prioritized but not a file models can be shown (see Author context)'
     attempt_path = ws.home/'build-attempts'/(uuid.uuid4().hex+'.json')
     attempt = {'scope':scope,'contract':contract,'context_digest':context['digest'],
                'snapshot_digest':context['snapshot_digest'],'state':'started','utc':_now()}
@@ -505,8 +563,9 @@ def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only)
     except Exception as error:
         if not pending:
             remote=getattr(error,'remote_receipt',{})
-            from runesmith.app.planner import nothing_ran
-            state='uncertain' if remote.get('unresolved') else 'transport_failed' if nothing_ran(error) else 'failed'
+            from runesmith.app.planner import nothing_ran, settled_state
+            state=('uncertain' if remote.get('unresolved') else 'transport_failed' if nothing_ran(error)
+                   else settled_state(error))                                                  # J11-B15
             _write_json(attempt_path,dict(attempt,state=state,
                                          remote_receipt=remote,error=type(error).__name__+': '+str(error)[:300],
                                          feedback=getattr(error,'feedback',None),finished=_now()))
@@ -574,7 +633,7 @@ def build_escalation_status(ws):
     if pending_authors(ws,milestone=milestone['id']):blockers.append('Recover or reconcile the saved author request before another call.')
     lineage_error=None
     if not reuse:
-        try:_ordinary_revision_lineage(ws,drafts,context['snapshot_digest'])
+        try:_ordinary_revision_lineage(ws,drafts,context['snapshot_digest'],milestone)
         except (WorkspaceError,ValueError,KeyError,TypeError,OSError) as error:
             lineage_error=str(error);blockers.append(lineage_error)
     eligible=bool(eligible) and not blockers
@@ -622,9 +681,10 @@ def escalate_build(ws,router,*,checkpoint=lambda:None):
     try:
         draft=draft_files(ws,router,milestone['id'])
     except Exception as error:
-        from runesmith.app.planner import nothing_ran
-        # No model answered: the one more try is not used up (journey J2-B9).
-        _write_json(path,dict(receipt,state='transport_failed' if nothing_ran(error) else 'failed',finished=_now(),
+        from runesmith.app.planner import nothing_ran, settled_state
+        # No model answered: the one more try is not used up (journey J2-B9). Nor when it answered for a file it was
+        # never shown (J11-B15).
+        _write_json(path,dict(receipt,state='transport_failed' if nothing_ran(error) else settled_state(error),finished=_now(),
                               error=type(error).__name__+': '+str(error)[:300],feedback=getattr(error,'feedback',None),
                               remote_receipt=getattr(error,'remote_receipt',None)))
         ws.ledger.append('build.escalation_failed',{'id':key,'milestone':milestone['id'],'error':str(error)[:300]})
@@ -768,8 +828,8 @@ def readmit_refused_answer(ws, attempt_id, *, checkpoint=lambda: None):
 
 def supplement_status(ws, draft):
     current=expectation_digest(ws,draft['milestone'])
-    used=any(_read_json(p,{}).get('milestone')==draft['milestone']
-             for p in (ws.home/'build-supplements').glob('*.json'))
+    used=any(row.get('milestone')==draft['milestone'] and row.get('state')!='context_gap'    # J11-B15: no answer, no use
+             for row in (_read_json(p,{}) for p in (ws.home/'build-supplements').glob('*.json')))
     return {'eligible':bool(current and current!=draft.get('public_acceptance_digest')
                             and draft.get('state')=='needs_revision' and not used),
             'used':used,'public_acceptance_digest':current}
@@ -810,7 +870,8 @@ def supplement_build(ws,router,draft_id,reason,*,checkpoint=lambda:None,author_o
     try:
         revised=draft_files(ws,router,milestone['id'],revision=draft)
     except Exception as error:
-        _write_json(path,dict(receipt,state='failed',finished=_now(),error=str(error)[:500]))
+        from runesmith.app.planner import settled_state
+        _write_json(path,dict(receipt,state=settled_state(error),finished=_now(),error=str(error)[:500]))
         raise
     _write_json(path,dict(receipt,state='answered',finished=_now(),draft=revised['id'],author=revised.get('drafted_by')))
     ws._save_draft_state(revised,'waiting',supplement_of=key)

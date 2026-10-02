@@ -1055,3 +1055,52 @@ def test_a_file_two_steps_only_read_is_named_as_missing():
     made = json.loads(json.dumps(twice))
     made["examples"][0]["files"] = [{"name": "dots.motion.json", "text": "{}"}]
     assert "missing_input" not in validate_examples(made, milestone, source_text=source)["checks"][0]
+
+
+def test_an_example_that_checks_only_a_file_it_writes_itself_is_refused():
+    # Journey J11-F28: record.html was put in "files" and then checked for texts: nothing the build made was checked.
+    own = {"examples": [{"name": "page", "says": "The page records video.",
+                          "files": [{"name": "record.html", "text": "captureStream"}],
+                          "contains": [{"name": "record.html", "texts": ["captureStream"]}]}]}
+    with pytest.raises(WorkspaceError, match="record.html, which it writes itself"):
+        validate_examples(own, "A page record.html that uses captureStream.")
+    project = {"examples": [{"name": "page", "says": "The page records video.",
+                              "contains": [{"name": "record.html", "texts": ["captureStream"]}]}]}
+    assert validate_examples(project, "A page record.html that uses captureStream.")["examples"]
+
+
+@pytest.mark.parametrize("written,checked", [("./record.html", "record.html"), ("Record.html", "record.html"),
+                                              ("docs/./record.html", "docs/record.html"), ("./Record.HTML", "record.html")])
+def test_a_file_written_in_files_is_matched_by_the_name_it_is_found_under(written, checked):
+    # Review of J11-F28: names were compared as written, so "./record.html" or "Record.html" slipped through.
+    own = {"examples": [{"name": "page", "says": "The page records video.",
+                          "files": [{"name": written, "text": "captureStream"}],
+                          "contains": [{"name": checked, "texts": ["captureStream"]}]}]}
+    with pytest.raises(WorkspaceError, match="which it writes itself"):
+        validate_examples(own, "A page record.html that uses captureStream.")
+    slashes = {"examples": [{"name": "page", "says": "The page links its sibling.",
+                              "files": [{"name": "docs\\a.html", "text": "x"}],
+                              "exists": ["docs/A.html"]}]}
+    with pytest.raises(WorkspaceError, match="which it writes itself"):
+        validate_examples(slashes, "A page docs/a.html.")
+
+
+def test_an_example_with_no_steps_that_also_checks_a_project_file_drops_only_the_files_it_wrote():
+    # Review of J11-F28: one trivial check on a file the example writes itself refused the whole example, with its
+    # real checks of the project's files.
+    milestone = "A handbook with recipes/index.md linking seeded-loaf.md."
+    mixed = {"examples": [{"name": "index", "says": "The index links the loaf.",
+                           "files": [{"name": "fixture.md", "text": "x"}],
+                           "exists": ["fixture.md", "recipes/index.md"],
+                           "contains": [{"name": "./Fixture.md", "texts": ["x"]},
+                                        {"name": "recipes/index.md", "texts": ["seeded-loaf.md"]}]}]}
+    stored = validate_examples(mixed, milestone)
+    example = stored["examples"][0]
+    assert example["exists"] == ["recipes/index.md"] and [c["name"] for c in example["contains"]] == ["recipes/index.md"]
+    assert any("fixture.md" in note and "writes them itself" in note for note in stored["dropped"])
+    assert "fixture.md" in [f["name"] for f in example["files"]]                  # only its checks go, not the file
+    pages = {"examples": [{"name": "new page", "says": "A page added to recipes can be reached.",
+                           "files": [{"name": "recipes/new.md", "text": "# New"}],
+                           "exists": ["recipes/new.md"], "pages_reachable": True}]}
+    kept = validate_examples(pages, milestone)["examples"][0]                    # the project's own pages are still checked
+    assert kept["exists"] == [] and kept["pages_reachable"] is True

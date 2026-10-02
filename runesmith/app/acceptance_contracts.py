@@ -44,7 +44,10 @@ def publish_expectations(ws, milestone_id, criteria, reason, *, by='owner', inte
             raise WorkspaceError('Public expectations changed; reload before publishing. Nothing overwritten.')
         from runesmith.app.public_interfaces import clean_interfaces
         declared = clean_interfaces(interfaces if interfaces is not None else (old or {}).get('interfaces', []), seen)
-        row = {'milestone': milestone_id, 'version': (old or {}).get('version', 0)+1,
+        # Past the newest version ever kept: after the owner withdrew checks nothing is current, and a restart at 1
+        # would overwrite history/1.json (journey J11-G37).
+        earlier = [int(p.stem) for p in (ws.home/'acceptance-contracts'/'history'/milestone_id).glob('*.json') if p.stem.isdigit()]
+        row = {'milestone': milestone_id, 'version': max([(old or {}).get('version', 0), *earlier])+1,
                'criteria': clean, 'reason': reason.strip()[:2000], 'by': by, 'utc': _now()}
         if declared or interfaces is not None or (old or {}).get('interfaces') is not None:
             row['interfaces'] = declared
@@ -81,3 +84,35 @@ def owner_feedback(ws, verification):
     contracts = verification.get('public_contracts') or []
     # An old fixture has no criterion mapping. Do not invent one from its text.
     return public_check_feedback(verification.get('acceptance'), contracts)
+
+
+def contracts_in_force(ws, verification):
+    """False when a public contract that judged this verification has since changed or gone. A done milestone's checks
+    judge every later build too, so withdrawing them changes what those builds were told (journey J11-G37 review)."""
+    for contract in verification.get('public_contracts') or []:
+        if not (isinstance(contract, dict) and isinstance(contract.get('milestone'), str) and contract.get('digest')):
+            continue                                    # an old receipt that names no contract: nothing to compare
+        try:
+            if expectation_digest(ws, contract['milestone']) != contract['digest']:
+                return False
+        except WorkspaceError:
+            return False
+    return True
+
+
+def withdrawn_feedback():
+    """What a builder reads in place of feedback that quotes expectations the owner withdrew or replaced."""
+    return {'status': 'not_run', 'note': 'checked by public expectations that have since been withdrawn or replaced; '
+                                          'their sentences are not shown'}
+
+
+def draft_owner_feedback(ws, draft):
+    """A saved draft's owner-acceptance feedback for a builder, only while everything that judged the draft still
+    stands: the milestone's present expectations and every contract its verification carried. Sentences the owner
+    withdrew or replaced, a done milestone's too, are never shown to builders again (journey J11-G37)."""
+    milestone = draft.get('milestone')
+    verification = draft.get('verification') or {}
+    if (not isinstance(milestone, str) or draft.get('public_acceptance_digest') != expectation_digest(ws, milestone)
+            or not contracts_in_force(ws, verification)):
+        return withdrawn_feedback()
+    return owner_feedback(ws, verification)

@@ -183,3 +183,35 @@ def test_api_worker_cannot_accept_arbitrary_deadlines(tmp_path, monkeypatch):
     assert calls == [(ws, did, 'quoted', 'Explicit')]
     ui = (Path(__file__).parents[1] / 'runesmith/app/static/js/views/work.js').read_text(encoding='utf-8')
     assert 'Reserve a separate verification budget' in ui and "job: 'allocate_check'" in ui
+
+
+def test_a_large_owner_bundle_gets_its_scaled_limit_in_the_quote(tmp_path, monkeypatch):
+    # Review of J11-B17: the quote fixed the owner phase at 240 s, less than an ordinary build gives a large bundle.
+    from test_build_steps import setup, enable
+    big = 'import unittest\nfrom app import answer\n\n\nclass Acceptance(unittest.TestCase):\n' + ''.join(
+        f'    def test_c{i}(self):\n        self.assertEqual(answer(), 42)\n' for i in range(200))
+    ws = setup(tmp_path, acceptance=True)
+    enable(ws)
+    (ws.home / 'acceptance' / 'm1.py').write_text(big, encoding='utf-8', newline='\n')
+    with monkeypatch.context() as local:
+        local.setattr(building, '_run_checks', lambda *a, **kw:
+            {'status': 'timeout', 'ok': False, 'elapsed_s': 120, 'limit_s': 120, 'output': 'unfinished'})
+        did = building.build_step(ws, ws.router())['draft']
+    with monkeypatch.context() as local:
+        local.setattr(building, '_run_checks', lambda *a, **kw:
+            {'ok': False, 'status': 'timeout', 'elapsed_s': 240, 'limit_s': 240})
+        assert resume_verification(ws, did, 'Original separate continuation')['verification']['status'] == 'inconclusive'
+    snapshot = collect_snapshot(ws)
+    folder = ws.home / 'source-baseline-runs' / snapshot['digest']
+    _write_json(folder / 'BASELINE.json', {'state': 'completed', 'outcome': 'measured', 'snapshot_digest': snapshot['digest'],
+        'source_still_current': True, 'stage_inputs_changed': [],
+        'project_checks': {'status': 'passed', 'ok': True, 'ran': 50, 'skipped': 0, 'elapsed_s': 133.91},
+        'inventory': {'complete': True, 'count': 50}, 'runner_sha256': hashlib.sha256(building.RUNNER.encode()).hexdigest(),
+        'evidence_dir': folder.relative_to(ws.home).as_posix()})
+    q = quote(ws, did)
+    assert (q['project_timeout_s'], q['owner_timeout_s'], q['maximum_check_s']) == (360, 460, 820)
+    seen = []
+    monkeypatch.setattr(building, '_run_checks', lambda stage, kind, logs, **kw:
+        seen.append(kw['timeout_s']) or {'ok': True, 'status': 'passed', 'ran': 1, 'elapsed_s': 1, 'limit_s': kw['timeout_s']})
+    allocate_verification(ws, did, q['id'], 'Separate resource allowance')
+    assert seen == [360, 460]

@@ -118,13 +118,20 @@ async function showAuthorContext() {
       clear(rows).append(...matches.slice(0, 100).map(r => h('div.item', h('div.body',
         h('div.mono.small', r.path), h('div.tiny.muted',
           `${r.bytes} bytes · ${r.included ? 'included' : 'omitted: ' + r.reason}${r.focused ? ' · prioritized' : ''}`)))));
-      if (matches.length > 100) rows.append(h('p.tiny.muted', `Showing100 of${matches.length} matches; narrow the filter.`));
+      if (matches.length > 100) rows.append(h('p.tiny.muted', `Showing 100 of ${matches.length} matches; narrow the filter.`));
     };
     search.addEventListener('input', draw);
     body.append(...[h('p.small', `${data.included_count} files included; ${data.omitted_count} omitted. Source text uses ${data.used_chars} / ${data.budget_chars} characters. This excludes prompt instructions and retained candidate text.`),
-      h('p.tiny.muted', `Prioritize up to${data.max_focus_paths} files, at most${data.focused_file_bytes} bytes each. Other files retain the${data.normal_file_bytes}-byte cap. Total source budget stays fixed. Empty the list to restore default selection.`),
+      h('p.tiny.muted', `Prioritize up to ${data.max_focus_paths} files, at most ${data.focused_file_bytes} bytes each. Other files over ${data.normal_file_bytes} bytes are still shown, up to the same size, when the source budget has room after the rest. Total source budget stays fixed. Empty the list to restore default selection.`),
       data.settings_error ? h('p.callout.warn', data.settings_error) : null,
-      Object.keys(data.focus_errors).length ? h('p.callout.warn', 'Some requested files are unavailable or over budget. Review and save a valid selection before authoring.') : null,
+      // Each file by name, with what to do (review of J11-B15: a prioritized file that outgrew the limit was only "some files").
+      Object.keys(data.focus_errors).length ? h('p.callout.warn', 'Prioritized files that models cannot be shown: '
+        + Object.entries(data.focus_errors).map(([file, why]) => `${file} ` + ({
+          not_model_visible: 'is gone or hidden: take it out of the list.',
+          file_limit: `is over ${data.focused_file_bytes} bytes: split it, then take it out of the list.`,
+          not_utf8: 'is not UTF-8 text: save it as UTF-8, or take it out of the list.',
+          packet_budget: `does not fit the ${data.budget_chars}-character budget with the other prioritized files: take one out.`,
+        }[why] || `cannot be shown (${why}).`)).join(' ')) : null,
       data.truncated_inventory ? h('p.callout.warn', 'Inventory display is bounded; not every file is listed.') : null,
       paths, reason, h('button.btn.primary.mt-8', {onclick: e => withBusy(e.currentTarget, async () => {
         const selected = paths.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -305,7 +312,26 @@ export default async function render(root, ctx) {
             h('button.btn.sm.mt-8', { disabled: !data.ready, onclick: (e) => withBusy(e.currentTarget, async () => {
               await post('/api/worker/run', { job: 'propose_acceptance', params: { milestone: m.id } });
               toast('Asking for new acceptance checks. They appear here next to yours; nothing changes until you choose.', 'good', 6000); }) },
-              icon('refresh'), 'Ask for new checks')) : null].filter(Boolean));
+              icon('refresh'), 'Ask for new checks')) : null,
+          // Journey J11-G37: wrong approved checks could only be replaced, never taken back with a reason. A done milestone's
+          // checks too: a later milestone may change what they required (J11-F29), and they keep judging every build. A
+          // dropped milestone's too: its checks judge nothing while it is dropped, but they do after a reopen, and their
+          // sentences still reach the other milestones' Checkers; J11 holds milestones dropped until their wrong checks
+          // can be withdrawn, then reopens them.
+          !acc.proposal && acc.approved.provenance !== 'owner file' ? h('div.mt-8', h('button.btn.sm.ghost', { onclick: async (e) => {
+              const button = e.currentTarget;      // null after the first await
+              const reason = await askText({ title: 'Withdraw these checks?', confirm: 'Withdraw', multiline: true,
+                text: 'Say what is wrong with them. They stop judging builds, their file is kept, and the checks written next read your reason.',
+                placeholder: 'e.g. the milestone keeps the envelope inside "project"; these checks put it at the top level' });
+              if (reason === null) return;          // cancelled
+              if (!reason.trim()) { toast('Say what is wrong with the checks; it is kept with them.', 'warn'); return; }
+              await withBusy(button, async () => {
+                await post(`/api/plan/milestones/${m.id}/acceptance/withdraw`, { reason: reason.trim() });
+                // A done or dropped milestone gets no new checks until it is reopened: propose() refuses it. An open one
+                // gets them when the owner asks, or at the autopilot's next round (J11-G37 review).
+                toast(['done', 'dropped'].includes(m.status) ? `Checks withdrawn. This milestone is ${m.status}: set its status to open to have new checks written with your reason.`
+                  : 'Checks withdrawn. Press “Propose acceptance checks” to have new ones written with your reason.', 'good', 6000); drawPlan(); }); } },
+              icon('x'), 'Withdraw these checks')) : null].filter(Boolean));
       }
       if (acc?.proposal) {
         // A proposal next to approved checks replaces them only if the owner says so, with a reason.

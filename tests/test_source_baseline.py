@@ -149,3 +149,17 @@ def test_malformed_or_large_inventory_is_unknown(tmp_path, data):
     path = tmp_path / 'inventory.json'
     path.write_text(data)
     assert not _inventory(path)['available']
+
+
+def test_a_baseline_measured_by_an_earlier_runner_is_measured_once_more(tmp_path):
+    # Review of J11-B17: the runner changed, allocations refuse a baseline of another runner, and the snapshot could
+    # never be measured again ("already has a reserved measurement"): one new measurement, the old one kept beside it.
+    ws = setup(tmp_path)
+    first = measure_current_source(ws, 'Measure the current source')['baseline']
+    path = ws.home / first['evidence_dir'] / 'BASELINE.json'
+    _write_json(path, dict(first, runner_sha256='e' * 64))                       # as an earlier runner left it
+    again = measure_current_source(ws, 'The runner changed')
+    assert 'already_used' not in again and again['baseline']['runner_sha256'] != 'e' * 64
+    assert again['baseline']['outcome'] == 'measured'
+    assert (ws.home / first['evidence_dir'] / 'BASELINE.runner-eeeeeeee.json').is_file()
+    assert measure_current_source(ws, 'And again')['already_used']               # once: now measured by this runner
