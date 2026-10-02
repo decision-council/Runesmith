@@ -136,7 +136,9 @@ def _milestone_text_fits(fields: dict[str, Any]) -> None:
                                  "Shorten it: nothing was saved, and nothing is cut without telling you.")
 GENERIC_NAMES = {"readme.md", "readme", "readme.txt", "readme.rst", "index.md", "index.html", "index.htm", "license",
                  "license.md", "changelog.md", "changes.md", "contributing.md", "notes.md", "todo.md", "main.py", "app.js"}
-MAX_DRAFT_FILES, MAX_DRAFT_FILE_BYTES = 12, 60_000
+# A draft file is the whole new text of a file. Large files are now edited in parts (batch DD), so their drafts are
+# whole files past 60,000 bytes; at the old limit a 60 KB motion.mjs would have been "no usable files" (review of DD).
+MAX_DRAFT_FILES, MAX_DRAFT_FILE_BYTES = 12, 400_000
 
 
 OBSERVE_NO_CALLS = ("Observe mode reads and reports only, so no model was asked. Choose “propose” in Settings to let "
