@@ -53,6 +53,12 @@ async function behaviour(body, ctx) {
         toggle('auto_work', 'Work on a schedule', 'Run rounds automatically while the Studio is open. Each round can spend model calls. Off until you choose.'),
         h('div.setting', h('div.text', h('b', 'How often'), h('span', 'A round maps, finds work, works on what is new, and reports. With full speed on, the longest wait.')), interval),
         toggle('full_speed', 'Full speed', 'Start the next step as soon as one ends, while the models answer. When none answers (busy or at its limit), wait 1, 2, 4 … minutes, never longer than above; when there is nothing to do, 2 minutes. Uses the free allowances faster.')),
+      // Journey J11-G42, G43: a project that runs to the end of its plan without its owner. Both wait for you until you choose.
+      h('div.card', h('h3', icon('shield'), 'Running on its own'),
+        h('div.setting', h('div.text', h('b', 'After an interrupted job'), h('span', 'If the Studio is restarted while a job runs, you normally review what was left before anything continues. “Keep and continue” lets Runesmith keep the waiting work and go on by itself. The interrupted job is never run again, and what it decided is said on the Overview.')),
+          seg('recovery_policy', [['wait', 'Wait for me'], ['keep', 'Keep and continue']])),
+        h('div.setting', h('div.text', h('b', 'When a milestone’s tries are used up'), h('span', 'Three tries, and then it waits for you. “One more try” gives it the one extra try with another model, as the button on Work does; “then break it down” also asks for smaller steps and adopts them, once. Other milestones keep building meanwhile, and each decision is said on the Overview.')),
+          seg('stuck_policy', [['wait', 'Wait for me'], ['retry', 'One more try'], ['retry_split', 'One more try, then break it down']]))),
       h('div.card', h('h3', icon('map'), 'Mapping'),
         toggle('probe_tests', 'Measure code by running its tests', 'This executes the project’s own code, on a throwaway copy of the folder, so nothing is written into it. Only for projects you trust: the copy is not a security boundary. Off until you choose.'),
         num('max_objects', 'Most objects to map', 'For very large folders.', 1, 500),

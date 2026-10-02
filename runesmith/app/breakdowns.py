@@ -100,7 +100,9 @@ def input_packet(ws, milestone_id):
                 'Failed unapplied drafts have NOT changed the working source. Never assume their errors '
                 'exist in the current project. A repair step may name only existing files; missing files '
                 'can only be proposed as new builds. Prefer complete vertical slices (one useful command '
-                'with persistence and tests) over parser stubs or a rewrite of every command at once.'),
+                'with persistence and tests) over parser stubs or a rewrite of every command at once. Files listed under '
+                'files_no_model_can_see cannot be shown to any model, so no step may edit them as they are: a step that '
+                'splits such a file into smaller files comes first, and the others build on the pieces.'),
         'parent':parent, 'breakdown_depth':_breakdown_depth(plan,milestone_id),
         'public_acceptance':expectations(ws,milestone_id),
         'ancestor_done_when':[m.get('done_when') for m in plan.get('milestones',[])
@@ -110,6 +112,10 @@ def input_packet(ws, milestone_id):
         'allowed_build_paths':ws.settings()['build_paths'],
         'source_context':source_context(ws,limit=20000,snapshot=snapshot),
         'failed_checks':failed[:3],
+        # Files no model can be shown (over the limit, not UTF-8): steps that edit them are refused every time (journey
+        # J11-B15 review of the 40,000-byte wall), so the steps must split them first.
+        'files_no_model_can_see':{p:r for p,r in (source_context(ws,snapshot=snapshot).get('omission_reasons') or {}).items()
+                                  if r in ('file_limit','not_utf8')},
         'refusals':[a['error'] for a in attempts[-3:] if a.get('error')],
         'memory_observations':recall_for_milestone(ws,parent),
         'review_feedback':[{'id':r['id'],'reason':r.get('rejection_reason'),'steps':r['steps']}

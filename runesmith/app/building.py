@@ -484,6 +484,29 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False, milest
     return result
 
 
+def _used_up_cause(ws, contract, context):
+    """Why the tries were used up, when it was a file no model can be shown (journey J11-B15, review of the 40,000-byte
+    wall): every answer that edits it is refused, so smaller steps that edit it fail the same way. The summary and the
+    breakdown packet say so, instead of only that the tries are gone."""
+    from runesmith.app.source_focus import FOCUSED_FILE_BYTES
+    newest = None
+    for path in (ws.home / 'build-attempts').glob('*.json'):
+        row = _read_json(path, {})
+        feedback = row.get('feedback') if isinstance(row, dict) and isinstance(row.get('feedback'), dict) else {}
+        if (isinstance(row, dict) and row.get('contract') == contract and row.get('snapshot_digest') == context['snapshot_digest']
+                and row.get('state') == 'failed' and isinstance(feedback.get('not_shown'), str)
+                and feedback.get('reason') in ('file_limit', 'not_utf8', 'budget_together')):
+            key = (str(row.get('utc') or ''), path.stat().st_mtime_ns)
+            if newest is None or key > newest[0]:
+                newest = (key, feedback['not_shown'], feedback['reason'])
+    if newest is None:
+        return ''
+    why = {'file_limit': f'is too large to show a model ({FOCUSED_FILE_BYTES:,} bytes at most)',
+           'not_utf8': 'is not UTF-8 text, so no model can be shown it',
+           'budget_together': 'does not fit the source budget together with the other files this step needs'}[newest[2]]
+    return f'{newest[1]} {why}, so every answer that edits it is refused; smaller steps that edit it fail the same way: split it first.'
+
+
 def _context_gap(ws, contract, context):
     """The file this milestone's latest answer could not change because the model was not shown it, when it still
     is not shown; else None (journey J11-B15)."""
@@ -542,8 +565,11 @@ def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only)
     if pending is not None and (unchanged := _unchanged_verdict(ws, pending, milestone, contract, context, checkpoint)):
         return unchanged, (None if unchanged.get('advanced') else 'a draft waits for you')
     if not pending and not allowance['remaining']:
-        return {'summary':'Ordinary author allowance exhausted on this source and milestone. Review retained evidence; changing feedback does not grant more calls.',
-                'replan_needed':True,'milestone':milestone['id']}, 'its three tries are used up'
+        cause = _used_up_cause(ws, contract, context)
+        return {'summary':'Ordinary author allowance exhausted on this source and milestone. Review retained evidence; changing feedback does not grant more calls.'
+                          + (' The cause: ' + cause if cause else ''),
+                'replan_needed':True,'milestone':milestone['id'],**({'cause':cause} if cause else {})}, \
+            'its three tries are used up' + (' (' + cause + ')' if cause else '')
     unshowable = None if pending else focus_problem(context)
     if unshowable:
         # A prioritized path is gone or hidden: no call can be made, and recording one as a failed try used up every
@@ -646,8 +672,7 @@ def build_escalation_status(ws):
         own=milestone_contract(ws,candidate)
         try:own_escalations=escalations if candidate is milestone else ordinary_allowance(ws,own,context['snapshot_digest'])['escalations']
         except WorkspaceError:continue
-        revisable=any(d.get('state')=='needs_revision' and d.get('snapshot_digest')==context['snapshot_digest']
-                      for d in ws.drafts() if d.get('contract')==own)
+        revisable=bool(revisable_candidates(ws,ws.drafts(),candidate,context['snapshot_digest']))
         for row in own_escalations if revisable and ws.settings()['autonomy']!='observe' else []:
             receipt=_read_json(ws.home/'build-escalations'/(row['id']+'.json'),{})
             if row['state']=='failed' and (receipt.get('feedback') or {}).get('answer_receipt'):
@@ -722,8 +747,8 @@ def readmit_escalation_answer(ws,key,*,checkpoint=lambda:None):
     allowance=ordinary_allowance(ws,contract,context['snapshot_digest'])
     if contract!=receipt.get('contract') or not any(row['id']==key for row in allowance['escalations']):
         raise WorkspaceError('Source or milestone changed; the retained answer cannot be replayed.')
-    revision=next((d for d in ws.drafts() if d.get('contract')==contract and d.get('state')=='needs_revision'
-                   and d.get('snapshot_digest')==context['snapshot_digest']),None)
+    # The candidate by the one rule the prompt and the packet use (review of J11-G37: this chose by an older one).
+    revision=next(iter(revisable_candidates(ws,ws.drafts(),milestone,context['snapshot_digest'])),None)
     if not revision:raise WorkspaceError('The answer has no matching frozen candidate to revise.')
     from runesmith.app.planner import admit_revision_answer
     try:

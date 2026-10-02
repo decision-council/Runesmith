@@ -105,7 +105,7 @@ def validate_job(job):
         BuildJob(kind, params)
     else:
         allowed = {'map': {'probe'}, 'round': set(), 'plan': set(), 'goalposts': set(), 'health': set(),
-                   'draft': {'milestone'}, 'breakdown': {'milestone'}, 'propose_acceptance': {'milestone'},
+                   'draft': {'milestone'}, 'breakdown': {'milestone'}, 'split': {'milestone'}, 'propose_acceptance': {'milestone'},
                        'mode': {'mode'}, 'measure': {'measurement'}}
         if kind not in allowed or set(params) - allowed[kind]:
             raise WorkspaceError('Invalid saved job kind or parameters; inspect recovery records.')
@@ -116,7 +116,7 @@ def validate_job(job):
                 valid = value is None and kind == 'draft' or isinstance(value, str) and 0 < len(value) <= 128
             if not valid:
                 raise WorkspaceError('Invalid saved job parameter value; inspect recovery records.')
-        if kind in {'breakdown', 'mode', 'measure'} and set(params) != allowed[kind]:
+        if kind in {'breakdown', 'split', 'mode', 'measure'} and set(params) != allowed[kind]:
             raise WorkspaceError('Missing saved job parameter; inspect recovery records.')
     return job
 

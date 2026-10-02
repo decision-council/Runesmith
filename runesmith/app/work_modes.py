@@ -144,7 +144,7 @@ def guard_job(ws, kind):
     if kind in {'plan', 'goalposts'}:
         require_planning(ws)
     if not configuration(ws)['configured']: return
-    executor = ('build' if kind in {'build', 'draft', 'escalate', 'supplement', 'revise', 'correct', 'readmit', 'readmit_answer', 'breakdown', 'propose_acceptance', 'review_current', 'resume_check', 'allocate_check', 'reconcile_check'}
+    executor = ('build' if kind in {'build', 'draft', 'escalate', 'supplement', 'revise', 'correct', 'readmit', 'readmit_answer', 'breakdown', 'split', 'propose_acceptance', 'review_current', 'resume_check', 'allocate_check', 'reconcile_check'}
                 else 'troubleshoot' if kind == 'round' else None)
     if executor and not any(r['enabled'] and r['executor'] == executor for r in configuration(ws)['modes']):
         raise WorkspaceError(f'All {executor} modes are off. No work started.')

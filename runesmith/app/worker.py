@@ -42,7 +42,8 @@ from runesmith.app.worker_journal import Record, MAX_JOBS, validate_job, validat
 JOB_WORDS = {"propose_acceptance": "Proposing acceptance checks", "plan": "Drafting a plan", "goalposts": "Proposing goalposts",
              "draft": "Drafting files", "build": "Building the next step", "revise": "Revising a draft",
              "correct": "Correcting a draft", "escalate": "Giving the step one more try", "readmit": "Checking a kept answer again", "readmit_answer": "Checking a kept answer again", "supplement": "Asking for missing files",
-             "breakdown": "Proposing smaller steps", "map": "Mapping the folder", "round": "The round",
+             "breakdown": "Proposing smaller steps", "split": "Breaking a stuck step down",
+             "map": "Mapping the folder", "round": "The round",
              "measure": "Taking a measurement"}
 KIND_WORDS = {"python_repository": ("Python project", "Python projects"), "node_repository": ("Node project", "Node projects"),
               "document_collection": ("document collection", "document collections"), "website": ("website", "websites"),
@@ -137,7 +138,7 @@ def reachable(spec: dict[str, Any], timeout: float = 3.0) -> tuple[bool, str]:
 
 # Full speed (J11-F21): the steps whose end starts the next one at once while models answer, and the wait when a
 # step had nothing to ask a model.
-FULL_SPEED_KINDS = frozenset({'build', 'mode', 'propose_acceptance'})
+FULL_SPEED_KINDS = frozenset({'build', 'mode', 'propose_acceptance', 'escalate', 'split'})
 FULL_SPEED_IDLE_S = 120.0
 
 
@@ -176,6 +177,10 @@ class Worker:
         if self._jobs or (marker and marker.digest) or self._storage_error:
             self._add_recovery('Saved work needs review after restart. Nothing has been replayed.')
         self.paused = bool(state.get('paused')) or bool(self._recovery)
+        # Who paused: a hold that only the restart review made may be lifted by the owner's recovery setting; a pause
+        # the owner chose never is (an old record names nobody, so it is the owner's).
+        self._pause_by = ('recovery' if state.get('by') == 'recovery' else 'owner') if state.get('paused') else (
+            'recovery' if self.paused else None)
         self.current: dict[str, Any] | None = None
         self.status, self.detail, self.since = "idle", "", _now()
         self.history: deque[dict[str, Any]] = deque(history[-30:], maxlen=30)
@@ -198,6 +203,36 @@ class Worker:
             self._recover_records()
         except (OSError, ValueError, WorkspaceError) as error:
             self._block_storage(error)
+        self._keep_by_setting()
+
+    def _keep_by_setting(self):
+        """Journey J11-G42: a project that runs without its owner never gets the review a restart asks for, so the
+        owner may choose "keep the queue and continue". Runesmith then records the decision the owner's own "keep" makes
+        (reviewed by "Runesmith (your setting)"), and resumes unless the owner had paused. It never replays the
+        interrupted call, and decides nothing the review could not: unreadable or changed control records, a current
+        job, or a write-recovery conflict still wait for the owner."""
+        try:
+            if self.ws.settings().get('recovery_policy') != 'keep':
+                return
+            with self._cv:
+                recovery = self._recovery
+                if (not recovery or self._storage_error or self.current or self._records['STUDIO_CURRENT.json'].digest
+                        or any(str(reason).startswith('A write-recovery conflict') for reason in recovery['reasons'])):
+                    return
+                revision, lifted = recovery['revision'], self._pause_by != 'owner'
+            self.review_recovery(revision=revision, decision='keep', reviewed=True, by='Runesmith (your setting)')
+            if lifted:
+                self.resume()
+            from runesmith.app import automatic
+            waiting = len(self._jobs)
+            said = ('The Studio was restarted after a job was interrupted. By your setting, Runesmith kept the waiting work '
+                    f'({waiting} job{"" if waiting == 1 else "s"}) and ' + ('went on.' if lifted else 'left the pause you set.')
+                    + ' The interrupted job itself was not run again.')
+            automatic.record(self.ws, said, kind='recovery', decision='keep', resumed=lifted, waiting=waiting)
+            self.say(said, 'warn')
+        except (OSError, ValueError, WorkspaceError) as error:
+            # Nothing is decided on evidence it cannot read: the review waits for the owner, as it always did.
+            self.say(f'Your recovery setting could not be followed ({error}); the restart review waits for you.', 'warn')
 
     def _recover_records(self):
         if self._recovered:
@@ -223,7 +258,7 @@ class Worker:
                 self._add_recovery('Studio closed with a current-job marker. Inspect saved outcomes and provider receipts.')
                 self._recovery['interrupted'] = interrupted.get('kind')      # for the owner's plain summary (J4-F11)
             if self._recovery:
-                self.pause()  # Persist the hold before clearing any current marker.
+                self.pause(by=self._pause_by or 'recovery')  # Persist the hold before clearing any current marker.
                 self._save_queue(list(self._jobs))
         except (OSError, ValueError, WorkspaceError) as error:
             self._block_storage(error)
@@ -296,8 +331,9 @@ class Worker:
         if self._recovery or self._storage_error:
             raise WorkspaceError('Recovery review is required. Inspect Activity; no job has been replayed.')
 
-    def review_recovery(self, *, revision, decision, reviewed):
-        """Acknowledge inspected evidence; keep paused and never replay a current job."""
+    def review_recovery(self, *, revision, decision, reviewed, by='owner'):
+        """Acknowledge inspected evidence; keep paused and never replay a current job. `by` is the owner, or Runesmith
+        acting on the owner's recovery setting (journey J11-G42)."""
         with self._cv:
             if (not self._recovery or revision != self._recovery['revision'] or reviewed is not True or not isinstance(decision, str)
                     or decision not in {'keep', 'park'}):
@@ -306,8 +342,8 @@ class Worker:
                 raise WorkspaceError('Recovery records still need reconciliation; nothing resumed.')
             for record in self._records.values():
                 record.check()
-            self.pause()
-            receipt = {'revision': revision, 'decision': decision, 'reviewed_by': 'owner', 'utc': _now(),
+            self.pause(by=self._pause_by or 'recovery')
+            receipt = {'revision': revision, 'decision': decision, 'reviewed_by': by, 'utc': _now(),
                        'jobs': list(self._jobs), 'recovery': self._recovery,
                        'scope': 'Review acknowledgement only. Queue stays paused; no job, call, check or apply was run. '
                                 'This does not reconcile provider outcomes or restore spent allocations.'}
@@ -363,7 +399,7 @@ class Worker:
         """Queue one job. ``by`` records who asked: the owner, or the schedule continuing its own work."""
         if by not in ("owner", "schedule"):
             raise ValueError(f"unknown requester {by!r}")
-        if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "readmit", "readmit_answer", "breakdown", "propose_acceptance", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
+        if kind not in ("map", "round", "plan", "goalposts", "draft", "build", "escalate", "supplement", "revise", "correct", "readmit", "readmit_answer", "breakdown", "split", "propose_acceptance", "review_current", "resume_check", "resume_author", "source_baseline", "allocate_check", "reconcile_check", "health", "mode", "measure"):
             raise ValueError(f"unknown job {kind!r}")
         from runesmith.app.build_jobs import BuildJob, PARAMETERS
         if kind in PARAMETERS:
@@ -392,12 +428,13 @@ class Worker:
         self._publish_state()
         return json.loads(json.dumps(job))
 
-    def pause(self) -> None:
+    def pause(self, by: str = 'owner') -> None:
         with self._cv:
             self.paused = True
+            self._pause_by = by
             if self._storage_error:
                 raise WorkspaceError('Control records need repair; pause is held in memory and no evidence was overwritten.')
-            self._records['STUDIO_STATE.json'].write({'paused': True})
+            self._records['STUDIO_STATE.json'].write({'paused': True, 'by': by})
         self.say("Paused. Nothing new starts until you resume; the current step finishes.")
         self._publish_state()
 
@@ -410,6 +447,7 @@ class Worker:
                 record.check()
             self._records['STUDIO_STATE.json'].write({'paused': False})
             self.paused = False
+            self._pause_by = None
             self._cv.notify_all()
         self.say("Resumed.")
         self._publish_state()
@@ -514,6 +552,14 @@ class Worker:
             from runesmith.app.acceptance_autopilot import needs_checks
             if (missing := needs_checks(self.ws)) is not None:
                 return 'propose_acceptance', {'milestone': missing}
+        from runesmith.app import stuck
+        if settings['build_steps'] and settings.get('stuck_policy') in stuck.POLICIES:
+            # The owner's setting for a milestone whose tries are used up (journey J11-G43): its one more try, or its
+            # breakdown, takes a turn, and the step after it builds the others, so a milestone that waits on a model
+            # never holds the plan.
+            if _read_json(self.ws.home / 'WORK.json', {}).get('kind') not in stuck.TURN_KINDS:
+                if (turn := stuck.stuck_work(self.ws, settings['stuck_policy'])) is not None:
+                    return turn
         return ('build' if settings['build_steps'] else 'round'), {}
 
     def _run(self) -> None:
@@ -585,7 +631,7 @@ class Worker:
         try:
             from runesmith.app.work_modes import guard_job
             guard_job(self.ws, job['kind'])  # A switch may have changed since enqueue.
-            if job['kind'] in {'plan', 'goalposts', 'draft', 'build', 'round', 'escalate', 'supplement', 'revise', 'correct', 'breakdown', 'propose_acceptance'}:
+            if job['kind'] in {'plan', 'goalposts', 'draft', 'build', 'round', 'escalate', 'supplement', 'revise', 'correct', 'breakdown', 'split', 'propose_acceptance'}:
                 from runesmith.app.environment_intent import require_intent
                 require_intent(self.ws)
             handler = getattr(self, f"_job_{job['kind']}")
@@ -610,7 +656,7 @@ class Worker:
         finally:
             # A scheduled check request moves the schedule on like a build (journey J11-B9: it did not, so while every
             # free model was busy the autopilot asked again as soon as the last request failed, six times in 2.5 min).
-            if job['kind'] in {'build', 'mode'} or (job['kind'] == 'propose_acceptance' and job.get('by') == 'schedule'):
+            if job['kind'] in {'build', 'mode'} or (job['kind'] in ('propose_acceptance', 'escalate', 'split') and job.get('by') == 'schedule'):
                 work = {'utc':_now(), 'kind':job['kind'], 'result':result}
                 try:
                     settings = self.ws.settings()
@@ -622,7 +668,7 @@ class Worker:
             done = dict(job, finished=_now(), seconds=round(time.monotonic() - started, 1), result=result,
                         outcome={k: v for k, v in outcome.items() if k in ("summary", "error", "detail", "objects",
                                                                             "opportunities", "served", "accepted", "draft", "milestone", "advanced",
-                                                                            "replan_needed")})
+                                                                            "replan_needed", "cause")})
             with self._cv:
                 last = self.history[-1] if self.history else None
                 if _same_waiting_round(last, done):    # one row, counted: not 30 rows pushing real work out (J2-F20)
@@ -651,11 +697,20 @@ class Worker:
                 self.enqueue(kind, by='schedule', **params)
             if (schedule_next and legacy and job['kind']=='build' and outcome.get('replan_needed') and self.ws.settings()['auto_work']
                     and not self.paused and not self._closing and not self._stop_after_step):
-                if not self._breakdown_waiting(outcome['milestone']):    # one proposal waits: no repeat (J2-F16)
-                    self.enqueue('breakdown', by='schedule', milestone=outcome['milestone'])
+                if not self._breakdown_waiting(outcome['milestone']) and not self._stuck_setting_first(outcome['milestone']):
+                    self.enqueue('breakdown', by='schedule', milestone=outcome['milestone'])    # one proposal waits: no repeat (J2-F16)
         return dict(done, outcome=outcome)
 
     # --------------------------------------------------------------------- jobs --
+
+    def _stuck_setting_first(self, milestone: str) -> bool:
+        """The owner's setting for used-up tries (J11-G43) goes before the proposal of smaller steps: it makes the one
+        more try, and for "one more try, then break it down" the breakdown too, itself."""
+        try:
+            from runesmith.app.stuck import defers_breakdown
+            return defers_breakdown(self.ws, milestone, self.ws.settings().get('stuck_policy'))
+        except Exception:                          # choosing never stops the worker
+            return False
 
     def _breakdown_waiting(self, milestone: str) -> bool:
         """No scheduled breakdown: one proposal already waits (J2-F16), or the milestone already has smaller steps, which
@@ -776,6 +831,19 @@ class Worker:
         self.bus.publish('plan',{'breakdown':proposal['id']})
         return {'summary':f"Proposed {len(proposal['steps'])} prerequisites for {milestone}; original goal unchanged. Review under Goals & plan."}
 
+    def _job_split(self, milestone: str) -> dict[str, Any]:
+        """A stuck milestone broken down by the owner's setting (journey J11-G43), once."""
+        from runesmith.app import stuck
+
+        def checkpoint():
+            self._work_checkpoint()
+            if self._stop_after_step or self._closing or self.paused: raise StopRequested()
+        self._set('planning', 'Breaking down a stuck milestone by your setting')
+        result = stuck.split(self.ws, self.ws.router(on_call=self._on_call, backoff_s=()), milestone, checkpoint=checkpoint)
+        self.say(result['summary'], 'warn')
+        self.bus.publish('plan', {'breakdown': milestone})
+        return result
+
     def _job_propose_acceptance(self, milestone: str) -> dict[str, Any]:
         from runesmith.app.acceptance_proposals import propose
         def checkpoint():
@@ -874,7 +942,18 @@ class Worker:
                                    draft_id=draft_id, reason=reason, instrument=instrument, author_only=author_only)
 
     def _job_escalate(self) -> dict[str, Any]:
-        return self._run_build_job('escalate', 'Using one alternate author after the bounded ordinary attempts')
+        # The schedule gives the one more try when the owner's setting says so (journey J11-G43): said as such.
+        by_setting = (self.current or {}).get('by') == 'schedule'
+        from runesmith.app import stuck
+        milestone = stuck.next_escalation(self.ws) if by_setting else None
+        result = self._run_build_job('escalate', 'Using one alternate author after the bounded ordinary attempts')
+        if by_setting and milestone:
+            from runesmith.app import automatic
+            said = (f'“{milestone["title"]}” had used up its tries. By your setting, Runesmith gave it one more try with '
+                    f'another model: {result["summary"]}')
+            automatic.record(self.ws, said, kind='one_more_try', milestone=milestone['id'])
+            self.say(said, 'warn')
+        return result
 
     def _job_round(self) -> dict[str, Any]:
         from runesmith.app.work_modes import prompt_context

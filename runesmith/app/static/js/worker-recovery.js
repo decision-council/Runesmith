@@ -7,7 +7,7 @@ const DOING = {propose_acceptance: 'proposing acceptance checks', plan: 'draftin
   escalate: 'asking a stronger model', supplement: 'asking for missing files', breakdown: 'proposing smaller steps',
   map: 'mapping the folder', round: 'running a round', measure: 'taking a measurement', review_current: 'checking the current files'};
 // Jobs that never write into the owner's folder: only for these may the summary say that nothing there changed.
-const NO_FOLDER_WRITES = new Set(['propose_acceptance', 'plan', 'goalposts', 'draft', 'breakdown', 'map', 'measure', 'review_current']);
+const NO_FOLDER_WRITES = new Set(['propose_acceptance', 'plan', 'goalposts', 'draft', 'breakdown', 'split', 'map', 'measure', 'review_current']);
 
 export function plainSummary(recovery) {
   const kind = recovery.interrupted;

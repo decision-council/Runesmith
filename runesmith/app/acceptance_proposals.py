@@ -16,6 +16,7 @@ import hashlib
 import json
 import re
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -660,10 +661,35 @@ def public_criteria(ws, milestone_id, proposal) -> list[dict[str, str]]:
     return kept + ours
 
 
+SLOW_S = 5.0        # an approval or withdrawal that took this long says where the time went (journey J11-F30)
+
+
+def _slow(started, waited) -> dict[str, Any]:
+    """What the ledger keeps of a slow approval or withdrawal: its seconds, and how many of them were spent waiting for
+    the workspace lock. Nothing for a quick one. J11's Withdraw took two minutes once, on a computer three programs
+    were overloading, and nothing recorded whether it had waited for the lock or for the disk."""
+    seconds = time.monotonic() - started
+    return {'slow': {'seconds': round(seconds, 1), 'waited_for_workspace_s': round(waited, 1)}} if seconds >= SLOW_S else {}
+
+
 def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str = '', by: str = 'owner') -> dict[str, Any]:
+    started = time.monotonic()
     if by not in ('owner', 'autopilot'):
         raise WorkspaceError('Checks are approved by the owner or by the check autopilot.')
     _milestone(ws, milestone_id)
+    if acceptance_file(ws, milestone_id).is_file():
+        from runesmith.app.build_memory import backfill_quoted
+        backfill_quoted(ws, milestone_id)               # slow reads of old receipts, before the lock is taken
+    # It reads the record and writes it back: a withdrawal landing in between was overwritten or half undone, 3 runs in
+    # 40 overlaps of an autopilot replacement with a withdrawal (review of J11-G37).
+    asked = time.monotonic()
+    with ws._lock:
+        waited = time.monotonic() - asked
+        return _approve(ws, milestone_id, proposal_id, replace=replace, reason=reason, by=by,
+                        slow=lambda: _slow(started, waited))
+
+
+def _approve(ws, milestone_id, proposal_id, *, replace, reason, by, slow=lambda: {}) -> dict[str, Any]:
     path = _record_path(ws, milestone_id)
     record = _record(ws, milestone_id)
     proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
@@ -716,7 +742,7 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
         retire_for_milestone(ws, milestone_id, 'The owner replaced the checks these observations quote.')
     ws.ledger.append('acceptance.approved', {'milestone': milestone_id, 'proposal': proposal_id, 'sha256': file_sha,
                                              'proposed_by': proposal.get('drafted_by'), 'replaced': bool(reason.strip()),
-                                             'approved_by': by, **({'interface_links_removed': lost} if lost else {})})
+                                             'approved_by': by, **({'interface_links_removed': lost} if lost else {}), **slow()})
     # The owner's interface links to sentences these checks do not have are gone, and he is told which.
     return {'ok': True, 'sha256': file_sha, 'checks': proposal['checks'], **({'interface_links_removed': lost} if lost else {})}
 
@@ -724,12 +750,13 @@ def approve(ws, milestone_id, proposal_id, *, replace: bool = False, reason: str
 def note_autopilot(ws, milestone_id, proposal_id, note) -> None:
     """What the check autopilot decided about a proposal, kept with it for the owner to read."""
     path = _record_path(ws, milestone_id)
-    record = _record(ws, milestone_id)
-    proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
-    if proposal is None:
-        raise WorkspaceError('Unknown proposal.')
-    proposal['autopilot'] = note
-    _write_json(path, record)
+    with ws._lock:                          # read, change, write back: never across a withdrawal (review of J11-G37)
+        record = _record(ws, milestone_id)
+        proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
+        if proposal is None:
+            raise WorkspaceError('Unknown proposal.')
+        proposal['autopilot'] = note
+        _write_json(path, record)
     ws.ledger.append('acceptance.autopilot', {'milestone': milestone_id, 'proposal': proposal_id,
                                               'decision': note.get('decision'), 'reason': str(note.get('reason') or '')[:300]})
 
@@ -743,12 +770,15 @@ def withdraw(ws, milestone_id, *, reason: str) -> dict[str, Any]:
     interfaces are published again without them; the reason is read by the next Checker; the milestone then needs
     checks again.
     """
+    started = time.monotonic()
     _milestone(ws, milestone_id)
     if not isinstance(reason, str) or not reason.strip():
         raise WorkspaceError('Say why these checks are wrong: the next checks are written with your reason.')
     from runesmith.app.build_memory import backfill_quoted
     backfill_quoted(ws, milestone_id)       # the receipts older memories need are read before the lock is taken
+    asked = time.monotonic()
     with ws._lock:              # an apply may be judging a build by this file right now (review of J11-G37)
+        waited = time.monotonic() - asked
         path = _record_path(ws, milestone_id)
         record = _record(ws, milestone_id)
         proposal = next((p for p in reversed(record['proposals']) if p.get('state') == 'approved'), None)
@@ -785,17 +815,18 @@ def withdraw(ws, milestone_id, *, reason: str) -> dict[str, Any]:
         proposal.update(state='withdrawn', withdrawn_utc=_now(), reason=reason.strip()[:1000])
         _write_json(path, record)
         ws.ledger.append('acceptance.withdrawn', {'milestone': milestone_id, 'proposal': proposal.get('id'), 'kept': keep.name,
-                                                  **({'interface_links_removed': lost} if lost else {})})
+                                                  **({'interface_links_removed': lost} if lost else {}), **_slow(started, waited)})
     return {'ok': True, 'kept': keep.name, **({'interface_links_removed': lost} if lost else {})}
 
 
 def discard(ws, milestone_id, proposal_id, *, reason: str = '') -> dict[str, Any]:
     path = _record_path(ws, milestone_id)
-    record = _record(ws, milestone_id)
-    proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
-    if proposal is None or proposal.get('state') != 'proposed':
-        raise WorkspaceError('That proposal is not waiting for approval.')
-    proposal.update(state='discarded', discarded_utc=_now(), reason=reason.strip()[:1000] or None)
-    _write_json(path, record)
+    with ws._lock:                          # read, change, write back: never across a withdrawal (review of J11-G37)
+        record = _record(ws, milestone_id)
+        proposal = next((p for p in record['proposals'] if p.get('id') == proposal_id), None)
+        if proposal is None or proposal.get('state') != 'proposed':
+            raise WorkspaceError('That proposal is not waiting for approval.')
+        proposal.update(state='discarded', discarded_utc=_now(), reason=reason.strip()[:1000] or None)
+        _write_json(path, record)
     ws.ledger.append('acceptance.discarded', {'milestone': milestone_id, 'proposal': proposal_id})
     return {'ok': True}

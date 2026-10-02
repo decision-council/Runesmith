@@ -10,6 +10,16 @@ function greeting() {
 
 // Your numbers: the latest value of each measurement, in plain words, where the owner looks first (journey J5:
 // the value was only on a project dashboard, under receipt hashes).
+// What Runesmith decided by the owner's own settings, in plain words (journey J11-G42, G43): keeping the queue after a
+// restart, one more try for a milestone whose tries are used up, smaller steps for one that failed that too.
+function automaticCard(s) {
+  const rows = s.automatic || [];
+  if (!rows.length) return null;
+  return h('section.card', { 'aria-label': 'Decided by your settings' },
+    h('div.card-head', h('h3', icon('shield'), 'Decided by your settings')),
+    h('div.list', rows.map((r) => h('div.item', h('div.body', h('div.title', r.what), h('div.meta', `${ago(r.utc)} · ${r.by}`))))));
+}
+
 function numbersCard(s, navigate) {
   const rows = s.numbers || [];
   if (!rows.length) return null;
@@ -116,7 +126,8 @@ export default async function render(root, { app, navigate, refreshState }) {
     if (last?.result === 'failed') line += ` The last attempt did not work (${ago(last.finished)}): ${String(last.outcome?.error || 'see Activity').slice(0, 180)}`
       + (tries >= 3 ? ` ${tries} tries in a row did not work, so it waits for you: Work & proposals → Drafts shows what you can do.` : s.settings.auto_work ? ' The next round tries again.' : '');
     // Rounds that find every try used up end "done", but building waits all the same (journey J2-F16).
-    else if (last?.outcome?.replan_needed) line += ' The tries for this step are used up, so building waits for you: Work & proposals → Drafts shows what you can do, and Goals & plan may offer smaller steps to adopt.';
+    else if (last?.outcome?.replan_needed) line += ' The tries for this step are used up, so building waits for you: Work & proposals → Drafts shows what you can do, and Goals & plan may offer smaller steps to adopt.'
+      + (last.outcome.cause ? ` The cause: ${last.outcome.cause}` : '');
     cta = h('button.btn.primary.lg', { onclick: () => navigate('goals') }, icon('target'), 'Continue the plan');
   } else {
     line = 'Review enabled modes and their prerequisites before starting. A configured route is not a capacity test, and a saved work outcome is not proof that the project is complete.';
@@ -306,7 +317,7 @@ export default async function render(root, { app, navigate, refreshState }) {
   caps.append(h('p.tiny.faint.mt-8', 'Bands: bad · minimal · optimal. "Unknown" means there is no evidence yet, not that things are fine.'));
 
   // A plain DOM append prints "null" for an empty card (journey J6-B1), so only real cards are passed.
-  root.append(hero, ...[numbersCard(s, navigate)].filter(Boolean), policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
+  root.append(hero, ...[automaticCard(s), numbersCard(s, navigate)].filter(Boolean), policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
     h('div.grid.two.mt-24', objects, next), fixCard, tryCard, h('div.grid.two.mt-24', live, caps));
   function kpisWrap(k) { k.classList.remove('four'); k.classList.add('two'); return k; }
   return () => {closed=true;healthSerial++;offs.forEach((off) => off());};

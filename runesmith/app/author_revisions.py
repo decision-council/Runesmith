@@ -56,7 +56,8 @@ def _inputs(ws, draft_id, instrument, *, active_job=None, own_request_key=None, 
     from runesmith.app.acceptance_contracts import expectation_digest
     from runesmith.app.author_recovery import acceptance_identity, pending_authors
     from runesmith.app.environment_intent import require_intent
-    from runesmith.app.planner import draft_prompt, milestone_contract, milestone_ready, source_context, DRAFT_SYSTEM, DRAFT_SCHEMA
+    from runesmith.app.planner import (draft_prompt, focus_problem, milestone_contract, milestone_ready, source_context,
+                                       DRAFT_SYSTEM, DRAFT_SCHEMA)
     from runesmith.app.revision_context import candidate_identity, selected_view
     from runesmith.app.snapshots import collect_snapshot
     from runesmith.app.work_modes import guard_job, configuration
@@ -90,7 +91,9 @@ def _inputs(ws, draft_id, instrument, *, active_job=None, own_request_key=None, 
     if not any(n.get('target', {}).get('type') == 'draft' and n['target'].get('id') == draft_id for n in feedback['included']):
         raise WorkspaceError('Add a draft note describing the defect and retained behavior; it must be included in the packet.')
     intent = require_intent(ws); context = source_context(ws, snapshot=snapshot)
-    if context.get('focus_errors'): raise WorkspaceError('Selected source context is unavailable.')
+    # Only a prioritized path that is gone or hidden blocks, and it is named, as in an ordinary build: a file too large or
+    # crowded out is an omitted file like any other (review of J11-B15: this refused every revision, naming no file).
+    if focus_problem(context): raise WorkspaceError('Selected source context is unavailable: ' + focus_problem(context))
     ignored = ()
     if own_request_key:
         from runesmith.app.author_recovery import read_packet

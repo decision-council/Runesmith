@@ -294,7 +294,7 @@ def test_the_link_doctor_drafts_edits_that_apply_only_onto_the_version_they_were
     result = ws.suggest_link_fixes()
     assert result["draft"] and [f["change"] for f in result["fixed"]] == ["setup.md#install → guide/setup.md#install"]
     assert [u["target"] for u in result["unresolved"]] == ["nowhere-at-all.md"]
-    draft = next(d for d in ws.drafts() if d["id"] == result["draft"])
+    draft = next(d for d in ws.drafts(diffs=True) if d["id"] == result["draft"])
     assert draft["files"][0]["path"] == "docs/README.md" and "+- [setup](guide/setup.md#install)" in draft["files"][0]["diff"]
     (docs / "README.md").write_text("# Docs (edited)\n- [setup](setup.md#install)\n", encoding="utf-8")
     assert ws.apply_draft(result["draft"])["conflicts"] == ["docs/README.md"]      # the owner changed it meanwhile

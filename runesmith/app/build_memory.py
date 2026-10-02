@@ -69,9 +69,12 @@ def remember_check(ws, draft, verification, *, origin='runtime'):
     # when the owner withdrew wrote a memory with the withdrawn sentences).
     with ws._lock:
         milestone = draft.get('milestone')
+        # A verification that returned early (a syntax error, a stale source, a refusal) never reached the owner's checks
+        # and carries no digest of them: nothing was judged by expectations, so none can have been withdrawn (review).
         stale = (not contracts_in_force(ws, verification)
-                 or verification.get('public_acceptance_digest') != (expectation_digest(ws, milestone)
-                                                                     if isinstance(milestone, str) else None))
+                 or ('public_acceptance_digest' in verification
+                     and verification['public_acceptance_digest'] != (expectation_digest(ws, milestone)
+                                                                      if isinstance(milestone, str) else None)))
         if stale:
             # Judged by expectations the owner has since withdrawn or replaced: the outcome is kept, not their
             # sentences, nor a phantom failure that "needs the owner's clarification" (review of J11-G37).
@@ -186,6 +189,11 @@ def _quoted_index(ws):
     return value if isinstance(value, dict) else {}
 
 
+def _milestones(value):
+    """A list of milestone ids from whatever was stored: anything else (a hand-damaged entry) quotes nothing."""
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
 def backfill_quoted(ws, milestone_id=None):
     """Which milestones each older memory quotes, read once from its build's receipt and kept beside the memories.
 
@@ -197,7 +205,7 @@ def backfill_quoted(ws, milestone_id=None):
     wanted = {}
     for row in Memory(ws.home / 'memory.jsonl').active(source_kind=SOURCE_KIND):
         source = row.get('source', {})
-        if source.get('quoted') is not None or row['id'] in index:
+        if isinstance(source.get('quoted'), list) or isinstance(index.get(row['id']), list):
             continue
         if milestone_id is not None and source.get('milestone') == milestone_id:
             continue
@@ -206,10 +214,15 @@ def backfill_quoted(ws, milestone_id=None):
         return
     found = {}
     for memory_id, evidence in wanted.items():
-        receipt = _read_json(ws.home / evidence / 'VERIFICATION.json', {}) if isinstance(evidence, str) and evidence else {}
-        found[memory_id] = quoted_milestones(receipt) if isinstance(receipt, dict) else []
-    with ws._lock:
-        _write_json(ws.home / QUOTED_INDEX, {**_quoted_index(ws), **found})
+        receipt = _read_json(ws.home / evidence / 'VERIFICATION.json', None) if isinstance(evidence, str) and evidence else {}
+        # Only a receipt that was found and read says what it quotes. A missing or unreadable one (a sharing violation
+        # while another process held it, say) is left out, so the next pass reads it again: indexing it as "quotes
+        # nothing" kept a memory of withdrawn sentences for ever (review of J11-G37).
+        if isinstance(receipt, dict):
+            found[memory_id] = quoted_milestones(receipt)
+    if found:
+        with ws._lock:
+            _write_json(ws.home / QUOTED_INDEX, {**_quoted_index(ws), **found})
 
 
 def retire_for_milestone(ws, milestone_id, reason):
@@ -223,9 +236,7 @@ def retire_for_milestone(ws, milestone_id, reason):
         memory = Memory(ws.home / 'memory.jsonl')
         for row in memory.active(source_kind=SOURCE_KIND):
             source = row.get('source', {})
-            quoted = source.get('quoted')
-            if quoted is None:
-                quoted = index.get(row['id']) or []
+            quoted = _milestones(source.get('quoted') if isinstance(source.get('quoted'), list) else index.get(row['id']))
             if source.get('milestone') == milestone_id or milestone_id in quoted:
                 memory.retire(row['id'], reason)
 

@@ -38,6 +38,7 @@ let readinessScenario=false;
 let delayMission=false, releaseMission=null;
 let delayedBrowse=null;
 let delayedResolve=null, resolutionFailure='';
+let holdWithdraw=false, releaseWithdraw=null, pingDelayMs=0;       // B20.16: a Withdraw that is slow, and a Studio that answers slowly
 let switchFixture={allowed:true,blockers:[],waiting:2,policy:'Waiting jobs stay in their original home. A different home opens paused; review it before Resume.'};
 const recoveryQuote={id:'b'.repeat(64),parent_allocation:'a'.repeat(64),project_timeout_s:360,owner_timeout_s:240,
   maximum_check_s:600,evidence:{detail:'Specific legacy author-view refusal, ledger-confirmed completion and unchanged prior run inventory.'}};
@@ -134,6 +135,8 @@ await context.route('**/*',async route=>{
   }
   let body=null;try{body=req.postDataJSON();}catch{}
   requests.push({path:p,query:url.search,method:req.method(),body,workspace:req.headers()['x-runesmith-workspace']});let data={ok:true};
+  if(p==='/api/ping'&&pingDelayMs)await new Promise(resolve=>setTimeout(resolve,pingDelayMs));
+  if(holdWithdraw&&req.method()==='POST'&&p.endsWith('/acceptance/withdraw'))await new Promise(resolve=>{releaseWithdraw=resolve;});
   if(enforceScope&&req.headers()['x-runesmith-workspace']&&req.headers()['x-runesmith-workspace']!==workspaceScope){
     await route.fulfill({status:409,json:{error:'Workspace changed. Reload Studio before acting; nothing was submitted.'}});return;
   }
@@ -234,7 +237,7 @@ await context.route('**/*',async route=>{
     readiness:Object.fromEntries((fixturePlan?.milestones||[]).map(m=>[m.id,{ready:true,unmet:[]}]))};
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
   else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false,autonomy:'propose',
-    exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark'};
+    exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark',recovery_policy:'wait',stuck_policy:'wait'};
   else if(p==='/api/map/environment')data=fixtureProbeMap||{map:{objects:fixtureMapObjects||[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
   else if(p==='/api/map/development')data={objects:fixtureProbeMap?.map.objects||[],goals:[],plan:null,lineage:[],campaigns:[]};
   else if(p==='/api/build')data={apply:false,acceptance_folder:'.runesmith/acceptance',last:null};
@@ -295,6 +298,7 @@ await context.route('**/*',async route=>{
     if(milestoneRefusal){const why=milestoneRefusal;milestoneRefusal=null;await route.fulfill({status:401,json:{error:why}});return;}
     data={id:'mnew',status:'open',...body};
   }
+  else if(/^\/api\/plan\/milestones\/[A-Za-z0-9_-]+$/.test(p)&&req.method()==='POST')data={id:p.split('/')[4],...body};     // an edit (B20.15)
   else {await route.fulfill({status:400,json:{error:'Unimplemented fixture route: '+p}});return;}
   await route.fulfill({json:data});
 });
@@ -2007,6 +2011,23 @@ try{
     }
     fixturePlan.milestones[0].status='open';await page.evaluate(()=>window.mount('goals'));
     loops.push({id:'B20.13',case:'Approved checks can be withdrawn with a reason (a blank one says so and sends nothing), also on a done or dropped milestone, which is told to reopen it for new ones',result:'passed'});
+    // B20.16 (journey J11-F30): a Withdraw that takes long says how long, and whether Runesmith itself still answers
+    holdWithdraw=true;
+    await block().getByRole('button',{name:'Withdraw these checks',exact:true}).click();
+    await page.getByRole('dialog').locator('textarea').fill('The layers are in the wrong place.');
+    await page.getByRole('dialog').getByRole('button',{name:'Withdraw',exact:true}).click();
+    const slowNote=page.locator('.slow-note');
+    assert.equal(await slowNote.count(),0);                                       // quick requests show nothing
+    await slowNote.waitFor({timeout:10000});
+    assert((await slowNote.innerText()).includes('Withdrawing the checks is taking longer than usual'),await slowNote.innerText());
+    await page.waitForFunction(()=>document.querySelector('.slow-note')?.textContent.includes('Runesmith answers other requests quickly'),null,{timeout:10000});
+    assert((await slowNote.innerText()).includes('there is no need to press it again'));
+    pingDelayMs=2600;                                                             // now the Studio itself is slow to answer
+    await page.waitForFunction(()=>/answering slowly right now \(a simple request took \d\.\d s\)/.test(document.querySelector('.slow-note')?.textContent||''),null,{timeout:20000});
+    pingDelayMs=0;holdWithdraw=false;assert(releaseWithdraw);releaseWithdraw();releaseWithdraw=null;
+    await slowNote.waitFor({state:'detached',timeout:10000});                       // the note goes when the request is answered
+    await page.locator('.toast',{hasText:'Checks withdrawn'}).last().waitFor();
+    loops.push({id:'B20.16',case:'A Withdraw that takes long says how long it has been and whether Runesmith itself answers quickly or slowly, and the note goes when it is answered',result:'passed'});
     // B20.14: the Author context drawer says files over the normal cap are still shown when the budget has room
     await page.getByRole('button',{name:'Author context',exact:true}).click();
     const context=page.getByRole('dialog',{name:'Author context'});await context.waitFor();
@@ -2164,6 +2185,46 @@ try{
     assert.equal(await counting.locator('.warn').count(),0);
     await counting.getByRole('button',{name:'Cancel',exact:true}).click();
     loops.push({id:'B20.12',case:'The milestone form counts each field against its limit and says when one is too long',result:'passed'});
+    await page.keyboard.press('Escape');                                              // the form of B20.12, if still open
+    // B20.15 (journey J11-G41): the form names a milestone's prerequisites ("Needs first"), and sends them only when the choice changed
+    fixturePlan.milestones.push({id:'m2',title:'Yearly totals',status:'open',detail:'',done_when:'Totals per year',depends_on:['m1']});
+    await page.evaluate(()=>window.mount('goals'));
+    const editOf=async(title)=>{
+      const tag='edit-'+title.replace(/\W+/g,'-');
+      await page.evaluate(([t,tag])=>{const found=[...document.querySelectorAll('#page button')].filter(x=>x.innerText.trim()==='Edit').find(x=>{
+        let n=x;for(let k=0;k<8&&n;k++){if((n.innerText||'').startsWith(t))return true;n=n.parentElement;}return false;});
+        found.setAttribute('data-loop',tag);},[title,tag]);
+      await page.locator(`[data-loop="${tag}"]`).click();
+      const form=page.locator('.modal',{hasText:'Edit milestone'});await form.waitFor();return form;
+    };
+    const chosen=(form)=>form.getByLabel('Needs first',{exact:true}).evaluate(el=>[...el.selectedOptions].map(o=>o.value));
+    let needsStart=requests.length;
+    let editing=await editOf('Yearly totals');
+    assert.deepEqual(await chosen(editing),['m1']);                                  // what it waits for is shown, by title
+    assert((await editing.getByLabel('Needs first',{exact:true}).innerText()).includes('Books per month (open)'));
+    await editing.getByLabel('Done when',{exact:true}).fill('Totals per year, newest first');
+    await editing.getByRole('button',{name:'Save',exact:true}).click();
+    await page.waitForTimeout(300);
+    assert.deepEqual(requests.slice(needsStart).filter(r=>r.method==='POST').map(r=>[r.path,r.body]),
+      [['/api/plan/milestones/m2',{title:'Yearly totals',detail:'',done_when:'Totals per year, newest first'}]]);   // words alone leave it be
+    needsStart=requests.length;
+    editing=await editOf('Yearly totals');
+    await editing.getByLabel('Needs first',{exact:true}).selectOption([]);           // none: an empty list clears them
+    await editing.getByRole('button',{name:'Save',exact:true}).click();
+    await page.waitForTimeout(300);
+    assert.deepEqual(requests.slice(needsStart).filter(r=>r.method==='POST').map(r=>r.body.depends_on),[[]]);
+    needsStart=requests.length;
+    await page.getByRole('button',{name:'Milestone',exact:true}).click();
+    const adding=page.locator('.modal',{hasText:'Add a milestone'});await adding.waitFor();
+    await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Title');
+    await adding.getByLabel('Title',{exact:true}).fill('Charts');
+    await adding.getByLabel('Needs first',{exact:true}).selectOption(['m1','m2']);
+    await adding.getByRole('button',{name:'Save',exact:true}).click();
+    await page.waitForTimeout(300);
+    assert.deepEqual(requests.slice(needsStart).filter(r=>r.method==='POST').map(r=>[r.path,r.body]),
+      [['/api/plan/milestones',{title:'Charts',detail:'',done_when:'',depends_on:['m1','m2']}]]);
+    fixturePlan.milestones.pop();await page.evaluate(()=>window.mount('goals'));
+    loops.push({id:'B20.15',case:'The milestone form names what a milestone needs first, shows the choice by title and sends it only when it changed',result:'passed'});
     // B20.10 (owner of J11, 2026-09-29): the check autopilot's approvals say so, what it left for the owner says why, and its switch is in the Build card
     fixtureAcceptance={m1:{approved:{provenance:'model-proposed, autopilot-approved',proposed_by:'Fixture chat',checks,
         autopilot:'trial and findings clean; verifier-model worked out the same 4 expected values'},
@@ -2284,6 +2345,15 @@ try{
     assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST').map(r=>r.body).at(-1),{autonomy:'propose'});
     assert(!/\bnull\b|undefined/.test(await page.locator('#page').innerText()));   // J4-B3: a stray null under Build continuation
     loops.push({id:'B23.02',case:'The observe block on Goals & plan offers the switch itself instead of sending people to Modes',result:'passed'});
+    // B23.03 (journeys J11-G42, G43): what Runesmith decided by the owner's own settings is on the Overview, said as such
+    await page.evaluate(async state=>{window.homeState=state;window.navigation=null;await window.mount('home');},
+      {...base,automatic:[{utc:new Date().toISOString().replace(/\.\d+Z$/,'Z'),kind:'one_more_try',by:'Runesmith (your setting)',
+        what:'“Large feature” had used up its tries. By your setting, Runesmith gave it one more try with another model: Draft d1: its own tests passed.'}]});
+    const decided=page.locator('section.card[aria-label="Decided by your settings"]');
+    await decided.waitFor();
+    const decidedText=await decided.innerText();
+    assert(decidedText.includes('By your setting, Runesmith gave it one more try')&&decidedText.includes('Runesmith (your setting)'),decidedText);
+    loops.push({id:'B23.03',case:'The Overview lists what Runesmith decided by the owner\'s settings, in plain words and as "Runesmith (your setting)"',result:'passed'});
     fixtureAutonomy='propose';
   }
   if(selected.has('B24')){
@@ -2319,6 +2389,16 @@ try{
     await page.waitForFunction(()=>document.querySelector('input[aria-label="Full speed"]')?.checked===true);
     assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST'&&r.path==='/api/settings').map(r=>r.body).at(-1),{full_speed:true});
     loops.push({id:'B24.03',case:'Full speed is off until the owner turns it on, says when it still waits, and saves only that switch',result:'passed'});
+    // B24.04 (journeys J11-G42, G43): running on its own is the owner's choice, waiting for him until he makes it
+    const own=page.locator('.card',{hasText:'Running on its own'});
+    assert.equal(await own.getByRole('button',{name:'Wait for me',exact:true}).first().getAttribute('aria-pressed'),'true');
+    assert((await own.innerText()).includes('The interrupted job is never run again'));
+    await own.getByRole('button',{name:'Keep and continue',exact:true}).click();
+    await own.getByRole('button',{name:'One more try, then break it down',exact:true}).click();
+    await page.waitForFunction(()=>[...document.querySelectorAll('.seg button')].some(b=>b.textContent.trim()==='One more try, then break it down'&&b.classList.contains('on')));
+    assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST'&&r.path==='/api/settings').map(r=>r.body).slice(-2),
+      [{recovery_policy:'keep'},{stuck_policy:'retry_split'}]);
+    loops.push({id:'B24.04',case:'Settings offer to keep the queue after an interrupted job and to give a stuck milestone one more try, both waiting for the owner until chosen',result:'passed'});
   }
   if(selected.has('B25')){
     // A folder of documents: a model reads only the documents the owner ticks, and the page says so (journey J4-G2).

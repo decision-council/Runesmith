@@ -237,11 +237,43 @@ export function drawer({ title, sub, render, width }) {
   setTimeout(() => { if (el.isConnected && !el.contains(document.activeElement)) closeBtn.focus(); }, 60);   // unless it focused something itself
   return { close, el, body };
 }
-export async function withBusy(btn, fn) {
+export async function withBusy(btn, fn, what) {
   btn && btn.classList.add('busy');
+  const watching = btn ? watchSlow(btn, what) : null;
   try { return await fn(); }
   catch (e) { toast(e.message || String(e), 'bad', 6000); return undefined; }
-  finally { btn && btn.classList.remove('busy'); }
+  finally { watching && watching.stop(); btn && btn.classList.remove('busy'); }
+}
+// Journey J11-F30: a Withdraw took two minutes while the computer was overloaded, and its button only spun. After a few
+// seconds a line beside the button says how long it has been, and whether Runesmith itself still answers (measured with
+// the plainest request it has), so the owner knows what is being waited for and that the click was not lost.
+export const SLOW_AFTER_MS = 3000, SLOW_EVERY_MS = 2000, SLOW_PING_S = 2;
+function watchSlow(btn, what) {
+  const started = Date.now(), name = what || 'This';
+  let note = null, timer = null, stopped = false;
+  const show = (text) => {
+    if (stopped) return;
+    if (!note) note = h('p.tiny.muted.slow-note', { role: 'status', 'aria-live': 'polite' });
+    if (!note.isConnected && btn.isConnected) btn.insertAdjacentElement('afterend', note);
+    note.textContent = text;
+  };
+  const tick = async () => {
+    if (stopped) return;
+    const taking = () => `${name} is taking longer than usual (${Math.round((Date.now() - started) / 1000)} s).`;
+    show(`${taking()} Checking whether Runesmith is busy…`);
+    const pinged = performance.now();
+    let seconds = null;
+    try { await get('/api/ping'); seconds = (performance.now() - pinged) / 1000; } catch { /* not answering at all */ }
+    if (stopped) return;
+    show(seconds === null
+      ? `${taking()} Runesmith is not answering right now; if it is still running, this will finish when it does.`
+      : seconds >= SLOW_PING_S
+        ? `${taking()} Runesmith is answering slowly right now (a simple request took ${seconds.toFixed(1)} s), so the computer or Runesmith is busy with other work. This will finish; there is no need to press it again.`
+        : `${taking()} Runesmith answers other requests quickly, so this one is waiting for a step that is saving to your project, or for the disk. This will finish; there is no need to press it again.`);
+    timer = setTimeout(tick, SLOW_EVERY_MS);
+  };
+  timer = setTimeout(tick, SLOW_AFTER_MS);
+  return { stop() { stopped = true; clearTimeout(timer); note && note.remove(); } };
 }
 export function copyText(text) {
   if (navigator.clipboard && window.isSecureContext !== false) return navigator.clipboard.writeText(text).then(() => toast('Copied', 'good', 1600));

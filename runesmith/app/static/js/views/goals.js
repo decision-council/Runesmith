@@ -6,13 +6,13 @@ import { h, icon, get, post, del, bus, toast, commentable, openNotes, clear, ago
 // read all three; an owner's own milestone used to get a title and nothing else (journey J11-G7).
 // Save a milestone; a refusal is said and the form opens again with what was typed (journey J11-F19: after a
 // restart the session was stale, the dialog closed with nothing said, and the owner's text was lost).
-async function saveMilestone(heading, url, start, redraw) {
+async function saveMilestone(heading, url, start, redraw, others = []) {
   let values = start;
   for (;;) {
-    const f = await milestoneForm(heading, values);
+    const f = await milestoneForm(heading, values, others);
     if (!f) return;
     try { await post(url, f); redraw(); return; }
-    catch (error) { toast(`Not saved: ${error.message}`, 'bad', 8000); values = f; }
+    catch (error) { toast(`Not saved: ${error.message}`, 'bad', 8000); values = { ...f, depends_on: f.depends_on ?? start.depends_on }; }
   }
 }
 
@@ -27,17 +27,31 @@ const counted = (field, limit) => {
   return count;
 };
 
-function milestoneForm(heading, m = {}) {
+// "Needs first" (journey J11-G41): a plan loaded at once waits on its prerequisites, which only breakdown steps could name.
+function milestoneForm(heading, m = {}, others = []) {
   return new Promise((resolve) => {
     const title = h('input.input', { value: m.title || '', placeholder: 'e.g. A first page that lists tasks', 'aria-label': 'Title' });
     const detail = h('textarea.textarea', { rows: 3, placeholder: 'What it should do, in your own words (optional)', 'aria-label': 'What it should do' }, m.detail || '');
     const done = h('textarea.textarea', { rows: 2, placeholder: 'e.g. Opening the page shows the list (optional)', 'aria-label': 'Done when' }, m.done_when || '');
+    const wanted = new Set(m.depends_on || []);
+    const needs = h('select.select', { multiple: true, size: Math.min(6, Math.max(2, others.length)), 'aria-label': 'Needs first' },
+      others.map((o) => h('option', { value: o.id, selected: wanted.has(o.id) }, `${o.title} (${(STATUS[o.status] || STATUS.open)[1]})`)));
+    const body = (close) => {
+      if (!title.value.trim()) return close(null);
+      const out = { title: title.value.trim(), detail: detail.value.trim(), done_when: done.value.trim() };
+      // Sent only when the choice changed, so a save of the words alone never touches what the milestone waits for.
+      const chosen = [...needs.selectedOptions].map((o) => o.value);
+      const before = [...wanted].filter((id) => others.some((o) => o.id === id));
+      if (chosen.length !== before.length || !chosen.every((id) => before.includes(id))) out.depends_on = chosen;
+      close(out);
+    };
     modal({ title: heading, body: h('div.col.gap-8', h('label.col', h('span.small', 'Title'), title, counted(title, LIMITS.title)),
       h('label.col', h('span.small', 'What it should do'), detail, counted(detail, LIMITS.detail)),
-      h('label.col', h('span.small', 'Done when'), done, counted(done, LIMITS.done_when))),
+      h('label.col', h('span.small', 'Done when'), done, counted(done, LIMITS.done_when)),
+      others.length ? h('label.col', h('span.small', 'Needs first'), needs,
+        h('span.tiny.muted', 'Optional. It waits until these are done or dropped. Hold Ctrl (or Cmd) to choose several.')) : null),
       onClose: (v) => resolve(v || null),
-      actions: [{ label: 'Cancel', kind: 'ghost', value: null }, { label: 'Save', kind: 'primary', onClick: (close) => close(title.value.trim()
-        ? { title: title.value.trim(), detail: detail.value.trim(), done_when: done.value.trim() } : null) }] });
+      actions: [{ label: 'Cancel', kind: 'ghost', value: null }, { label: 'Save', kind: 'primary', onClick: body }] });
   });
 }
 
@@ -235,7 +249,7 @@ export default async function render(root, ctx) {
       await post('/api/worker/run', { job: 'plan' }); toast('The Planner is drafting. This page updates when it is done.', 'good', 6000);
     }));
     clear(planCard).append(h('div.card-head', h('h3', icon('route'), 'Plan'), plan ? h('span.badge', `v${plan.version} · ${plan.drafted_by || 'owner'} · ${ago(plan.utc)}`) : null,
-      h('div.actions', h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, showAuthorContext)}, icon('eye'), 'Author context'), h('button.btn.sm', { onclick: () => saveMilestone('Add a milestone', '/api/plan/milestones', {}, drawPlan) }, icon('plus'), 'Milestone'), draftBtn)));
+      h('div.actions', h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, showAuthorContext)}, icon('eye'), 'Author context'), h('button.btn.sm', { onclick: () => saveMilestone('Add a milestone', '/api/plan/milestones', {}, drawPlan, plan?.milestones || []) }, icon('plus'), 'Milestone'), draftBtn)));
     if(planningBlocks.length)planCard.append(h('div.callout.warn',h('div',planningBlocks.join(' '),
       h('div.row.wrap.mt-8',
         data.autonomy==='observe' ? h('button.btn.sm.primary',{onclick:(e)=>withBusy(e.currentTarget,async()=>{
@@ -294,7 +308,7 @@ export default async function render(root, ctx) {
                 await post('/api/worker/run',{job:'breakdown',params:{milestone:m.id}});
                 toast('Runesmith is proposing smaller prerequisites from the evidence. The goal stays unchanged.','good',6000);
               })},icon('route'),'Propose smaller steps') : null,
-            h('button.btn.sm.ghost', { onclick: () => saveMilestone('Edit milestone', `/api/plan/milestones/${m.id}`, m, drawPlan) }, icon('pencil'), 'Edit'))),
+            h('button.btn.sm.ghost', { onclick: () => saveMilestone('Edit milestone', `/api/plan/milestones/${m.id}`, m, drawPlan, plan.milestones.filter((o) => o.id !== m.id)) }, icon('pencil'), 'Edit'))),
         h('span', { class: `badge ${cls}` }, label));
       // Acceptance checks the owner approves in plain words: automatic apply for this milestone is judged by them.
       const acc = data.acceptance_checks?.[m.id];
@@ -330,7 +344,7 @@ export default async function render(root, ctx) {
                 // A done or dropped milestone gets no new checks until it is reopened: propose() refuses it. An open one
                 // gets them when the owner asks, or at the autopilot's next round (J11-G37 review).
                 toast(['done', 'dropped'].includes(m.status) ? `Checks withdrawn. This milestone is ${m.status}: set its status to open to have new checks written with your reason.`
-                  : 'Checks withdrawn. Press “Propose acceptance checks” to have new ones written with your reason.', 'good', 6000); drawPlan(); }); } },
+                  : 'Checks withdrawn. Press “Propose acceptance checks” to have new ones written with your reason.', 'good', 6000); drawPlan(); }, 'Withdrawing the checks'); } },
               icon('x'), 'Withdraw these checks')) : null].filter(Boolean));
       }
       if (acc?.proposal) {

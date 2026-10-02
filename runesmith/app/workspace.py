@@ -71,6 +71,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "build_paths": [],
     "checks_autopilot": False,    # Runesmith approves proposed checks that pass every gate (acceptance_autopilot)
     "full_speed": False,          # the next scheduled step starts as soon as one ends while models answer (J11-F21)
+    # Two choices that let a project run to the end of its plan without the owner (journey J11-G42, G43); both wait for
+    # the owner by default.
+    "recovery_policy": "wait",    # after an interrupted job: "wait" for the owner's review, or "keep" the queue and go on
+    "stuck_policy": "wait",       # when a milestone's tries are used up: "wait", "retry" (one more try) or "retry_split"
 }
 # Homes onboarded before the explicit choices existed keep the behaviour they were onboarded with, until their owner
 # chooses (``policy_chosen`` absent from the stored settings marks such a home).
@@ -80,8 +84,10 @@ SETTING_TYPES: dict[str, Any] = {
     "interval_minutes": (int, float), "probe_tests": bool, "exclude": list, "max_objects": int, "read_notes": bool,
     "kaizen": bool, "min_experience": int, "kaizen_every": int, "theme": str, "policy_chosen": bool,
     "build_steps": bool, "build_apply": bool, "build_paths": list, "checks_autopilot": bool, "full_speed": bool,
+    "recovery_policy": str, "stuck_policy": str,
 }
 CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"},
+           "recovery_policy": {"wait", "keep"}, "stuck_policy": {"wait", "retry", "retry_split"},
            "use_type": {"", "improve", "build", "docs", "explore", "numbers"}}
 RANGES = {"interval_minutes": (1, 7 * 24 * 60), "max_objects": (1, 500), "min_experience": (2, 10_000),
           "kaizen_every": (1, 10_000)}
@@ -858,7 +864,7 @@ class Workspace:
             row["object"] = self._object_label(Path(row["repo"])) if row.get("repo") else None
             row["issue"] = (s.get("issue") or "")[:400]
             recent.append(row)
-        drafts = self.drafts()
+        drafts = self.drafts(diffs=True)
         from runesmith.app.build_memory import recent_observations
         from runesmith.app.build_corrections import correction_candidates
         from runesmith.app.building import author_context_preflight, build_escalation_status, supplement_status
@@ -1113,7 +1119,11 @@ class Workspace:
             return None
         return path.as_posix()
 
-    def drafts(self) -> list[dict[str, Any]]:
+    def drafts(self, *, diffs: bool = False) -> list[dict[str, Any]]:
+        """Every saved draft, newest first. The change of an edit is worked out only for `diffs=True`, which the Work
+        page asks for: nothing else reads it, and on J11's 130 drafts it was half a second of Python on every refresh
+        of the Overview and every step the worker chose, all of it competing with whatever else the Studio was doing
+        (journey J11-F30: a Withdraw crawled while the computer was overloaded)."""
         import difflib
         rows = []
         for path in sorted((self.home / "drafts").glob("*/DRAFT.json")):
@@ -1121,7 +1131,7 @@ class Workspace:
             if isinstance(draft, dict):
                 for f in draft.get("files", []):
                     f["exists_now"] = (self.root / f["path"]).is_file()
-                    if "base" in f:
+                    if diffs and "base" in f:
                         f["diff"] = "".join(difflib.unified_diff(f["base"].splitlines(True), f["content"].splitlines(True),
                                                                  f"a/{f['path']}", f"b/{f['path']}", n=1))
                 rows.append(draft)

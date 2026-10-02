@@ -763,3 +763,24 @@ def test_another_file_that_can_never_be_shown_is_named_instead_of_the_budget(tmp
             admit_answer_files(ws, context, [dict(edit, path=name) for name in order])
         assert "together" not in str(refused.value) and not getattr(refused.value, "context_gap", None)
         assert refused.value.feedback["not_shown"] == "zbig.js"
+
+
+def test_the_used_up_summary_and_the_breakdown_packet_name_the_file_no_model_can_see(tmp_path):
+    # Review of J11-B15 (the 40,000-byte wall): three answers editing a file over the limit are refused, and the summary
+    # only said the tries were used up; smaller steps that edit the same file fail the same way, so the cause is said
+    # in the summary, the reason it is blocked, and in what the breakdown is asked from.
+    from runesmith.app.breakdowns import input_packet
+    from runesmith.app.building import build_step
+    from runesmith.app.source_focus import FOCUSED_FILE_BYTES
+    edit = {"title": "Edit", "files": [{"path": "zbig.js", "edits": [{"old_text": "// y", "new_text": "// z"}]}]}
+    ws = gap_project(tmp_path, [edit] * 5)
+    (tmp_path / "zbig.js").write_bytes(b"// y\n" * ((FOCUSED_FILE_BYTES + 400) // 5))
+    router = ws.router()
+    for _ in range(3):
+        with pytest.raises(PlannerUnavailable, match="zbig.js is too large to show a model"):
+            build_step(ws, router)
+    result = build_step(ws, router)
+    assert result["replan_needed"] and "The cause: zbig.js is too large to show a model (40,000 bytes at most)" in result["summary"]
+    assert "split it first" in result["cause"] and "smaller steps that edit it fail the same way" in result["cause"]
+    packet = input_packet(ws, "m1")
+    assert packet["files_no_model_can_see"] == {"zbig.js": "file_limit"} and "files_no_model_can_see" in packet["task"]

@@ -287,6 +287,8 @@ def api_session(s: Studio, q, body):
 def api_state(s: Studio, q, body):
     state = _ws(s).state()
     state["worker"] = {k: v for k, v in s.worker.snapshot().items() if k != "lines"}
+    from runesmith.app import automatic
+    state["automatic"] = automatic.recent(_ws(s))      # what Runesmith decided by the owner's settings (J11-G42, G43)
     state["recent_events"] = s.bus.recent[-1]["id"] if s.bus.recent else 0
     return state
 
