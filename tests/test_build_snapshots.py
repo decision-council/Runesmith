@@ -17,7 +17,8 @@ def test_prompt_omissions_do_not_truncate_verification(tmp_path):
     # Too large for the model packet, but still a required local regression.
     (tests/'test_large.py').write_text('# filler\n'*5000+'import unittest\nclass Regression(unittest.TestCase):\n    def test_existing(self): self.fail("omitted regression must still run")\n')
     draft=draft_files(ws,ws.router())
-    assert 'tests/test_large.py' in source_context(ws)['omitted']
+    context=source_context(ws)
+    assert 'tests/test_large.py' not in context['files'] and 'tests/test_large.py' in context['excerpts']   # shown in parts only (J11-B15)
     result=verify_draft(ws,draft)
     assert result['status']=='failed'
     assert 'omitted regression must still run' in result['project_checks']['output']
@@ -85,7 +86,7 @@ def test_unseen_replacement_is_still_refused_with_full_local_snapshot(tmp_path):
     ws=setup(tmp_path)
     (tmp_path/'large.py').write_text('# filler\n'*5000)
     scripted(ws,[{'title':'blind edit','files':[{'path':'large.py','content':'x=2\n'}]}],roles=('plan',))
-    with pytest.raises(PlannerUnavailable,match='large.py is too large to show a model'):draft_files(ws,ws.router())   # J11-B15
+    with pytest.raises(PlannerUnavailable,match='refused a whole-file replacement of large.py'):draft_files(ws,ws.router())   # J11-B15: shown in parts
 
 
 def test_byte_hash_prevents_line_ending_race(tmp_path):

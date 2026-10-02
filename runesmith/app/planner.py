@@ -75,7 +75,9 @@ PLAN_SYSTEM = ("You are the planning instrument of Runesmith, a careful developm
                "honest plans for the owner of a folder. Reply with one JSON object only.")
 DRAFT_SYSTEM = ("You are the building instrument of Runesmith. Implement one bounded milestone change while "
                 "preserving existing functionality. Prefer exact edits for existing files, complete content for "
-                "new files. No skeletons or placeholder implementations. Reply with one JSON object only.")
+                "new files. A file shown only in parts (source_context.excerpts) may be changed only with exact "
+                "edits whose old_text is copied from one of its excerpts. No skeletons or placeholder "
+                "implementations: never leave code out with a comment such as '// ...'. Reply with one JSON object only.")
 
 
 class PlannerUnavailable(RuntimeError):
@@ -86,16 +88,128 @@ class SkippedByOwner(RuntimeError):
     """The owner skipped the chat-relay request: nothing is saved, and the plan and the drafts stay as they were."""
 
 
-def source_context(ws, limit: int = 48000, *, snapshot=None) -> dict[str, Any]:
+def source_context(ws, limit: int = 48000, *, snapshot=None, milestone=None, feedback=True, parts_share=1.0,
+                   parts_reserve=0, parts=True) -> dict[str, Any]:
     """Bounded, deterministic source bytes, not just filenames. Never follow links.
 
     Kept outside the model response so that the host, not the author, binds edits
-    to the exact version inspected before the call.
+    to the exact version inspected before the call. A file too large to show whole is shown in parts; with a
+    `milestone` its excerpts are chosen by that milestone's words (and, with `feedback`, by what the last refused
+    answers tried to change), so the same milestone and feedback give the same packet (journey J11-B15, B16).
     """
     from runesmith.app.snapshots import collect_snapshot
     snapshot = snapshot if snapshot is not None else collect_snapshot(ws)
     from runesmith.app.source_focus import select_context
-    return select_context(ws, snapshot, limit)
+    terms = milestone_terms(ws, milestone, feedback=feedback) if milestone else None
+    return select_context(ws, snapshot, limit, terms=terms, parts_share=parts_share, parts_reserve=parts_reserve,
+                          parts=parts)
+
+
+def program_excerpts(ws, milestone: dict, limit: int = 6000) -> dict[str, str]:
+    """The parts of the program the Checker is shown (acceptance_proposals.packet), chosen the same way for a smaller
+    budget: file -> a short outline and the best-matching excerpts (journey J11-B16: the second model recomputed values
+    from the milestone's words without seeing the code that reads them)."""
+    from runesmith.app.snapshots import SnapshotUnsupported, collect_snapshot
+    from runesmith.app.source_parts import build_parts
+    from runesmith.app.workspace import WorkspaceError
+    shown, left = {}, limit
+    try:
+        snapshot = collect_snapshot(ws)
+        context = source_context(ws, limit=16000, snapshot=snapshot, milestone=milestone, feedback=False,
+                                 parts_share=0.6, parts_reserve=6000)
+        terms = milestone_terms(ws, milestone, feedback=False)
+        for rel in context.get('excerpts') or {}:
+            part = build_parts(rel, snapshot['files'][rel].decode('utf-8-sig').replace('\r\n', '\n'), terms, left,
+                               outline_cap=min(1200, left // 4))
+            if part:
+                shown[rel] = part['text']
+                left -= part['chars']
+    except (WorkspaceError, SnapshotUnsupported, OSError):
+        return {}                       # the cross-check goes on without the excerpts, as before
+    return shown
+
+
+def milestone_view(ws, observed: dict, snapshot: dict, milestone: dict) -> dict[str, Any]:
+    """The source an observation was made of, as this milestone's own words show it: the same files and prioritized
+    paths, the parts of large files chosen by the milestone (journey J11-B15). A round reads the folder once and decides
+    every milestone from that reading, so this never reads it again."""
+    from runesmith.app.source_focus import select_context
+    return select_context(ws, snapshot, focus_paths=observed.get('focus_paths'), terms=milestone_terms(ws, milestone))
+
+
+def _sentences(value):
+    """Every text in a nested answer (a check's feedback), in order."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in _sentences(item)]
+    if isinstance(value, (list, tuple)):
+        return [text for item in value for text in _sentences(item)]
+    return []
+
+
+_DRAFT_HEADS: dict = {}
+
+
+def _light_drafts(ws) -> list[dict[str, Any]]:
+    """What the words of a milestone's excerpts need of each saved draft, read from its record only when it changed:
+    a draft holds whole files, and a round asks for every ready milestone's words (journey J11-B15)."""
+    from runesmith.app.workspace import _read_json
+    rows, seen = [], set()
+    for path in (ws.home / 'drafts').glob('*/DRAFT.json'):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        key = str(path)
+        seen.add(key)
+        known = _DRAFT_HEADS.get(key)
+        if known is None or known[0] != (stat.st_mtime_ns, stat.st_size):
+            draft = _read_json(path, None)
+            known = ((stat.st_mtime_ns, stat.st_size),
+                     {k: draft.get(k) for k in ('id', 'milestone', 'contract', 'state', 'utc', 'public_acceptance_digest',
+                                                'verification')} if isinstance(draft, dict) else {})
+            _DRAFT_HEADS[key] = known
+        if known[1]:
+            rows.append(known[1])
+    for key in [key for key in list(_DRAFT_HEADS) if key.startswith(str(ws.home / 'drafts')) and key not in seen]:
+        _DRAFT_HEADS.pop(key, None)
+    return rows
+
+
+def milestone_terms(ws, milestone: dict, *, feedback: bool = True) -> dict[str, Any]:
+    """The words a milestone's excerpts of a large file are chosen by (journey J11-B15, B16): identifiers and quoted
+    strings of its title, what it should do and done when, and, for a build, of the newest failing checks' sentences
+    and, as whole lines, the old_text of the newest refused answers (what the model tried to change: its next call
+    is shown those lines). The same milestone and feedback always give the same words."""
+    from runesmith.app.acceptance_contracts import draft_owner_feedback
+    from runesmith.app.source_parts import extract_terms
+    from runesmith.app.workspace import _read_json
+    texts = [str(milestone.get(k) or '') for k in ('title', 'detail', 'done_when')]
+    anchors: list[str] = []
+    if feedback and milestone.get('id'):
+        contract = milestone_contract(ws, milestone)
+        refused = []
+        for path in (ws.home / 'build-attempts').glob('*.json'):
+            row = _read_json(path, {})
+            note = row.get('feedback') if isinstance(row, dict) else None
+            if isinstance(note, dict) and row.get('contract') == contract and isinstance(note.get('requested_old_text'), str):
+                try:
+                    written = path.stat().st_mtime_ns
+                except OSError:
+                    written = 0
+                refused.append((str(row.get('utc') or ''), written, note['requested_old_text']))
+        for _, _, old in sorted(refused, key=lambda r: (r[0], r[1]), reverse=True)[:3]:
+            anchors += [line.strip() for line in old.splitlines() if len(line.strip()) > 5][:12]
+        failing = []
+        for draft in _light_drafts(ws):
+            if (draft.get('milestone') == milestone['id'] and draft.get('contract') == contract
+                    and draft.get('state') == 'needs_revision'):
+                failing.append((str(draft.get('utc') or ''), draft))
+        for _, draft in sorted(failing, key=lambda r: r[0], reverse=True)[:3]:
+            texts.append(' '.join(_sentences(draft_owner_feedback(ws, draft)))[:3000])
+    terms = extract_terms(*texts, anchors=anchors)
+    return dict(terms, text=' '.join(texts[:3]))
 
 
 def milestone_contract(ws, milestone: dict) -> str:
@@ -259,6 +373,65 @@ def revisable_candidates(ws, drafts, milestone, snapshot_digest) -> list[dict[st
             and d.get('snapshot_digest') == snapshot_digest and d.get('public_acceptance_digest') == public]
 
 
+CANDIDATE_CHARS = 40000
+
+
+def _full_text(ws, context, rel):
+    """The whole current text of a file shown in parts, line ends as LF: from the live file when its bytes are the ones
+    the parts were made from, else from the frozen snapshot of that source; None when neither is (journey J11-B15)."""
+    want = ((context.get('excerpts') or {}).get(rel) or {}).get('sha256')
+    if not want:
+        return None
+    from runesmith.app.snapshots import SnapshotUnsupported, load_snapshot
+    found = []
+    try:
+        found.append((ws.root / rel).read_bytes())
+    except OSError:
+        pass
+    for data in found:
+        if hashlib.sha256(data).hexdigest() == want:
+            return data.decode('utf-8-sig').replace('\r\n', '\n')
+    try:
+        data = load_snapshot(ws, context['snapshot_digest'])['files'].get(rel)
+    except (SnapshotUnsupported, OSError, KeyError, TypeError, ValueError):
+        return None
+    if data is not None and hashlib.sha256(data).hexdigest() == want:
+        return data.decode('utf-8-sig').replace('\r\n', '\n')
+    return None
+
+
+def candidate_shown(ws, revision, context, milestone):
+    """What a revision candidate shows a model, file by file (journey J11-B15): whole while the files fit together, a
+    file that does not fit in parts, around the lines the candidate changed and the milestone's words, or, with no room
+    for that, not at all. Returns (files, parts, omitted, view): `view` is what the packet records, so a later check
+    knows which lines of each candidate file its author saw."""
+    from runesmith.app.source_parts import MIN_PART_CHARS, build_parts, changed_blocks
+    files, parts, omitted, view, used, terms = [], {}, [], {}, 0, None
+    for f in revision['files']:
+        path, text = f['path'], f['content']
+        if used + len(text) <= CANDIDATE_CHARS:
+            files.append({'path': path, 'content': text})
+            used += len(text)
+            view[path] = {'shown': 'full'}
+            continue
+        part = None
+        if CANDIDATE_CHARS - used >= MIN_PART_CHARS:
+            terms = milestone_terms(ws, milestone) if terms is None else terms
+            now = context['files'].get(path)
+            now = _full_text(ws, context, path) if now is None else now
+            part = build_parts(path, text, terms, CANDIDATE_CHARS - used,
+                               must=changed_blocks(now, text) if isinstance(now, str) else ())
+        if part is None:
+            omitted.append(path)
+            view[path] = {'shown': 'omitted'}
+            continue
+        sha = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        parts[path] = dict(part, sha256=sha)
+        used += part['chars']
+        view[path] = {'shown': 'parts', 'ranges': part['ranges'], 'lines': part['lines'], 'sha256': sha}
+    return files, parts, omitted, view
+
+
 def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, memories=None, revision=None,
                  revision_view=None, ignored_attempt_ids=()) -> str:
     from runesmith.app.work_modes import prompt_context
@@ -266,6 +439,7 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
     from runesmith.app.workspace import _read_json
     from runesmith.app.build_memory import _check_summary, recall_for_milestone
     memories = recall_for_milestone(ws, milestone) if memories is None else memories
+    context = source_context(ws, milestone=milestone) if context is None else context
     plan = ws.plan() or {}
     failed = [_read_json(p,{}) for p in (ws.home/'build-attempts').glob('*.json') if p.name not in ignored_attempt_ids]
     failed = sorted((a for a in failed if a.get('contract') == milestone_contract(ws,milestone) and a.get('error')),
@@ -273,7 +447,7 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
     # Only a candidate made on today's source is offered for revision: only then are its edits admitted against it
     # (journey J11-G33: shown a candidate from older source, the model edited that candidate's code, and every answer
     # was refused against the current file, seven times). An older one stays in previous_attempts with its feedback.
-    today = (context if context is not None else source_context(ws)).get('snapshot_digest')
+    today = context.get('snapshot_digest')
     # Nor one checked by expectations the owner has since withdrawn or replaced: its feedback quotes their sentences
     # (journey J11-G37).
     revisions = revisable_candidates(ws, ws.drafts(), milestone, today)
@@ -292,13 +466,11 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
             'instruction': ('Resolve every listed owner-acceptance failure while preserving passing behavior. '
                             'The candidate is unapplied; revise it against the supplied current source.'),
         }
-        used = 0
-        for f in previous['files']:
-            if used + len(f['content']) <= 40000:
-                candidate['files'].append({'path':f['path'],'content':f['content']})
-                used += len(f['content'])
-            else:
-                candidate['omitted'].append(f['path'])
+        # A candidate file too large to show whole is shown in parts too (J11-B15): the lines it changed and the
+        # milestone's words, so the next try can repair the code it wrote.
+        candidate['files'], parts, candidate['omitted'], _ = candidate_shown(ws, previous, context, milestone)
+        if parts:
+            candidate['excerpts'] = parts
     packet = {
         "task": ("Implement the next small complete step of this milestone, inside the owner's folder. Paths are relative to the folder "
                  "root and use forward slashes. Keep it small: at most 8 files. Use small exact edits for existing files "
@@ -321,7 +493,7 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
                                or milestone.get('parent_id') in g['milestone_ids']],
         "folder_map": _workspace_summary(ws),
         "owner_brief": ws.brief().get("text") or "(no brief written yet)",
-        "source_context": context if context is not None else source_context(ws),
+        "source_context": context,
         "allowed_build_paths": ws.settings().get('build_paths', []),
         "recent_host_refusals": [{'error':a['error'],'feedback':a.get('feedback')} for a in failed],
         "historical_build_observations": memories,
@@ -343,6 +515,8 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
                   "for an existing file prefer edits: up to 6 exact old_text/new_text replacements, each matching once",
                   "each edit must actually change text: new_text must differ from old_text; preserve exact line breaks and quoting when copying old_text, and omit unchanged lines rather than emitting placeholder/no-op edits",
                   "for a new draft copy old_text from source_context.files, or for a shared document from its text under BLUEPRINT DOCUMENTS; when candidate_to_revise exists, exact edits may instead target that candidate and omitted candidate files are retained unchanged",
+                  # J11-B15: a file over its cap is shown in parts, and may be changed only where it was shown.
+                  "a file listed under source_context.excerpts is shown only in parts: an outline of its declarations, then exact excerpts, each labelled with its lines. Change it only with exact edits whose old_text is copied from ONE excerpt, never from the outline, and never by writing the whole file; an old_text outside the shown lines is refused. A candidate file listed under candidate_to_revise.excerpts is shown the same way",
                   "use either content (complete file) or edits, never both; new files always need complete content",
                   "no secrets, keys or personal data in files"],
         "output": {"title": "a short name for this draft", "why": "what these files achieve for the milestone",
@@ -750,7 +924,6 @@ def _not_shown(rel, context, ws=None, needed=()):
     the owner can close: waiting would leave the milestone stuck, so those stay an ordinary failed try, and the words
     say what to change.
     """
-    from runesmith.app.source_focus import FOCUSED_FILE_BYTES
     reasons = context.get('omission_reasons') or {}
     reason = reasons.get(rel) or 'packet_budget'
     seen = set(context.get('files') or ()) | set(context.get('omitted') or ())
@@ -766,8 +939,10 @@ def _not_shown(rel, context, ws=None, needed=()):
                  "budget together, so no model can be shown them all and a change to them cannot be checked. Remove "
                  "prioritized files this step does not need, or split this step into smaller ones.")
     elif reason == 'file_limit':
-        words = (f"{rel} is too large to show a model ({FOCUSED_FILE_BYTES:,} bytes at most), so a change to it cannot be "
-                 "checked against it. Split it into smaller files.")
+        # A file over the limit is shown in parts (J11-B15); this is one that cannot be, even then: no line of it is short
+        # enough to quote.
+        words = (f"{rel} is too large to show a model, even in parts (its lines are too long to quote), so a change to it "
+                 "cannot be checked against it. Split it into smaller files.")
         if _prioritized(ws, context, rel):
             words += " It is prioritized under Author context, which cannot show it either: take it out of the list once it is split."
     elif reason == 'not_utf8':
@@ -787,16 +962,115 @@ def _not_shown(rel, context, ws=None, needed=()):
     return failure
 
 
+class _OutsideShown(ValueError):
+    """An exact edit whose old text lies on lines of a file the model was shown only in parts, outside every part
+    (journey J11-B15). `shown` is the ranges the model was shown."""
+
+    def __init__(self, first, last, count):
+        super().__init__(f'old_text is on lines {first}-{last} of {count}, which were not shown')
+        self.first, self.last, self.count, self.shown = first, last, count, []
+
+
+def _inside_shown(before, after, edit, ranges):
+    """The shown ranges after an edit that lies inside one of them; _OutsideShown when its old text does not. An exact
+    old_text is placed where it occurs; one a forgiving match repaired (indentation, quotes) by the lines it changed."""
+    from runesmith.app.source_parts import changed_lines, holding_range, line_span, shifted_ranges, split_lines
+    old = edit.get('old_text') if isinstance(edit, dict) else None
+    span = line_span(before, old) or changed_lines(before, after)
+    index = holding_range(ranges, *span)
+    if index is None:
+        raise _OutsideShown(span[0], span[1], len(split_lines(before)))
+    return shifted_ranges(ranges, index, span[1], len(split_lines(after)) - len(split_lines(before)))
+
+
+def _replace_every_inside(value, key, given, ranges):
+    """_replace_every for a file shown in parts: every place the same edit replaces must lie inside a shown range."""
+    from runesmith.app.source_parts import holding_range, split_lines
+    text = _replace_every(value, key, given)
+    spans, at = [], 0
+    while (found := value.find(key[0], at)) != -1:
+        spans.append((value.count('\n', 0, found) + 1, value.count('\n', 0, found + len(key[0]) - 1) + 1))
+        at = found + len(key[0])
+    for first, last in spans:
+        if holding_range(ranges, first, last) is None:
+            raise _OutsideShown(first, last, len(split_lines(value)))
+    each = key[1].count('\n') - key[0].count('\n')
+    moved = [[a + each * sum(1 for _, last in spans if last < a), b + each * sum(1 for first, _ in spans if first <= b)]
+             for a, b in ranges]
+    return text, [pair for pair in moved if pair[1] >= pair[0]]
+
+
+def _candidate_ranges(candidate_view, rel, candidate, current_in_parts):
+    """How a revision candidate's file was shown, as a base for edits: None (whole), the ranges it was shown in, or
+    False (not shown, so no edit may quote it). A candidate this call recorded nothing about is trusted as before, unless
+    the current file was shown only in parts: then it must have been shown too."""
+    view = (candidate_view or {}).get(rel) or {}
+    if view.get('shown') == 'parts':
+        same = view.get('sha256') == hashlib.sha256(candidate.encode('utf-8')).hexdigest()
+        return view.get('ranges') if same and isinstance(view.get('ranges'), list) else False
+    if current_in_parts and view.get('shown') != 'full':
+        return False
+    return None
+
+
+# Code an answer leaves out (journey J11-G39: renderer.mjs was written as "// ... (renderer logic from motion.mjs)" and
+# record.html stopped at "// Recording logic including MediaStreamAudioDestinationNode...", and both passed): a comment
+# that stands in for the code. An ordinary comment that ends in "..." is not one.
+_LEFT_OUT = (re.compile(r'^(?:\.\.\.|…)'),
+             re.compile(r'\bfor brevity\b', re.I),
+             re.compile(r'\brest of (?:the )?(?:code|file|function|logic|implementation)\b', re.I),
+             re.compile(r'\b(?:code|logic|implementation)\s+(?:is\s+|was\s+)?omitted\b', re.I),
+             re.compile(r'\bgoes here\b', re.I),
+             re.compile(r'\b(?:code|logic|implementation|handling)\b.*(?:\.\.\.|…)$', re.I))
+DOCUMENT_FILES = ('.md', '.markdown', '.txt', '.rst')
+
+
+def _comment_words(line):
+    """The words of a comment line (//, #, /*, * or <!--), or None when the line is not a comment. Python's bare ... is
+    a statement, not a comment."""
+    text = line.strip()
+    for opener in ('<!--', '/*', '//', '#', '*'):
+        if text.startswith(opener):
+            text = text[len(opener):].strip()
+            for closer in ('-->', '*/'):
+                if text.endswith(closer):
+                    text = text[:-len(closer)].strip()
+            return text
+    return None
+
+
+def _refuse_left_out(rel, content, base):
+    """Refuse a line the answer ADDS (it is not a line of the base: every line of a new file, the new text of an edit)
+    that is a comment standing in for code. An elision already in the base, left untouched, stays."""
+    if not isinstance(content, str) or rel.lower().endswith(DOCUMENT_FILES):
+        return
+    known = {line.strip() for line in base.splitlines()}
+    for number, line in enumerate(content.splitlines(), 1):
+        words = _comment_words(line)
+        if words and line.strip() not in known and any(pattern.search(words) for pattern in _LEFT_OUT):
+            failure = PlannerUnavailable(f'{rel} line {number} leaves code out (“{line.strip()[:100]}”): write the '
+                                         'code in full; never abbreviate.')
+            failure.feedback = {'path': rel, 'elided_line': number}
+            raise failure
+
+
 def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths: set[str] | None = None,
-                       revision_files: dict[str, dict] | None = None):
+                       revision_files: dict[str, dict] | None = None, candidate_view: dict | None = None,
+                       materialized=()):
     """Turn one immutable model answer into host-bound candidate bytes.
 
     Exact edits are replayed against the frozen current source.  During an
     explicit revision, an edit may instead match the prior unapplied candidate
     exactly; the host then materializes full candidate bytes bound to the
     unchanged real source.  Neither path gets fuzzy matching or extra paths.
+
+    A file the model was shown only in parts (context['excerpts']) may be changed only by exact edits whose old text
+    occurs once in the whole file and lies inside one shown part, never by a whole-file replacement; `materialized`
+    names the paths whose content the host itself built from a focused revision (journey J11-B15).
     """
+    from runesmith.app.source_parts import format_ranges
     context = _with_shared_documents(ws, context)
+    parts = context.get('excerpts') or {}
     files = copy.deepcopy([f for f in (raw_files or []) if isinstance(f, dict)])
     touched = [r for r in dict.fromkeys(ws._safe_rel(str(f.get("path") or "")) for f in files) if r and (ws.root / r).exists()]
     admitted = []
@@ -806,35 +1080,52 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
             raise PlannerUnavailable("the draft included an invalid path")
         if allowed_paths is not None and rel not in allowed_paths:
             raise PlannerUnavailable(f"the corrected answer broadened its path set: {rel}")
+        part = parts.get(rel)
+        base_used = ''
         if 'edits' in f:
             candidate=(revision_files or {}).get(rel,{}).get('content')
-            if rel not in context['files'] and not isinstance(candidate,str) and rel in (context.get('omitted') or []):
+            if rel not in context['files'] and part is None and not isinstance(candidate,str) and rel in (context.get('omitted') or []):
                 raise _not_shown(rel, context, ws, touched)
-            if 'content' in f or (rel not in context['files'] and not isinstance(candidate,str)):
+            if 'content' in f or (rel not in context['files'] and part is None and not isinstance(candidate,str)):
                 raise PlannerUnavailable('Exact edits require a fully shown current or candidate file and no content field.')
             edit_index = None
             try:
                 if not isinstance(f['edits'],list) or not 1<=len(f['edits'])<=MAX_EDITS:
                     raise ValueError(f'Provide 1-{MAX_EDITS} exact edits.')
-                bases=[('current',context['files'][rel])] if rel in context['files'] else []
+                bases=[('current',context['files'][rel],None)] if rel in context['files'] else []
+                if part is not None and not bases:
+                    whole=_full_text(ws,context,rel)
+                    if whole is None:
+                        raise PlannerUnavailable(f'{rel} has changed since it was shown in parts, so an edit to it cannot be '
+                                                 'checked against what the model saw.')
+                    bases.append(('current',whole,part['ranges']))
                 if revision_files and rel in revision_files:
                     if isinstance(candidate,str) and candidate!=context['files'].get(rel):
                         # Revisions preserve the selected candidate's other changes.
                         # Fall back to live source only if exact candidate edits fail.
-                        bases.insert(0, ('candidate',candidate))
+                        # A candidate shown in parts is edited only where it was shown (J11-B15).
+                        shown_as=_candidate_ranges(candidate_view,rel,candidate,part is not None)
+                        if shown_as is not False:
+                            bases.insert(0, ('candidate',candidate,shown_as))
                 errors=[];proposed=None
-                for base_name,base_text in bases:
+                for base_name,base_text,base_ranges in bases:
                     try:
                         value=base_text;repeated,done=_repeated(f['edits']),set()
+                        shown=None if base_ranges is None else [list(r) for r in base_ranges]
                         for edit_index,edit in enumerate(f['edits']):
                             key=_edit_key(edit)
                             if key in repeated:
                                 if key not in done:
-                                    value=_replace_every(value,key,repeated[key]);done.add(key)
+                                    if shown is None:value=_replace_every(value,key,repeated[key])
+                                    else:value,shown=_replace_every_inside(value,key,repeated[key],shown)
+                                    done.add(key)
                                 continue
+                            before=value
                             value=_apply_one_edit(value,edit,rel)
-                        proposed=value;f['revision_base']=base_name;break
+                            if shown is not None:shown=_inside_shown(before,value,edit,shown)
+                        proposed=value;f['revision_base']=base_name;base_used=base_text;break
                     except (ValueError,TypeError,KeyError) as candidate_error:
+                        if isinstance(candidate_error,_OutsideShown):candidate_error.shown=base_ranges
                         errors.append(candidate_error)
                 if proposed is None:
                     raise errors[-1]
@@ -847,7 +1138,9 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
                     old=edit.get('old_text','') if isinstance(edit,dict) else ''
                     old=old if isinstance(old,str) else ''
                     candidate_text=(revision_files or {}).get(rel,{}).get('content','')
-                    searchable=context['files'].get(rel,'')+'\n'+candidate_text
+                    # A file shown in parts has no excerpt of lines the model was not shown (J11-B15): its next call is
+                    # shown them instead, through the old_text this feedback keeps.
+                    searchable='' if part is not None else context['files'].get(rel,'')+'\n'+candidate_text
                     lines=searchable.splitlines()
                     anchors=[line.strip() for line in old.splitlines() if len(line.strip())>5]
                     start=next((n for anchor in anchors for n,line in enumerate(lines) if line.strip()==anchor),None)
@@ -866,12 +1159,34 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
                         feedback['hint']=(f'Each line of this old_text appears in {rel} only inside a longer line, for example '
                                           f'line {inside+1}: {lines[inside].strip()[:200]} . old_text must quote the file\'s own '
                                           'lines exactly as they are (its code), not the text the program writes.')
-                failure=PlannerUnavailable(f'Exact edit refused for {rel}: {error}')
+                words=f'Exact edit refused for {rel}: {error}'
+                if isinstance(error,_OutsideShown):
+                    # Plain words, naming the lines that were shown; the model's error, with what a correction can use.
+                    words=(f'Exact edit refused for {rel}: its old_text is on lines {error.first}–{error.last} of '
+                           f'{error.count}, which the model was not shown. It was shown lines {format_ranges(error.shown)} '
+                           f'of {rel}: copy old_text from one of those parts (never from the outline), or leave the '
+                           'change out.')
+                    feedback.update(shown_ranges=[list(r) for r in error.shown],lines=[error.first,error.last])
+                failure=PlannerUnavailable(words)
                 failure.feedback=feedback
                 raise failure from error
         if rel in context["files"]:
             f["base"] = context["files"][rel]
             f["expected_sha256"] = context['file_hashes'][rel]
+        elif part is not None:
+            if 'edits' not in f and rel not in materialized:
+                failure = PlannerUnavailable(
+                    f"refused a whole-file replacement of {rel}: the model was shown it only in parts (lines "
+                    f"{format_ranges(part['ranges'])} of {part['lines']}). Change it with exact edits whose old_text is "
+                    "copied from one shown part; never write the whole file.")
+                failure.feedback = {'path': rel, 'shown_ranges': [list(r) for r in part['ranges']], 'whole_file': True}
+                raise failure
+            whole = _full_text(ws, context, rel)
+            if whole is None:
+                raise PlannerUnavailable(f'{rel} has changed since it was shown in parts, so a change to it cannot be '
+                                         'checked against what the model saw.')
+            f["base"] = whole
+            f["expected_sha256"] = part['sha256']
         elif (ws.root / rel).exists():
             if rel in (context.get('omitted') or []):
                 raise _not_shown(rel, context, ws, touched)
@@ -880,16 +1195,17 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
             f.pop("base", None)
             f.pop("expected_sha256", None)
             f["expected_absent"] = True
+        _refuse_left_out(rel, f.get('content'), base_used if 'edits' in f else f.get('base') or '')
         admitted.append(rel)
     return files
 
 
-def admit_revision_answer(ws,context,raw_files,revision=None,*,allowed_paths=None):
+def admit_revision_answer(ws,context,raw_files,revision=None,*,allowed_paths=None,candidate_view=None,materialized=()):
     """Admit an answer and carry forward untouched bytes from its candidate."""
     context=_with_shared_documents(ws,context)
     revision_files={f['path']:f for f in revision.get('files',[])} if revision else {}
     files=admit_answer_files(ws,context,raw_files,allowed_paths=allowed_paths,
-                            revision_files=revision_files)
+                            revision_files=revision_files,candidate_view=candidate_view,materialized=materialized)
     returned={f['path'] for f in files}
     for rel,prior in revision_files.items():
         if rel in returned:continue
@@ -898,6 +1214,14 @@ def admit_revision_answer(ws,context,raw_files,revision=None,*,allowed_paths=Non
         if rel in context['files']:
             retained=copy.deepcopy(prior);retained['base']=context['files'][rel]
             retained['expected_sha256']=context['file_hashes'][rel]
+            retained.pop('expected_absent',None)
+        elif rel in (context.get('excerpts') or {}):
+            whole=_full_text(ws,context,rel)
+            if whole is None:
+                raise PlannerUnavailable(f'{rel} has changed since it was shown in parts, so the retained candidate cannot be '
+                                         'bound to it.')
+            retained=copy.deepcopy(prior);retained['base']=whole
+            retained['expected_sha256']=context['excerpts'][rel]['sha256']
             retained.pop('expected_absent',None)
         elif not (ws.root/rel).exists():
             retained=copy.deepcopy(prior);retained.pop('base',None);retained.pop('expected_sha256',None)
@@ -924,7 +1248,7 @@ def draft_files(ws, router, milestone_id: str | None = None, *, revision=None, a
         raise PlannerUnavailable("there is no ready open milestone to draft for; prerequisites must be done first")
     from runesmith.app.snapshots import collect_snapshot, freeze_snapshot
     snapshot = collect_snapshot(ws)
-    context = source_context(ws, snapshot=snapshot)
+    context = source_context(ws, snapshot=snapshot, milestone=milestone)
     if focus_missing(context):
         # No model is asked: this uses up no try (journey J11-B15 review: a prioritized file went away and every build
         # used up a try with no call made).
@@ -973,7 +1297,8 @@ def draft_files(ws, router, milestone_id: str | None = None, *, revision=None, a
     packet=prepare_packet(ws,request_key,milestone=milestone,context=context,contract=contract,
         public_digest=public_digest,exposure=exposure_path.relative_to(ws.home).as_posix(),
         revision=revision,explicit_revision=explicit_revision,attempt_id=attempt_id,revision_view=revision_view,
-        revision_operation=revision_operation)
+        revision_operation=revision_operation,
+        candidate_view=candidate_shown(ws,revision,context,milestone)[3] if revision and revision_view is None else None)
     if not explicit_revision:
         _rotate_repeating_author(ws, router, contract)
     answered: dict[str, Any] = {}

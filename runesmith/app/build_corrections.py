@@ -20,6 +20,7 @@ from runesmith.app.planner import (DRAFT_SCHEMA, PlannerUnavailable,
                                    admit_revision_answer, milestone_contract,
                                    settled_state, source_context)
 from runesmith.app.snapshots import collect_snapshot, freeze_snapshot
+from runesmith.app.source_focus import recorded_excerpts, shown_view
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 from runesmith.instruments import LenientSchema, TransportCensored
 from runesmith.app.acceptance_contracts import draft_owner_feedback, expectations, expectation_digest
@@ -131,7 +132,10 @@ def readmit_kept_answer(ws, attempt_id: str, *, checkpoint=lambda: None):
         operations = copy.deepcopy(original_files)
         title, why = (original.get('answer') or {}).get('title'), (original.get('answer') or {}).get('why')
         by = original.get('author')
-    context = source_context(ws, snapshot=snapshot)
+    # The lines the kept answer's own call was shown: its original packet's, or its correction's (journey J11-B15).
+    from runesmith.app.author_recovery import answer_packet, replay_context
+    context = replay_context(ws, snapshot, correction.get('excerpts') if correction
+                             else answer_packet(ws, answer_path.relative_to(ws.home).as_posix()).get('excerpts'))
     freeze_snapshot(ws, snapshot)
     key = 'r' + uuid.uuid4().hex[:12]
     receipt_path = ws.home / READMITS / (key + '.json')
@@ -149,7 +153,7 @@ def readmit_kept_answer(ws, attempt_id: str, *, checkpoint=lambda: None):
                           drafted_by=by, milestone=milestone['id'])
     ws._save_draft_state(draft, 'waiting', contract=attempt['contract'], context_digest=context['digest'],
                          public_acceptance_digest=expectation_digest(ws, milestone['id']),
-                         snapshot_digest=snapshot['digest'], shown_files=sorted(context['files']),
+                         snapshot_digest=snapshot['digest'], **shown_view(context),
                          correction_of=attempt_id, readmitted=key)
     _write_json(receipt_path, dict(receipt, state='candidate', draft=draft['id'], finished=_now()))
     ws.ledger.append('build.answer_readmitted', {'id': key, 'attempt': attempt_id, 'draft': draft['id'],
@@ -242,7 +246,7 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
     snapshot=collect_snapshot(ws)
     if snapshot['digest']!=attempt.get('snapshot_digest'):
         raise WorkspaceError('Source changed since the rejected answer; correction is stale.')
-    context=source_context(ws,snapshot=snapshot)
+    context=source_context(ws,snapshot=snapshot,milestone=milestone)
     freeze_snapshot(ws,snapshot)
 
     previous_draft=None
@@ -275,11 +279,13 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
                 'behavior. The host will retain any candidate path you do not return, rerun admission, all project '
                 'tests and owner acceptance, and reject stale or fuzzy edits. If you choose content instead of '
                 'edits for an existing path, it MUST be the complete file from first line to last; a fragment is '
-                'not content.'),
+                'not content. A file in current_source whose text says it is shown in parts may be changed only with '
+                'exact edits whose old_text is copied from ONE of its excerpts, never from its outline.'),
         'milestone':milestone, 'original_refusal':attempt.get('feedback'),
         'public_acceptance':expectations(ws,milestone['id']),
         'allowed_paths':sorted(allowed),
-        'current_source':{path:context['files'].get(path) for path in sorted(allowed)},
+        'current_source':{path:context['files'].get(path) or ((context.get('excerpts') or {}).get(path) or {}).get('text')
+                          for path in sorted(allowed)},
         'candidate_to_correct':{'title':base_title,'why':base_why,'files':base_files},
         'recent_verification':recent,
         'limits':{'correction':len(history)+1,'maximum':MAX_CORRECTIONS,
@@ -297,7 +303,8 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
     receipt={'id':key,'attempt':attempt_id,'state':'started','utc':_now(),
              'number':len(history)+1,'original_answer':answer_path.relative_to(ws.home).as_posix(),
              'input_sha256':hashlib.sha256(json.dumps(packet,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
-             'packet':packet,'trainer_runtime':'local-correction-v3'}
+             'packet':packet,'trainer_runtime':'local-correction-v3',
+             'excerpts':recorded_excerpts(context)}
     _write_json(receipt_path,receipt);checkpoint()
     try:
         outcome=router.call('plan',prompt=json.dumps(packet,ensure_ascii=False),
@@ -347,8 +354,9 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
         operations += [copy.deepcopy(row) for row in original_files
                        if row.get('path') in admitted and row.get('path') not in replacements]
     try:
-        files=admit_revision_answer(ws,context,operations,previous_draft,
-                                    allowed_paths=allowed)
+        # A correction shows its candidate whole (candidate_to_correct), so edits may quote any of it.
+        files=admit_revision_answer(ws,context,operations,previous_draft,allowed_paths=allowed,
+                                    candidate_view={row['path']:{'shown':'full'} for row in base_files} if previous_draft else None)
     except PlannerUnavailable as error:
         _write_json(receipt_path,dict(receipt,state=settled_state(error,'refused'),error=str(error)[:300],
                                       feedback=getattr(error,'feedback',None)))
@@ -359,7 +367,7 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
                         drafted_by=by,milestone=milestone['id'])
     ws._save_draft_state(draft,'waiting',contract=attempt['contract'],context_digest=context['digest'],
                          public_acceptance_digest=(packet['public_acceptance'] or {}).get('digest'),
-                         snapshot_digest=snapshot['digest'],shown_files=sorted(context['files']),
+                         snapshot_digest=snapshot['digest'],**shown_view(context),
                          correction_of=attempt_id,correction_receipt=receipt_path.relative_to(ws.home).as_posix(),
                          retained_paths=sorted(allowed-set(replacements)))
     _write_json(receipt_path,dict(receipt,state='candidate',draft=draft['id'],

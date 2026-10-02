@@ -39,9 +39,17 @@ def test_host_binds_source_and_reuses_waiting_draft(tmp_path):
 
 def test_unseen_replacements_refused(tmp_path):
     ws = planned(tmp_path)
-    (tmp_path/'large.py').write_text('x = 1\n'*7000)        # 42,000 bytes, over even the prioritized cap: never shown (J11-B15)
+    (tmp_path/'large.py').write_text('x = 1\n'*7000)        # 42,000 bytes, over even the prioritized cap: shown in parts (J11-B15)
     scripted(ws, [{'title':'Blind edit','files':[{'path':'large.py','content':'x = 2'}]}], roles=('plan',))
-    with pytest.raises(PlannerUnavailable, match='large.py is too large to show a model'):
+    with pytest.raises(PlannerUnavailable, match='refused a whole-file replacement of large.py'):
+        draft_files(ws, ws.router())
+
+
+def test_a_file_no_part_of_which_can_be_shown_is_refused_in_plain_words(tmp_path):
+    ws = planned(tmp_path)
+    (tmp_path/'wide.py').write_text('x = 1; '*6000)         # one line of 42,000 characters: too long to quote, so no part shows it
+    scripted(ws, [{'title':'Blind edit','files':[{'path':'wide.py','content':'x = 2'}]}], roles=('plan',))
+    with pytest.raises(PlannerUnavailable, match='wide.py is too large to show a model, even in parts'):
         draft_files(ws, ws.router())
 
 
@@ -345,10 +353,11 @@ def test_a_model_that_repeats_a_refused_edit_is_asked_last(tmp_path):
 
 
 def crowded(root):
-    """A project where huge.js is left out of what models are shown: a_pad.js, read first, leaves it no room.
-    Both are 28,000 bytes, under every cap, and together over the 48,000-character source budget."""
-    for name in ("a_pad.js", "huge.js"):
-        (root / name).write_bytes(b"// y\n" * 5600)
+    """A project where huge.js is left out of what models are shown: the pads, read first, leave it less room than a
+    part needs (4,000 characters). The pads are 20,000, 20,000 and 5,000 bytes, huge.js 28,000: under every cap, and
+    together over the 48,000-character source budget."""
+    for name, lines in (("a_pad.js", 4000), ("b_pad.js", 4000), ("c_pad.js", 1000), ("huge.js", 5600)):
+        (root / name).write_bytes(b"// y\n" * lines)
 
 
 EDIT_HUGE = {"title": "Edit", "files": [{"path": "huge.js", "edits": [{"old_text": "// y", "new_text": "// z"}]}]}
@@ -374,7 +383,7 @@ def test_a_file_that_can_never_be_shown_is_an_ordinary_refusal_that_says_what_to
     from runesmith.app.source_focus import FOCUSED_FILE_BYTES, select_context
     from runesmith.app.planner import admit_answer_files, settled_state
     ws = planned(tmp_path)
-    (tmp_path / "huge.js").write_bytes(b"// y\n" * ((FOCUSED_FILE_BYTES + 400) // 5))
+    (tmp_path / "huge.js").write_bytes(b"// y " * ((FOCUSED_FILE_BYTES + 400) // 5))     # one line, too long to quote: no part shows it
     (tmp_path / "wide.js").write_bytes("var a = 1;\n".encode("utf-16"))
     context = select_context(ws, collect_snapshot(ws))
     assert context["omission_reasons"] == {"huge.js": "file_limit", "wide.js": "not_utf8"}
@@ -557,23 +566,25 @@ def test_a_correction_refused_for_an_unshown_file_is_not_counted(tmp_path):
 
 
 def marked(root):
-    """crowded() with a first line of its own in each file, so an edit can name it once."""
-    for name in ("a_pad.js", "huge.js"):
-        (root / name).write_bytes(f"// {name}\n".encode() + b"// y\n" * 5600)
-
+    """crowded() with three files an answer can need, each 39,000 bytes with a first line of its own so an edit can
+    name it once: the pads leave them no room, and prioritized, two of them fill the budget (one whole, one in parts)."""
+    crowded(root)
+    for name in ("huge.js", "mid.js", "tall.js"):
+        (root / name).write_bytes(f"// {name}\n".encode() + b"// y\n" * 7790)
 
 
 def test_files_that_cannot_be_shown_together_are_no_gap_the_owner_can_close(tmp_path):
     # Review of J11-B15: each time the owner prioritized the file named, another became the gap, until Author context
-    # refused the whole list; the milestone then waited forever, and used no try, so no replan was ever asked.
+    # refused the whole list; the milestone then waited forever, and used no try, so no replan was ever asked. With
+    # parts (DD) it takes three files of this size: one whole, one in the 9,000 characters left, none for the third.
     from runesmith.app.building import build_step
     from runesmith.app.snapshots import collect_snapshot
     from runesmith.app.source_focus import save_focus
-    both = {"title": "Both", "files": [{"path": "a_pad.js", "edits": [{"old_text": "// a_pad.js", "new_text": "// one"}]},
-                                       {"path": "huge.js", "edits": [{"old_text": "// huge.js", "new_text": "// one"}]}]}
+    every = {"title": "All", "files": [{"path": name, "edits": [{"old_text": f"// {name}", "new_text": "// one"}]}
+                                       for name in ("huge.js", "mid.js", "tall.js")]}
     first, second = tmp_path / "first", tmp_path / "second"
     first.mkdir(), second.mkdir()
-    ws = gap_project(first, [both] * 5)
+    ws = gap_project(first, [every] * 5)
     marked(first)
     router = ws.router()
     for _ in range(3):
@@ -601,15 +612,15 @@ def test_a_retained_candidate_file_that_is_no_longer_shown_is_the_same_uncounted
     ws = planned(tmp_path)
     ws.update_settings({"build_steps": True, "build_apply": True, "build_paths": ["a.js", "b_y.js", "c_x.js"]})
     (tmp_path / "a.js").write_bytes(b"// MARK\n")
-    for name in ("b_y.js", "c_x.js"):
-        (tmp_path / name).write_bytes(b"// MARK\n" + b"// y\n" * 5600)
+    for name, lines in (("b_y.js", 4000), ("b_z.js", 4000), ("b_zz.js", 1000), ("c_x.js", 5600)):
+        (tmp_path / name).write_bytes(b"// MARK\n" + b"// y\n" * lines)
     save_focus(ws, ["c_x.js"], collect_snapshot(ws)["digest"], "Needs it")
     first = {"title": "First", "files": [{"path": "a.js", "edits": [{"old_text": "// MARK", "new_text": "// one"}]},
                                          {"path": "c_x.js", "edits": [{"old_text": "// MARK", "new_text": "// one"}]}]}
     scripted(ws, [first], roles=("plan",))
     candidate = ws._draft(build_step(ws, ws.router(), author_only=True)["draft"])
     ws._save_draft_state(candidate, "needs_revision")
-    save_focus(ws, [], collect_snapshot(ws)["digest"], "Clear it")               # c_x.js no longer fits beside b_y.js
+    save_focus(ws, [], collect_snapshot(ws)["digest"], "Clear it")               # c_x.js no longer fits beside the b_ files
     retain = {"title": "Retain", "files": [{"path": "a.js", "edits": [{"old_text": "// MARK", "new_text": "// two"}]}]}
     scripted(ws, [retain], roles=("plan",))
     used = tries_used(ws)
@@ -638,10 +649,10 @@ def tries_of(ws, milestone_id):
     return ordinary_allowance(ws, milestone_contract(ws, milestone), source_context(ws)["snapshot_digest"])["used"]
 
 
-def test_a_prioritized_file_that_outgrows_the_limit_blocks_only_the_milestones_that_edit_it(tmp_path):
-    # Review of J11-B15 (verification round): the owner prioritized motion.mjs as the remedy said, it grew past 40,000
-    # bytes, and every milestone was blocked, also the ones that never touch it. It is an omitted file now: a milestone
-    # that edits it is refused in words naming it, and no try is used without a model asked.
+def test_a_prioritized_file_that_outgrows_the_limit_is_shown_in_parts_and_still_changeable(tmp_path):
+    # Journey J11-B15, with excerpts: the owner prioritized motion.mjs as the remedy said and it grew past 40,000 bytes;
+    # it was an omitted file that no milestone could change. It is shown in parts now, and an edit inside a shown part
+    # is admitted, with a try used only where a model answered.
     from runesmith.app.building import build_step
     from runesmith.app.snapshots import collect_snapshot
     from runesmith.app.source_focus import FOCUSED_FILE_BYTES, save_focus
@@ -649,6 +660,28 @@ def test_a_prioritized_file_that_outgrows_the_limit_blocks_only_the_milestones_t
     (tmp_path / "motion.mjs").write_bytes(b"// MARK\n" + b"// y\n" * 7990)           # 39,958 bytes: prioritized
     save_focus(ws, ["motion.mjs"], collect_snapshot(ws)["digest"], "Builds of this milestone edit it")
     (tmp_path / "motion.mjs").write_bytes(b"// MARK\n" + b"// y\n" * 8010)           # an applied draft grew it past the limit
+    assert (tmp_path / "motion.mjs").stat().st_size > FOCUSED_FILE_BYTES
+    context = source_context(ws)
+    assert "motion.mjs" in context["excerpts"] and "motion.mjs" not in context["files"] and not context["focus_errors"]
+    scripted(ws, [{"title": "Motion", "files": [{"path": "motion.mjs", "edits": [{"old_text": "// MARK", "new_text": "// z"}]}]}],
+             roles=("plan",))
+    draft = ws._draft(build_step(ws, ws.router(), milestone_id="m2", author_only=True)["draft"])
+    assert draft["files"][0]["content"].startswith("// z\n") and "motion.mjs" in draft["shown_excerpts"]
+    assert draft["shown_files"] == ["other.py"] or "motion.mjs" not in draft["shown_files"]
+
+
+def test_a_prioritized_file_no_part_of_which_can_be_shown_blocks_only_the_milestones_that_edit_it(tmp_path):
+    # Review of J11-B15 (verification round): the owner prioritized motion.mjs as the remedy said, it became a file no
+    # part of which can be shown (here one line too long to quote), and every milestone was blocked, also the ones that
+    # never touch it. It is an omitted file: a milestone that edits it is refused in words naming it, and no try is used
+    # without a model asked.
+    from runesmith.app.building import build_step
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import FOCUSED_FILE_BYTES, save_focus
+    ws = two_steps(tmp_path)
+    (tmp_path / "motion.mjs").write_bytes(b"// MARK " + b"// y " * 7990)             # one line of 39,958 bytes: prioritized
+    save_focus(ws, ["motion.mjs"], collect_snapshot(ws)["digest"], "Builds of this milestone edit it")
+    (tmp_path / "motion.mjs").write_bytes(b"// MARK " + b"// y " * 8010)             # an applied draft grew it past the limit
     assert (tmp_path / "motion.mjs").stat().st_size > FOCUSED_FILE_BYTES
     calls = []
 
@@ -754,7 +787,7 @@ def test_another_file_that_can_never_be_shown_is_named_instead_of_the_budget(tmp
     from runesmith.app.source_focus import FOCUSED_FILE_BYTES, select_context
     ws = planned(tmp_path)
     crowded(tmp_path)
-    (tmp_path / "zbig.js").write_bytes(b"// y\n" * ((FOCUSED_FILE_BYTES + 400) // 5))
+    (tmp_path / "zbig.js").write_bytes(b"// y " * ((FOCUSED_FILE_BYTES + 400) // 5))      # one line, too long to quote
     context = select_context(ws, collect_snapshot(ws))
     assert context["omission_reasons"] == {"huge.js": "packet_budget", "zbig.js": "file_limit"}
     edit = {"edits": [{"old_text": "// y", "new_text": "// z"}]}

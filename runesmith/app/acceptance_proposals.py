@@ -303,7 +303,11 @@ def packet(ws, milestone_id, style='code') -> dict[str, Any]:
             'other_milestones_checks': _other_checks(ws, milestone_id),
             'owner_said_about_earlier_checks': _owner_reasons(ws, milestone_id),
             'owner_said_about_other_milestones_checks': _owner_reasons_elsewhere(ws, milestone_id),
-            'source_context': source_context(ws, limit=16000),
+            # A program over the cap is shown in parts: its outline and the lines that read this milestone's fields, so
+            # the Checker no longer guesses formats (journey J11-B16). The program may take 60% of the budget, and 6,000
+            # characters are held back for it from the small files.
+            'source_context': source_context(ws, limit=16000, milestone=milestone, feedback=False, parts_share=0.6,
+                                             parts_reserve=6000),
             # The documents the owner chose to share with models (Goals & plan). Code goes in source_context; documents
             # never do, so without this a Checker could not see a single page of a handbook it is asked to check.
             'documents': ws.blueprint_text(),
@@ -337,7 +341,8 @@ LEAN_SOURCE = 6000
 
 
 def _lean(ws, data):
-    return dict(data, source_context=source_context(ws, limit=LEAN_SOURCE))
+    return dict(data, source_context=source_context(ws, limit=LEAN_SOURCE, milestone=data.get('milestone'), feedback=False,
+                                                     parts_reserve=4000))
 
 
 def _bounded(answer, limit=40000):

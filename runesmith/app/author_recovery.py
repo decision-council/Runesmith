@@ -27,13 +27,20 @@ def acceptance_identity(ws, milestone):
 
 def prepare_packet(ws, key, *, milestone, context, contract, public_digest, exposure,
                    revision=None, explicit_revision=False, attempt_id=None, binding='before_submission', revision_view=None,
-                   revision_operation=None):
+                   revision_operation=None, candidate_view=None):
+    from runesmith.app.source_focus import recorded_excerpts
     packet={'request_key':_key(key), 'root':str(ws.root), 'milestone':milestone['id'],
             'contract':contract, 'context_digest':context['digest'], 'snapshot_digest':context['snapshot_digest'],
             'shown_files':sorted(context['files']), 'source_focus_paths':context.get('focus_paths', []),
             'public_acceptance_digest':public_digest, 'acceptance_identity':acceptance_identity(ws,milestone['id']),
             'revision':revision, 'explicit_revision':explicit_revision, 'attempt_id':attempt_id,
             'memory_exposure':exposure, 'binding':binding}
+    # The parts of files over their limit that this call was shown, and how a revision candidate was shown: a late answer
+    # or a correction is judged against these, not today's selection (journey J11-B15). An `excerpts` entry, even an
+    # empty one, marks a packet recorded with parts.
+    packet['excerpts'] = recorded_excerpts(context)
+    if candidate_view:
+        packet['candidate_view'] = candidate_view
     if revision_operation is not None:
         packet['revision_operation'] = revision_operation
     if revision_view is not None:
@@ -81,7 +88,8 @@ def admit_packet(ws, packet, data, author, *, receipt=None, admission_guard=None
     if 'shown_files' in packet or 'bound_source_files' in packet:
         from runesmith.app.snapshots import collect_snapshot
         from runesmith.app.source_focus import recorded_context
-        context=recorded_context(collect_snapshot(ws),packet.get('bound_source_files', packet.get('shown_files')))
+        context=recorded_context(collect_snapshot(ws),packet.get('bound_source_files', packet.get('shown_files')),
+                                 packet.get('excerpts'))
     else:
         context=source_context(ws)
     if (not milestone or not milestone_ready(ws.plan(),milestone)
@@ -97,11 +105,14 @@ def admit_packet(ws, packet, data, author, *, receipt=None, admission_guard=None
     revision=packet.get('revision')
     try:
         raw_files = data['files']
+        materialized = ()
         if packet.get('revision_view') is not None:
             from runesmith.app.revision_context import materialize_answer
             raw_files = materialize_answer(ws, revision, packet['revision_view'], raw_files)
+            materialized = {f['path'] for f in raw_files}          # built by the host from the candidate (J11-B15)
         files=admit_revision_answer(ws,context,raw_files,revision,
-            allowed_paths={f['path'] for f in revision['files']} if packet['explicit_revision'] else None)
+            allowed_paths={f['path'] for f in revision['files']} if packet['explicit_revision'] else None,
+            candidate_view=packet.get('candidate_view'),materialized=materialized)
     except PlannerUnavailable as error:
         error.feedback=dict(getattr(error,'feedback',{}) or {},
                             answer_receipt=answer_path.relative_to(ws.home).as_posix())
@@ -110,14 +121,33 @@ def admit_packet(ws, packet, data, author, *, receipt=None, admission_guard=None
         files=files,drafted_by=author,milestone=milestone['id'],
         author_request_key=key,answer_digest=answer_digest)
     exposure=_read_json(ws.home/packet['memory_exposure'],{})
-    visibility = ({'shown_files': [], 'bound_source_files': sorted(context['files']),
+    from runesmith.app.source_focus import shown_view
+    visibility = ({**shown_view(context), 'shown_files': [], 'bound_source_files': sorted(context['files']),
                    'revision_view': packet['revision_view']} if packet.get('revision_view') is not None
-                  else {'shown_files': sorted(context['files'])})
+                  else shown_view(context))
     ws._save_draft_state(draft,'waiting',contract=packet['contract'],context_digest=context['digest'],
         snapshot_digest=packet['snapshot_digest'],public_acceptance_digest=packet['public_acceptance_digest'],
         **visibility,memory_ids=exposure.get('memory_ids',[]),
         memory_exposure=packet['memory_exposure'],answer_binding=packet['binding'])
     return draft
+
+
+def answer_packet(ws, answer_rel):
+    """The author packet of the call that produced a kept answer (`draft-answers/<request key>.json`), or {} when
+    there is none (an answer from before packets, or from a correction)."""
+    try:
+        return read_packet(ws, str(answer_rel).rsplit('/', 1)[-1].removesuffix('.json'))
+    except (WorkspaceError, OSError, ValueError, TypeError):
+        return {}
+
+
+def replay_context(ws, snapshot, excerpts):
+    """The selection a kept answer is checked against again with no model call (a newer Runesmith may accept it): today's
+    whole files, and the parts its own call was shown, never today's choice of parts (journey J11-B15)."""
+    from runesmith.app.planner import source_context
+    from runesmith.app.source_focus import with_recorded_parts
+    context = source_context(ws, snapshot=snapshot, parts=False)
+    return with_recorded_parts(context, snapshot, excerpts) if excerpts else context
 
 
 def pending_authors(ws, milestone=None):

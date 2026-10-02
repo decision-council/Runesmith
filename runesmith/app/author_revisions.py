@@ -89,7 +89,7 @@ def _inputs(ws, draft_id, instrument, *, active_job=None, own_request_key=None, 
     if feedback['blockers']: raise WorkspaceError('; '.join(feedback['blockers']))
     if not any(n.get('target', {}).get('type') == 'draft' and n['target'].get('id') == draft_id for n in feedback['included']):
         raise WorkspaceError('Add a draft note describing the defect and retained behavior; it must be included in the packet.')
-    intent = require_intent(ws); context = source_context(ws, snapshot=snapshot)
+    intent = require_intent(ws); context = source_context(ws, snapshot=snapshot, milestone=milestone)
     if context.get('focus_errors'): raise WorkspaceError('Selected source context is unavailable.')
     ignored = ()
     if own_request_key:

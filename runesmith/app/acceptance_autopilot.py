@@ -299,6 +299,7 @@ def second_model(ws, drafted_by) -> str | None:
 
 def _packet(ws, milestone_id, proposal, asked) -> dict[str, Any]:
     from runesmith.app.acceptance_proposals import _milestone, _other_checks
+    from runesmith.app.planner import program_excerpts
     milestone = _milestone(ws, milestone_id)
     by_test = {}
     for row in asked:
@@ -306,6 +307,8 @@ def _packet(ws, milestone_id, proposal, asked) -> dict[str, Any]:
     return {'task': TASK,
             'milestone': {k: milestone.get(k) for k in ('title', 'detail', 'done_when')},
             'other_milestones_checks': _other_checks(ws, milestone_id),
+            # The lines of the program the Checker was shown, so the examples are worked out from its code (J11-B16).
+            **({'program_excerpts': excerpts} if (excerpts := program_excerpts(ws, milestone)) else {}),
             'examples': [{'name': e['test'], 'files': e.get('files') or [],
                           'steps': [_command(s) for s in e.get('steps') or [] if _command(s)],
                           'questions': by_test.get(e['test'], [])} for e in proposal.get('examples') or []]}

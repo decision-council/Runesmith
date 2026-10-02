@@ -366,7 +366,7 @@ function drawDrafts(body, w, reload, ctx) {
           ? h('p.small', 'Verification did not finish. This is not a code-defect verdict. Retain the candidate and explicitly recheck it without another model call; automatic rebuilding is paused.') : null,
         h('div.tiny', `Project checks: ${d.verification.project_checks?.status || 'not run'}; completed count: ${d.verification.project_checks?.ran ?? 'unknown'}; owner acceptance: ${d.verification.acceptance?.status || 'not run'}`),
         d.verification.author_context?.binding === 'frozen_shown_files' ? h('div.tiny',
-          `Author input verified against ${d.verification.author_context.file_count} originally shown files${d.verification.author_context.current_packet_differs ? '; current packet selection differs, not the frozen source' : ''}. Full source snapshot is checked separately.`) : null,
+          `Author input verified against ${d.verification.author_context.file_count} originally shown files${d.verification.author_context.parts_count ? ` and the shown parts of ${d.verification.author_context.parts_count} larger ${d.verification.author_context.parts_count === 1 ? 'file' : 'files'}` : ''}${d.verification.author_context.current_packet_differs ? '; current packet selection differs, not the frozen source' : ''}. Full source snapshot is checked separately.`) : null,
         d.verification.author_context?.binding === 'frozen_source_bindings' ? h('div.tiny',
           'Full source bindings verified separately from the focused candidate units shown to the author. This is not a claim that all bound files were shown.') : null,
         d.author_context_preflight ? h('div.callout.mt-8',
@@ -392,7 +392,7 @@ function drawDrafts(body, w, reload, ctx) {
           h('p.tiny', `${d.check_reconciliation.receipt?.state}; ${d.check_reconciliation.receipt?.outcome || 'unknown'}. No automatic replay, extension or apply.`),
           d.check_reconciliation.receipt?.detail ? h('p.tiny', d.check_reconciliation.receipt.detail) : null)) : null,
         d.verification.snapshot_digest ? h('div.tiny',
-          `Local verification: ${d.verification.verification_input_files} files · ${d.verification.snapshot_policy?.profile || 'recorded profile'}; model saw ${d.shown_files?.length ?? 'unknown'} files`) : null,
+          `Local verification: ${d.verification.verification_input_files} files · ${d.verification.snapshot_policy?.profile || 'recorded profile'}; model saw ${d.shown_files?.length ?? 'unknown'} files${Object.keys(d.shown_excerpts || {}).length ? ` and parts of ${Object.keys(d.shown_excerpts).length} larger` : ''}`) : null,
         d.verification.candidate_digest ? h('div.tiny.mono', `Checked candidate: ${d.verification.candidate_digest}`) : null,
         d.verification.project_checks?.failure_details?.length ? h('details.mt-8',
           h('summary.small', 'Failed checks'), h('pre.code', d.verification.project_checks.failure_details.map(
