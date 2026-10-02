@@ -43,6 +43,7 @@ JOB_WORDS = {"propose_acceptance": "Proposing acceptance checks", "plan": "Draft
              "draft": "Drafting files", "build": "Building the next step", "revise": "Revising a draft",
              "correct": "Correcting a draft", "escalate": "Giving the step one more try", "readmit": "Checking a kept answer again", "readmit_answer": "Checking a kept answer again", "supplement": "Asking for missing files",
              "breakdown": "Proposing smaller steps", "split": "Breaking a stuck step down",
+             "resume_check": "Rechecking a draft whose checks did not finish",
              "map": "Mapping the folder", "round": "The round",
              "measure": "Taking a measurement"}
 KIND_WORDS = {"python_repository": ("Python project", "Python projects"), "node_repository": ("Node project", "Node projects"),
@@ -552,6 +553,13 @@ class Worker:
             from runesmith.app.acceptance_autopilot import needs_checks
             if (missing := needs_checks(self.ws)) is not None:
                 return 'propose_acceptance', {'milestone': missing}
+        from runesmith.app import rechecks
+        if (settings['build_steps'] and settings.get('recheck_policy') == rechecks.POLICY
+                and settings['autonomy'] != 'observe'):
+            # The owner's setting for a draft whose checks did not finish (journey J11-G44): the one-time extension, no
+            # model call, so a milestone does not stall until he presses its button.
+            if (draft := rechecks.next_draft(self.ws)) is not None:
+                return rechecks.KIND, {'draft_id': draft['id'], 'reason': rechecks.REASON}
         from runesmith.app import stuck
         if settings['build_steps'] and settings.get('stuck_policy') in stuck.POLICIES:
             # The owner's setting for a milestone whose tries are used up (journey J11-G43): its one more try, or its
@@ -923,7 +931,25 @@ class Worker:
                                    draft_id=draft_id, quote_id=quote_id, reason=reason)
 
     def _job_resume_check(self,draft_id: str,reason: str) -> dict[str,Any]:
-        return self._run_build_job('resume_check', 'One retained-candidate check extension; no inference', draft_id=draft_id, reason=reason)
+        # The schedule runs the extension when the owner's setting says so (journey J11-G44): once per draft whatever
+        # happens, and said as such.
+        by_setting = (self.current or {}).get('by') == 'schedule'
+        if not by_setting:
+            return self._run_build_job('resume_check', 'One retained-candidate check extension; no inference', draft_id=draft_id, reason=reason)
+        from runesmith.app import automatic, rechecks
+        title = rechecks.mark(self.ws, draft_id)
+        try:
+            result = self._run_build_job('resume_check', 'One retained-candidate check extension; no inference', draft_id=draft_id, reason=reason)
+        except WorkspaceError as error:
+            said = f'“{title}”: a draft’s checks did not finish. By your setting, Runesmith tried to run them once more, but could not: {error} It waits for you.'
+            automatic.record(self.ws, said, kind='recheck', draft=draft_id)
+            self.say(said, 'warn')
+            raise
+        said = (f'“{title}”: a draft’s checks did not finish (they ran out of time). By your setting, Runesmith ran them once more '
+                f'with a longer limit and no model call: {result["summary"]}')
+        automatic.record(self.ws, said, kind='recheck', draft=draft_id)
+        self.say(said, 'warn')
+        return result
 
     def _job_readmit(self, escalation: str) -> dict[str, Any]:
         return self._run_build_job('readmit', 'Checking a kept answer again; no model call', escalation=escalation)

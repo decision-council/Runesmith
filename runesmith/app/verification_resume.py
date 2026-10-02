@@ -17,10 +17,13 @@ RESUME_TIMEOUT_S = 240
 
 
 def owner_limit(ws, milestone_id):
-    """What the owner phase of the extension may take: no less than 240 s, and what an ordinary build gets for a large
-    bundle of owner checks (journey J11-B17 review)."""
+    """What the owner phase of the extension may take: twice what an ordinary build gives that bundle, at most 600 s (never
+    less than 240 s, as an ordinary limit is never below 120). The ordinary limit just ran out, and on the same busy
+    computer it is likely to run out again: J11's Scatter timed out at 255.2 s against its 254 s limit while a test run
+    loaded the machine, and the same bundle takes about 30 s unloaded (journey J11-G44; before, the extension gave the
+    owner phase no more than the ordinary limit unless the bundle was small)."""
     try:
-        return max(RESUME_TIMEOUT_S, building.owner_check_limit(building._acceptance_files(ws, milestone_id)))
+        return min(building.OWNER_LIMIT_S, 2 * building.owner_check_limit(building._acceptance_files(ws, milestone_id)))
     except (KeyError, TypeError, OSError):
         return RESUME_TIMEOUT_S
 
@@ -33,10 +36,13 @@ def resume_status(ws, draft):
         receipt={'id':'unresolved-'+draft['id'],'state':'unresolved','outcome':'unknown',
                  'detail':'The existing continuation receipt cannot be validated. No automatic replay.'}
     prior=draft.get('verification') or {}
-    limits=[(prior.get(key) or {}).get('limit_s',building.CHECK_TIMEOUT_S)
+    # The extension gives each phase that timed out more than it had: the project phase 240 s, the owner phase its own
+    # (longer) limit, so an owner phase that ran out at the ordinary 254 s can be given 508 s (journey J11-G44).
+    given={'project_checks':RESUME_TIMEOUT_S,'acceptance':owner_limit(ws,draft.get('milestone'))}
+    limits=[(key,(prior.get(key) or {}).get('limit_s',building.CHECK_TIMEOUT_S))
             for key in ('project_checks','acceptance')
             if (prior.get(key) or {}).get('status')=='timeout']
-    shorter=bool(limits) and all(isinstance(v,(int,float)) and v<RESUME_TIMEOUT_S for v in limits)
+    shorter=bool(limits) and all(isinstance(v,(int,float)) and not isinstance(v,bool) and v<given[key] for key,v in limits)
     return {'eligible':bool(not used and draft.get('state') in ('waiting','needs_revision')
                             and building.verification_inconclusive(prior) and shorter),
             'used':used,'receipt':receipt,'timeout_s':RESUME_TIMEOUT_S,'owner_timeout_s':owner_limit(ws,draft.get('milestone')),
@@ -83,8 +89,8 @@ def resume_verification(ws, draft_id, reason, *, checkpoint=lambda:None):
         if not unchanged:
             raise WorkspaceError('Candidate, source or acceptance changed; review new evidence before continuing.')
         checkpoint()
-        # An ordinary build gives the owner phase more than 240 s once its bundle is large (journey J11-B17 review): an
-        # extension that gave less could time out a bundle the ordinary limit lets finish, and it is used only once.
+        # The owner phase gets twice the ordinary limit (journey J11-G44), and an ordinary build gives it more than 240 s
+        # once its bundle is large (J11-B17 review): it is used only once, so it must not be shorter than either.
         owner_s=owner_limit(ws,milestone['id'])
         receipt={'id':'check-'+draft['id'],'draft':draft['id'],'milestone':milestone['id'],
                  'state':'started','utc':_now(),'reason':reason.strip()[:2000],

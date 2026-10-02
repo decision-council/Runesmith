@@ -807,7 +807,8 @@ def test_the_used_up_summary_and_the_breakdown_packet_name_the_file_no_model_can
     from runesmith.app.source_focus import FOCUSED_FILE_BYTES
     edit = {"title": "Edit", "files": [{"path": "zbig.js", "edits": [{"old_text": "// y", "new_text": "// z"}]}]}
     ws = gap_project(tmp_path, [edit] * 5)
-    (tmp_path / "zbig.js").write_bytes(b"// y\n" * ((FOCUSED_FILE_BYTES + 400) // 5))
+    # One line, too long to quote: no part of it can be shown either (batch DD shows a long file in parts when it can).
+    (tmp_path / "zbig.js").write_bytes(b"// y " * ((FOCUSED_FILE_BYTES + 400) // 5))
     router = ws.router()
     for _ in range(3):
         with pytest.raises(PlannerUnavailable, match="zbig.js is too large to show a model"):

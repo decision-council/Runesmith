@@ -75,6 +75,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # the owner by default.
     "recovery_policy": "wait",    # after an interrupted job: "wait" for the owner's review, or "keep" the queue and go on
     "stuck_policy": "wait",       # when a milestone's tries are used up: "wait", "retry" (one more try) or "retry_split"
+    # A draft whose checks did not finish (journey J11-G44): "wait" for the owner's button, or "recheck" it once itself.
+    "recheck_policy": "wait",
 }
 # Homes onboarded before the explicit choices existed keep the behaviour they were onboarded with, until their owner
 # chooses (``policy_chosen`` absent from the stored settings marks such a home).
@@ -84,11 +86,11 @@ SETTING_TYPES: dict[str, Any] = {
     "interval_minutes": (int, float), "probe_tests": bool, "exclude": list, "max_objects": int, "read_notes": bool,
     "kaizen": bool, "min_experience": int, "kaizen_every": int, "theme": str, "policy_chosen": bool,
     "build_steps": bool, "build_apply": bool, "build_paths": list, "checks_autopilot": bool, "full_speed": bool,
-    "recovery_policy": str, "stuck_policy": str,
+    "recovery_policy": str, "stuck_policy": str, "recheck_policy": str,
 }
 CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"},
            "recovery_policy": {"wait", "keep"}, "stuck_policy": {"wait", "retry", "retry_split"},
-           "use_type": {"", "improve", "build", "docs", "explore", "numbers"}}
+           "recheck_policy": {"wait", "recheck"}, "use_type": {"", "improve", "build", "docs", "explore", "numbers"}}
 RANGES = {"interval_minutes": (1, 7 * 24 * 60), "max_objects": (1, 500), "min_experience": (2, 10_000),
           "kaizen_every": (1, 10_000)}
 MILESTONE_STATES = ("open", "doing", "done", "dropped")

@@ -538,3 +538,209 @@ def test_the_overview_and_the_schedule_do_not_work_out_draft_diffs_which_only_th
     work = ws.work()["drafts"][0]["files"][0]                  # the Work page still gets the change
     assert "-two" in work["diff"] and "+three" in work["diff"] and seen
     assert "+three" in ws.drafts(diffs=True)[0]["files"][0]["diff"]
+
+
+# ---- EE4 (J11-G44): a draft whose checks did not finish ---------------------------------------------------------------
+
+def owner_checks(tests):
+    return ("import unittest\nfrom app import answer\n\n\nclass Acceptance(unittest.TestCase):\n"
+            + "".join(f"    def test_c{n}(self):\n        self.assertEqual(answer(), 42)\n" for n in range(tests)))
+
+
+def ran_out(tmp_path, monkeypatch, *, tests=97, phase="owner", policy="recheck"):
+    """J11's Scatter: a draft whose checks ran out of time. 97 owner checks give the ordinary 254 s limit (60 + 2 each)."""
+    from runesmith.app import building
+    from test_build_steps import enable, setup
+    ws = setup(tmp_path, acceptance=True)
+    enable(ws)
+    (ws.home / "acceptance" / "m1.py").write_text(owner_checks(tests), encoding="utf-8", newline="\n")
+    ws.update_settings({"autonomy": "propose", "recheck_policy": policy})
+
+    def run(stage, kind, logs, **kwargs):
+        limit = kwargs.get("timeout_s") or 120        # an ordinary project phase is not told its limit
+        if (kind == "project") != (phase == "project"):
+            return {"status": "passed", "ok": True, "ran": 1, "elapsed_s": 1, "limit_s": limit}
+        return {"status": "timeout", "ok": False, "elapsed_s": limit + 1.2, "limit_s": limit, "output": "unfinished"}
+    monkeypatch.setattr(building, "_run_checks", run)
+    result = building.build_step(ws, ws.router())
+    assert result["verification"]["status"] == "inconclusive"
+    return ws, result["draft"]
+
+
+def finishing(monkeypatch, seen=None, times_out=None):
+    """The checks run again: they pass, or the named phase ("owner") runs out of time again."""
+    from runesmith.app import building
+
+    def run(stage, kind, logs, **kwargs):
+        phase = kind if kind == "project" else "owner"
+        if seen is not None:
+            seen.append((phase, kwargs.get("timeout_s")))
+        if times_out == phase:
+            return {"status": "timeout", "ok": False, "elapsed_s": kwargs["timeout_s"], "limit_s": kwargs["timeout_s"]}
+        return {"status": "passed", "ok": True, "ran": 1, "elapsed_s": 1, "limit_s": kwargs.get("timeout_s")}
+    monkeypatch.setattr(building, "_run_checks", run)
+
+
+def scheduled_recheck(ws, did):
+    from runesmith.app import rechecks
+    return {"id": "j-" + did, "kind": "resume_check", "params": {"draft_id": did, "reason": rechecks.REASON}, "by": "schedule"}
+
+
+def test_the_recheck_setting_waits_for_the_owner_by_default_and_refuses_other_words(tmp_path):
+    ws = Workspace(tmp_path)
+    assert ws.settings()["recheck_policy"] == "wait"
+    ws.update_settings({"recheck_policy": "recheck"})
+    assert ws.settings()["recheck_policy"] == "recheck"
+    with pytest.raises(WorkspaceError, match="must be one of"):
+        ws.update_settings({"recheck_policy": "twice"})
+    assert ws.settings()["recheck_policy"] == "recheck"
+
+
+@pytest.mark.parametrize("ordinary,given", [(120, 240), (254, 508), (300, 600), (460, 600), (600, 600)])
+def test_the_extensions_owner_phase_gets_twice_the_ordinary_limit_and_at_most_600(tmp_path, monkeypatch, ordinary, given):
+    # Journey J11-G44: the limit that just ran out is likely to run out again on the same loaded computer.
+    from runesmith.app import building, verification_resume
+    from test_build_steps import setup
+    ws = setup(tmp_path, acceptance=True)
+    monkeypatch.setattr(building, "owner_check_limit", lambda bundle: ordinary)
+    assert verification_resume.owner_limit(ws, "m1") == given
+
+
+def test_a_check_that_ran_out_at_the_ordinary_owner_limit_gets_the_longer_extension(tmp_path, monkeypatch):
+    from runesmith.app.verification_resume import resume_status, resume_verification
+    ws, did = ran_out(tmp_path, monkeypatch)
+    prior = ws._draft(did)["verification"]
+    assert prior["acceptance"]["limit_s"] == 254                       # J11's Scatter: 255.2 s against 254 s
+    status = resume_status(ws, ws._draft(did))
+    assert status["eligible"] and status["timeout_s"] == 240 and status["owner_timeout_s"] == 508
+    seen = []
+    finishing(monkeypatch, seen)
+    resume_verification(ws, did, "The owner's button")
+    assert seen == [("project", 240), ("owner", 508)]
+    assert resume_status(ws, ws._draft(did))["receipt"]["owner_timeout_s"] == 508
+
+
+@pytest.mark.parametrize("phase,tests", [("project", 97), ("owner", 270)])
+def test_an_extension_that_would_give_a_phase_no_more_than_it_had_is_not_offered(tmp_path, monkeypatch, phase, tests):
+    # The project phase keeps its rule (240 s, offered only below it); the owner phase is not offered where 600 s, its
+    # most, is what it already had (270 checks give the ordinary 600 s).
+    from runesmith.app import building
+    from runesmith.app.verification_resume import resume_status
+    ws, did = ran_out(tmp_path, monkeypatch, tests=tests, phase=phase)
+    first = ws._draft(did)["verification"]
+    assert first["project_checks" if phase == "project" else "acceptance"]["status"] == "timeout"
+    if phase == "project":                                              # an ordinary project phase is 120 s: offered
+        assert resume_status(ws, ws._draft(did))["eligible"]
+        draft = ws._draft(did)
+        draft["verification"]["project_checks"]["limit_s"] = 240        # but not once it had the extension's 240 s
+        ws._save_draft_state(draft, draft["state"])
+    assert not resume_status(ws, ws._draft(did))["eligible"]
+
+
+def test_the_default_waits_for_the_owner_when_checks_did_not_finish(tmp_path, monkeypatch):
+    ws, did = ran_out(tmp_path, monkeypatch, policy="wait")
+    assert Worker(ws, EventBus()).scheduled_job() == ("build", {})
+
+
+def test_with_the_setting_the_schedule_rechecks_a_draft_whose_checks_did_not_finish(tmp_path, monkeypatch):
+    from runesmith.app import rechecks
+    ws, did = ran_out(tmp_path, monkeypatch)
+    assert Worker(ws, EventBus()).scheduled_job() == ("resume_check", {"draft_id": did, "reason": rechecks.REASON})
+
+
+def test_the_recheck_by_the_setting_is_the_owners_button_with_no_model_said_and_once(tmp_path, monkeypatch):
+    from runesmith.app import rechecks
+    from runesmith.app.verification_resume import resume_status
+    ws, did = ran_out(tmp_path, monkeypatch)
+    worker = Worker(ws, EventBus())
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("No model call for a recheck")
+    monkeypatch.setattr(ws, "router", forbidden)
+    seen = []
+    finishing(monkeypatch, seen, times_out="owner")                       # it runs out again: the owner's button would too
+    worker._execute(scheduled_recheck(ws, did), schedule_next=False)
+    assert worker.history[-1]["result"] == "done" and seen == [("project", 240), ("owner", 508)]
+    receipt = resume_status(ws, ws._draft(did))["receipt"]
+    assert receipt["state"] == "completed" and receipt["outcome"] == "inconclusive" and receipt["inference_calls"] == 0
+    assert receipt["reason"] == rechecks.REASON and receipt["owner_timeout_s"] == 508 and receipt["author_budget_reset"] is False
+    [row] = automatic.recent(ws)
+    assert row["kind"] == "recheck" and row["by"] == "Runesmith (your setting)" and row["draft"] == did
+    assert "ran them once more with a longer limit and no model call" in row["what"] and "Answer" in row["what"]
+    assert did in _read_json(ws.home / rechecks.MARKS, {})
+    assert [e["data"]["id"] for e in ws.ledger.events("build.check_resume_completed")] == ["check-" + did]
+    assert Worker(ws, EventBus()).scheduled_job() == ("build", {})      # once per draft, though it ran out again
+
+
+def test_a_recheck_that_finishes_applies_the_draft_under_the_grant_like_the_owners_button(tmp_path, monkeypatch):
+    ws, did = ran_out(tmp_path, monkeypatch)
+    worker = Worker(ws, EventBus())
+    finishing(monkeypatch)
+    worker._execute(scheduled_recheck(ws, did), schedule_next=False)
+    assert (tmp_path / "app.py").exists() and ws.plan()["milestones"][0]["status"] == "done"
+    assert worker.history[-1]["outcome"].get("advanced")
+
+
+def test_a_recheck_the_candidate_has_changed_under_refuses_like_the_button_and_is_not_asked_again(tmp_path, monkeypatch):
+    from runesmith.app import rechecks
+    ws, did = ran_out(tmp_path, monkeypatch)
+    worker = Worker(ws, EventBus())
+    assert worker.scheduled_job()[0] == "resume_check"
+    (tmp_path / "unrelated.py").write_text("changed = 1\n", encoding="utf-8")       # the source moved on meanwhile
+    finishing(monkeypatch)
+    worker._execute(scheduled_recheck(ws, did), schedule_next=False)
+    assert worker.history[-1]["result"] == "failed"
+    [row] = automatic.recent(ws)
+    assert row["kind"] == "recheck" and "could not" in row["what"] and "It waits for you." in row["what"]
+    assert did in _read_json(ws.home / rechecks.MARKS, {})
+    assert Worker(ws, EventBus()).scheduled_job()[0] != "resume_check"
+
+
+def test_the_owners_own_extension_and_choices_win_over_the_setting(tmp_path, monkeypatch):
+    from runesmith.app import rechecks
+    from runesmith.app.verification_resume import resume_verification
+    ws, did = ran_out(tmp_path, monkeypatch)
+    finishing(monkeypatch, times_out="owner")
+    resume_verification(ws, did, "The owner pressed the button")           # his extension is the draft's one
+    assert rechecks.next_draft(ws) is None
+    other = tmp_path / "second"
+    other.mkdir()
+    ws2, did2 = ran_out(other, monkeypatch)
+    ws2.update_settings({"build_steps": False})                            # building off: nothing to recheck for
+    assert rechecks.next_draft(ws2) is None and Worker(ws2, EventBus()).scheduled_job() == ("round", {})
+    ws2.update_settings({"build_steps": True, "autonomy": "observe"})
+    assert Worker(ws2, EventBus()).scheduled_job() != ("resume_check", {"draft_id": did2, "reason": rechecks.REASON})
+
+
+def test_only_the_newest_draft_of_a_milestone_is_rechecked_and_never_one_that_is_not_waiting(tmp_path, monkeypatch):
+    from runesmith.app import rechecks
+    ws, did = ran_out(tmp_path, monkeypatch)
+    assert rechecks.next_draft(ws)["id"] == did
+    draft = ws._draft(did)
+    ws._save_draft_state(draft, "rejected")                               # the owner rejected it
+    assert rechecks.next_draft(ws) is None
+    ws._save_draft_state(ws._draft(did), "waiting")
+    newer = dict(ws._draft(did), id="d-newer", utc="2999-01-01T00:00:00Z", verification={"status": "failed"})
+    _write_json(ws.home / "drafts" / "d-newer" / "DRAFT.json", newer)      # a newer draft supersedes it
+    assert rechecks.next_draft(ws) is None
+
+
+def test_a_recheck_the_owner_pressed_decides_nothing_for_him(tmp_path, monkeypatch):
+    from runesmith.app import rechecks
+    ws, did = ran_out(tmp_path, monkeypatch)
+    worker = Worker(ws, EventBus())
+    finishing(monkeypatch)
+    job = dict(scheduled_recheck(ws, did), by="owner")
+    worker._execute(job, schedule_next=False)
+    assert worker.history[-1]["result"] == "done" and not automatic.recent(ws)
+    assert not (ws.home / rechecks.MARKS).exists()
+
+
+def test_a_draft_made_for_an_earlier_contract_is_not_rechecked(tmp_path, monkeypatch):
+    # The milestone was reworded after the draft: the button would refuse it (the contract moved), so the setting does
+    # not spend its one ask on it.
+    from runesmith.app import rechecks
+    ws, did = ran_out(tmp_path, monkeypatch)
+    assert rechecks.next_draft(ws)["id"] == did
+    ws.update_milestone("m1", {"done_when": "answer() returns 42, always"})
+    assert rechecks.next_draft(ws) is None

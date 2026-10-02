@@ -119,7 +119,8 @@ BIG = 'import unittest\nfrom app import answer\n\n\nclass Acceptance(unittest.Te
 
 def test_the_one_time_extension_gives_the_owner_phase_what_an_ordinary_build_gets(tmp_path, monkeypatch):
     # Review of J11-B17: the extension gave the owner phase 240 s, less than the 460 s an ordinary build gives a
-    # 200-check bundle; it is used once, so a bundle the ordinary limit lets finish could time out inside it.
+    # 200-check bundle; it is used once, so a bundle the ordinary limit lets finish could time out inside it. Journey
+    # J11-G44: twice the ordinary limit, at most 600 s (920 s for this bundle, so 600).
     from runesmith.app.verification_resume import resume_status, resume_verification
     from test_build_steps import setup, enable
     ws = setup(tmp_path, acceptance=True)
@@ -138,8 +139,8 @@ def test_the_one_time_extension_gives_the_owner_phase_what_an_ordinary_build_get
     first = building.build_step(ws, ws.router())
     assert first['verification']['status'] == 'inconclusive'
     status = resume_status(ws, ws._draft(first['draft']))
-    assert status['timeout_s'] == 240 and status['owner_timeout_s'] == 460          # said before it is granted (the dialog)
+    assert status['timeout_s'] == 240 and status['owner_timeout_s'] == 600          # said before it is granted (the dialog)
     seen.clear()
     monkeypatch.setattr(building, '_run_checks', passed)
     resume_verification(ws, first['draft'], 'One extension')
-    assert seen == [('project', 240), ('owner', 460)]
+    assert seen == [('project', 240), ('owner', 600)]

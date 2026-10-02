@@ -311,7 +311,7 @@ function drawDrafts(body, w, reload, ctx) {
     if(d.check_resume?.eligible) actions.append(h('button.btn',{
       onclick:(e)=>withBusy(e.currentTarget,async()=>{
         const reason=await askText({title:'One extended check, no model call',
-          text:`Grant up to ${d.check_resume.timeout_s||240} seconds for the project checks and up to ${d.check_resume.owner_timeout_s||d.check_resume.timeout_s||240} seconds for the owner checks (more than 240 only for a large bundle of them), once for this saved candidate. Existing author budgets remain spent. Passing may apply only under your existing build grant. A second timeout stays inconclusive.`,
+          text:`Grant up to ${d.check_resume.timeout_s||240} seconds for the project checks and up to ${d.check_resume.owner_timeout_s||d.check_resume.timeout_s||240} seconds for the owner checks (twice what an ordinary run gives them, at most 600: the limit that just ran out may run out again on a busy computer), once for this saved candidate. Existing author budgets remain spent. Passing may apply only under your existing build grant. A second timeout stays inconclusive.`,
           confirm:'Grant one check extension'});
         if(!reason?.trim())return;
         await post('/api/worker/run',{job:'resume_check',params:{draft_id:d.id,reason}});

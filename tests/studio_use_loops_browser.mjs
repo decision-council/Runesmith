@@ -237,7 +237,7 @@ await context.route('**/*',async route=>{
     readiness:Object.fromEntries((fixturePlan?.milestones||[]).map(m=>[m.id,{ready:true,unmet:[]}]))};
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
   else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false,autonomy:'propose',
-    exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark',recovery_policy:'wait',stuck_policy:'wait'};
+    exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark',recovery_policy:'wait',stuck_policy:'wait',recheck_policy:'wait'};
   else if(p==='/api/map/environment')data=fixtureProbeMap||{map:{objects:fixtureMapObjects||[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
   else if(p==='/api/map/development')data={objects:fixtureProbeMap?.map.objects||[],goals:[],plan:null,lineage:[],campaigns:[]};
   else if(p==='/api/build')data={apply:false,acceptance_folder:'.runesmith/acceptance',last:null};
@@ -944,15 +944,16 @@ try{
     // B9.09 (review of J11-B17): the one-time extension no longer promises 240 s per phase when the owner phase may take more
     await page.setViewportSize({width:1440,height:1000});
     fixtureWork.drafts=[{...recoveryDraft,state:'needs_revision',verified:false,verification:null,check_reconciliation:null,
-      check_allocation:null,check_resume:{eligible:true,used:false,timeout_s:240,owner_timeout_s:460}}];
+      check_allocation:null,check_resume:{eligible:true,used:false,timeout_s:240,owner_timeout_s:508}}];
     await mount();
     await page.getByRole('button',{name:'Resume timed-out check once',exact:true}).click();
     const grant=page.getByRole('dialog');await grant.waitFor();
     const grantText=await grant.innerText();
-    assert(grantText.includes('up to 240 seconds for the project checks and up to 460 seconds for the owner checks'),grantText);
+    assert(grantText.includes('up to 240 seconds for the project checks and up to 508 seconds for the owner checks'),grantText);
+    assert(grantText.includes('twice what an ordinary run gives them, at most 600'),grantText);   // J11-G44
     assert(!grantText.includes('240 seconds per phase'),grantText);
     await page.keyboard.press('Escape');
-    loops.push({id:'B9.09',case:'The one-time check extension names the project and owner limits, the owner phase longer for a large bundle',result:'passed'});
+    loops.push({id:'B9.09',case:'The one-time check extension names the project and owner limits, the owner phase twice the ordinary one (at most 600 s)',result:'passed'});
     fixtureWork.drafts=oldDrafts;
   }
   if(selected.has('B10')){
@@ -2403,9 +2404,12 @@ try{
     await own.getByRole('button',{name:'Keep and continue',exact:true}).click();
     await own.getByRole('button',{name:'One more try, then break it down',exact:true}).click();
     await page.waitForFunction(()=>[...document.querySelectorAll('.seg button')].some(b=>b.textContent.trim()==='One more try, then break it down'&&b.classList.contains('on')));
-    assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST'&&r.path==='/api/settings').map(r=>r.body).slice(-2),
-      [{recovery_policy:'keep'},{stuck_policy:'retry_split'}]);
-    loops.push({id:'B24.04',case:'Settings offer to keep the queue after an interrupted job and to give a stuck milestone one more try, both waiting for the owner until chosen',result:'passed'});
+    assert((await own.innerText()).includes('Resume timed-out check once'));                     // J11-G44
+    await own.getByRole('button',{name:'Recheck once',exact:true}).click();
+    await page.waitForFunction(()=>[...document.querySelectorAll('.seg button')].some(b=>b.textContent.trim()==='Recheck once'&&b.classList.contains('on')));
+    assert.deepEqual(requests.slice(start).filter(r=>r.method==='POST'&&r.path==='/api/settings').map(r=>r.body).slice(-3),
+      [{recovery_policy:'keep'},{stuck_policy:'retry_split'},{recheck_policy:'recheck'}]);
+    loops.push({id:'B24.04',case:'Settings offer to keep the queue after an interrupted job, to give a stuck milestone one more try and to recheck checks that did not finish, all waiting for the owner until chosen',result:'passed'});
   }
   if(selected.has('B25')){
     // A folder of documents: a model reads only the documents the owner ticks, and the page says so (journey J4-G2).
