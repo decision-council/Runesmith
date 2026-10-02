@@ -146,7 +146,7 @@ def inspect_revision(ws, draft_id):
     blockers.extend(feedback['blockers'])
     if milestone and not blockers:
         from runesmith.app.planner import source_context, draft_prompt
-        context = source_context(ws, snapshot=snapshot)
+        context = source_context(ws, snapshot=snapshot, milestone=milestone)
         broad = draft_prompt(ws, milestone, context, revision=revision)
         focused = draft_prompt(ws, milestone, context, revision=revision, revision_view=view) if view else None
         preview = {'broad_prompt_bytes': len(broad.encode()),
@@ -186,6 +186,7 @@ def focus_packet(packet, view):
     candidate = packet['candidate_to_revise']
     candidate.pop('files', None)
     candidate.pop('omitted', None)
+    candidate.pop('excerpts', None)
     candidate.update(view)
     packet['rules'] = [r for r in packet['rules'] if not (
         r.startswith('never replace an existing file not included') or

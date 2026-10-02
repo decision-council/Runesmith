@@ -90,7 +90,7 @@ def _inputs(ws, draft_id, instrument, *, active_job=None, own_request_key=None, 
     if feedback['blockers']: raise WorkspaceError('; '.join(feedback['blockers']))
     if not any(n.get('target', {}).get('type') == 'draft' and n['target'].get('id') == draft_id for n in feedback['included']):
         raise WorkspaceError('Add a draft note describing the defect and retained behavior; it must be included in the packet.')
-    intent = require_intent(ws); context = source_context(ws, snapshot=snapshot)
+    intent = require_intent(ws); context = source_context(ws, snapshot=snapshot, milestone=milestone)
     # Only a prioritized path that is gone or hidden blocks, and it is named, as in an ordinary build: a file too large or
     # crowded out is an omitted file like any other (review of J11-B15: this refused every revision, naming no file).
     if focus_problem(context): raise WorkspaceError('Selected source context is unavailable: ' + focus_problem(context))

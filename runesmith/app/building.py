@@ -17,8 +17,8 @@ import tempfile
 import time
 import uuid
 
-from runesmith.app.planner import (draft_files, draft_plan, focus_missing, focus_problem, milestone_contract, source_context,
-                                   next_milestone, milestone_ready, ready_milestones, revisable_candidates)
+from runesmith.app.planner import (draft_files, draft_plan, focus_missing, focus_problem, milestone_contract, milestone_view,
+                                   source_context, next_milestone, milestone_ready, ready_milestones, revisable_candidates)
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 from runesmith.app.snapshots import (SnapshotUnsupported, collect_snapshot, digest_files,
                                      load_snapshot, path_kind)
@@ -26,6 +26,7 @@ from runesmith.objects.code import encode_like
 from runesmith.app.acceptance_contracts import expectations, expectation_digest
 from runesmith.app.check_progress import PROGRESS_RUNNER, read_progress
 from runesmith.app.author_allowance import ordinary_allowance
+from runesmith.app.source_focus import shown_view
 
 CHECK_TIMEOUT_S = 120
 # Every done milestone's checks judge each build, so the owner run grows with the plan: a fixed 120 s stopped every
@@ -177,10 +178,12 @@ def author_context_status(ws, draft, snapshot):
     host-recorded file list plus its original digest allows smaller/larger
     future packet budgets without falsely declaring unchanged source stale.
     """
+    from runesmith.app.source_focus import context_digest, recorded_parts
     current = source_context(ws, snapshot=snapshot)
     if not draft.get('snapshot_digest') or not ('shown_files' in draft or 'bound_source_files' in draft):
-        return {'ok': current['digest'] == draft.get('context_digest'), 'binding': 'legacy_current_packet',
-                'file_count': len(current['files']), 'current_packet_differs': False}
+        # An old receipt holds the digest of the whole files alone (parts came later, J11-B15).
+        return {'ok': draft.get('context_digest') in (current['digest'], context_digest(current['files'])),
+                'binding': 'legacy_current_packet', 'file_count': len(current['files']), 'current_packet_differs': False}
     names = draft.get('bound_source_files', draft.get('shown_files'))
     if (not isinstance(names, list) or len(names) > 2000 or
             any(not isinstance(p, str) for p in names) or len(set(names)) != len(names)):
@@ -191,14 +194,23 @@ def author_context_status(ws, draft, snapshot):
             return {'ok': False, 'binding': 'invalid_retained_file_list'}
         try: files[name] = snapshot['files'][name].decode('utf-8-sig')
         except UnicodeError: return {'ok': False, 'binding': 'unreadable_retained_file'}
+    # The parts of files over their limit that the author was shown, rebuilt from the file and the recorded lines: they
+    # are part of the digest too (journey J11-B15).
+    saved = draft.get('shown_excerpts') or {}
+    try:
+        if not isinstance(saved, dict):
+            raise WorkspaceError('invalid')
+        parts = recorded_parts(snapshot, {p for p, e in snapshot['manifest'].items() if e['visibility'] == 'model'}, saved)
+    except WorkspaceError:
+        return {'ok': False, 'binding': 'retained_digest_mismatch', 'file_count': len(files)}
     # Older packets could retain literal CRLF; new ones normalize it. Both
     # must hash to the originally recorded digest, never a replacement digest.
     for normalization, view in [('literal', files), ('lf', {p: s.replace('\r\n', '\n') for p, s in files.items()})]:
-        digest = hashlib.sha256(json.dumps(view, sort_keys=True).encode()).hexdigest()
+        digest = context_digest(view, parts)
         if digest == draft.get('context_digest'):
             return {'ok': True, 'binding': ('frozen_source_bindings' if 'bound_source_files' in draft else 'frozen_shown_files'), 'normalization': normalization,
                     'file_count': len(files), 'context_digest': digest,
-                    'current_packet_differs': current['digest'] != digest}
+                    'current_packet_differs': current['digest'] != digest, **({'parts_count': len(parts)} if parts else {})}
     return {'ok': False, 'binding': 'retained_digest_mismatch', 'file_count': len(files)}
 
 
@@ -462,14 +474,21 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False, milest
         candidates = ready_milestones(plan)
     if not candidates:
         return waiting if saved else {'summary':'No unfinished milestones. Review goals before starting another plan.'}
-    context = source_context(ws)        # the folder's source, not a milestone's: the same for every candidate
+    snapshot = collect_snapshot(ws)
+    context = source_context(ws)        # the folder's source, observed once: every candidate is decided from this reading
+    if snapshot['digest'] != context['snapshot_digest']:
+        snapshot = None                 # it changed between the two reads: no milestone gets a view of its own
     blocked = []
     for milestone in candidates:
         if milestone['id'] in expected:
             blocked.append((milestone, fetched.get(milestone['id']) or dict(waiting, milestone=milestone['id']),
                             'a late answer is still expected'))
             continue
-        result, reason = _build_milestone(ws, router, milestone, context, checkpoint=checkpoint, author_only=author_only)
+        # The folder's source is the same for every milestone, but a file shown in parts is shown by the milestone's own
+        # words (journey J11-B15), so each is judged by its own view of the one reading.
+        result, reason = _build_milestone(ws, router, milestone,
+                                          context if snapshot is None else milestone_view(ws, context, snapshot, milestone),
+                                          checkpoint=checkpoint, author_only=author_only)
         if reason is None:
             return result
         blocked.append((milestone, result, reason))
@@ -520,7 +539,8 @@ def _context_gap(ws, contract, context):
     latest = max(rows, key=lambda r: (r[0], r[1]))[2]
     feedback = latest.get('feedback') if isinstance(latest.get('feedback'), dict) else {}
     path = feedback.get('not_shown')
-    if latest.get('state') == 'context_gap' and isinstance(path, str) and path not in context['files']:
+    if (latest.get('state') == 'context_gap' and isinstance(path, str) and path not in context['files']
+            and path not in (context.get('excerpts') or {})):
         return path
     return None
 
@@ -646,7 +666,9 @@ def build_escalation_status(ws):
               and not escalations and not any(d.get('state') in ('waiting','applied') for d in drafts))
     matching=[d for d in drafts if d.get('snapshot_digest')==context['snapshot_digest']
               and d.get('public_acceptance_digest')==expectation_digest(ws,milestone['id'])]
-    reuse=next((d['id'] for d in matching if d.get('state')=='waiting' and d.get('context_digest')==context['digest']),None)
+    waiting=[d for d in matching if d.get('state')=='waiting']
+    own_digest=source_context(ws,milestone=milestone)['digest'] if waiting else None      # the view its own words give (J11-B15)
+    reuse=next((d['id'] for d in waiting if d.get('context_digest')==own_digest),None)
     blockers=[]
     from runesmith.app.work_modes import guard_job
     try:guard_job(ws,'build')
@@ -743,7 +765,11 @@ def readmit_escalation_answer(ws,key,*,checkpoint=lambda:None):
                     if m.get('id')==receipt.get('milestone')),None)
     if not milestone or not milestone_ready(ws.plan(),milestone):
         raise WorkspaceError('The escalation milestone is no longer ready.')
-    contract=milestone_contract(ws,milestone);context=source_context(ws)
+    contract=milestone_contract(ws,milestone);snapshot=collect_snapshot(ws)
+    # Checked against the lines its own call was shown, never today's choice of parts (journey J11-B15).
+    from runesmith.app.author_recovery import answer_packet, replay_context
+    packet=answer_packet(ws,answer_rel)
+    context=replay_context(ws,snapshot,packet.get('excerpts'))
     allowance=ordinary_allowance(ws,contract,context['snapshot_digest'])
     if contract!=receipt.get('contract') or not any(row['id']==key for row in allowance['escalations']):
         raise WorkspaceError('Source or milestone changed; the retained answer cannot be replayed.')
@@ -752,7 +778,8 @@ def readmit_escalation_answer(ws,key,*,checkpoint=lambda:None):
     if not revision:raise WorkspaceError('The answer has no matching frozen candidate to revise.')
     from runesmith.app.planner import admit_revision_answer
     try:
-        files=admit_revision_answer(ws,context,saved['answer'].get('files'),revision)
+        files=admit_revision_answer(ws,context,saved['answer'].get('files'),revision,
+                                    candidate_view=packet.get('candidate_view'))
     except Exception as error:     # the owner sees when it was checked again and why it still does not fit (J2-F24)
         _write_json(path,dict(receipt,last_recheck={'utc':_now(),'error':str(error)[:300]}))
         raise
@@ -762,7 +789,7 @@ def readmit_escalation_answer(ws,key,*,checkpoint=lambda:None):
     exposure_rel=saved.get('memory_exposure');exposure=_read_json(ws.home/str(exposure_rel or ''),{})
     ws._save_draft_state(draft,'waiting',contract=contract,context_digest=context['digest'],
                          public_acceptance_digest=saved.get('public_acceptance_digest'),
-                         snapshot_digest=context['snapshot_digest'],shown_files=sorted(context['files']),
+                         snapshot_digest=context['snapshot_digest'],**shown_view(context),
                          memory_ids=exposure.get('memory_ids',[]),memory_exposure=exposure_rel,
                          recovered_from_escalation=key)
     ws.ledger.append('build.escalation_readmitted',{'id':key,'draft':draft['id'],'author':saved.get('author'),

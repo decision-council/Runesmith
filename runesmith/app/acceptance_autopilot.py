@@ -408,6 +408,7 @@ def _documents(ws) -> str:
 
 def _packet(ws, milestone_id, proposal, asked) -> dict[str, Any]:
     from runesmith.app.acceptance_proposals import _milestone, _other_checks, proven_inputs
+    from runesmith.app.planner import program_excerpts
     milestone = _milestone(ws, milestone_id)
     by_test = {}
     for row in asked:
@@ -420,6 +421,8 @@ def _packet(ws, milestone_id, proposal, asked) -> dict[str, Any]:
             # camera was written as timeline elements, where the owner's HOUSE_RULES.md says a list of keyframes).
             'proven_inputs': proven_inputs(ws, milestone_id),
             'documents': _documents(ws),
+            # The lines of the program the Checker was shown, so the examples are worked out from its code (J11-B16).
+            **({'program_excerpts': excerpts} if (excerpts := program_excerpts(ws, milestone)) else {}),
             'examples': [{'name': e['test'], 'files': e.get('files') or [],
                           'steps': [_command(s) for s in e.get('steps') or [] if _command(s)],
                           'questions': by_test.get(e['test'], [])} for e in proposal.get('examples') or []]}

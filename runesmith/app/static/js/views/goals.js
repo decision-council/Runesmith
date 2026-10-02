@@ -129,20 +129,25 @@ async function showAuthorContext() {
     const rows = h('div.list.mt-8');
     const draw = () => {
       const matches = data.rows.filter(r => r.path.toLowerCase().includes(search.value.toLowerCase()));
+      // A file over its limit is shown in parts (journey J11-B15): say so, and which lines, for the next step.
+      const shown = r => r.in_parts ? `shown in parts: lines ${r.ranges.map(([a, b]) => a === b ? a : `${a}–${b}`).join(', ')} of ${r.lines}`
+        : r.included ? 'included' : 'omitted: ' + r.reason;
       clear(rows).append(...matches.slice(0, 100).map(r => h('div.item', h('div.body',
         h('div.mono.small', r.path), h('div.tiny.muted',
-          `${r.bytes} bytes · ${r.included ? 'included' : 'omitted: ' + r.reason}${r.focused ? ' · prioritized' : ''}`)))));
+          `${r.bytes} bytes · ${shown(r)}${r.focused ? ' · prioritized' : ''}`)))));
       if (matches.length > 100) rows.append(h('p.tiny.muted', `Showing 100 of ${matches.length} matches; narrow the filter.`));
     };
     search.addEventListener('input', draw);
-    body.append(...[h('p.small', `${data.included_count} files included; ${data.omitted_count} omitted. Source text uses ${data.used_chars} / ${data.budget_chars} characters. This excludes prompt instructions and retained candidate text.`),
-      h('p.tiny.muted', `Prioritize up to ${data.max_focus_paths} files, at most ${data.focused_file_bytes} bytes each. Other files over ${data.normal_file_bytes} bytes are still shown, up to the same size, when the source budget has room after the rest. Total source budget stays fixed. Empty the list to restore default selection.`),
+    body.append(...[h('p.small', `${data.included_count} files included${data.parts_count ? ` (${data.parts_count} in parts)` : ''}; ${data.omitted_count} omitted. Source text uses ${data.used_chars} / ${data.budget_chars} characters. This excludes prompt instructions and retained candidate text.`),
+      h('p.tiny.muted', `Prioritize up to ${data.max_focus_paths} files. Other files over ${data.normal_file_bytes} bytes are still shown, up to the same size, when the source budget has room after the rest. Total source budget stays fixed. Empty the list to restore default selection.`),
+      // A file over its limit, or one the budget cannot hold whole, is shown in parts rather than not at all (J11-B15).
+      h('p.tiny.muted', `A file over ${data.focused_file_bytes} bytes, or one the budget cannot hold whole, is shown in parts: an outline of its declarations and the lines the step is about${data.parts_for ? ` (here for “${data.parts_for.title}”)` : ''}. A change to such a file uses exact edits copied from those lines.`),
       data.settings_error ? h('p.callout.warn', data.settings_error) : null,
       // Each file by name, with what to do (review of J11-B15: a prioritized file that outgrew the limit was only "some files").
       Object.keys(data.focus_errors).length ? h('p.callout.warn', 'Prioritized files that models cannot be shown: '
         + Object.entries(data.focus_errors).map(([file, why]) => `${file} ` + ({
           not_model_visible: 'is gone or hidden: take it out of the list.',
-          file_limit: `is over ${data.focused_file_bytes} bytes: split it, then take it out of the list.`,
+          file_limit: `is over ${data.focused_file_bytes} bytes and has lines too long to show even in parts: split it, then take it out of the list.`,
           not_utf8: 'is not UTF-8 text: save it as UTF-8, or take it out of the list.',
           packet_budget: `does not fit the ${data.budget_chars}-character budget with the other prioritized files: take one out.`,
         }[why] || `cannot be shown (${why}).`)).join(' ')) : null,
