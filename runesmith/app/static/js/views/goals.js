@@ -411,11 +411,14 @@ export default async function render(root, ctx) {
               if (reason === null) return;
               await post(`/api/plan/milestones/${m.id}/acceptance/discard`, { proposal: p.id, reason }); drawPlan(); }) }, icon('x'), 'Discard'))].filter(Boolean));
       } else if (!acc?.approved && ['open', 'doing'].includes(m.status)) {
-        accBlock.append(h('div.small.muted', 'No acceptance checks yet. Automatic apply needs them, and you approve them in plain words.'),
+        accBlock.append(...[h('div.small.muted', 'No acceptance checks yet. Automatic apply needs them, and you approve them in plain words.'),
+          // Journey J11 (review of batch CC): after two scheduled requests that did not work, Runesmith stops asking by
+          // itself for this milestone and builds other work; the page says why, and the button still asks.
+          acc?.requests_paused ? h('div.callout.warn.mt-8', h('div', acc.requests_paused.message)) : null,
           h('button.btn.sm.mt-8', { disabled: !data.ready, onclick: (e) => withBusy(e.currentTarget, async () => {
             await post('/api/worker/run', { job: 'propose_acceptance', params: { milestone: m.id } });
             toast('Proposing acceptance checks for this milestone. They appear here for you to read and approve.', 'good', 6000); }) },
-            icon('check'), 'Propose acceptance checks'));
+            icon('check'), 'Propose acceptance checks')].filter(Boolean));
       }
       if (accBlock.childNodes.length) item.append(accBlock);
       const expectations = data.acceptance_expectations?.[m.id];

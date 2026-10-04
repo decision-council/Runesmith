@@ -853,7 +853,7 @@ class Worker:
         return result
 
     def _job_propose_acceptance(self, milestone: str) -> dict[str, Any]:
-        from runesmith.app.acceptance_proposals import propose
+        from runesmith.app.acceptance_proposals import REQUEST_FAILURES, clear_request_failures, note_request_failure, propose
         def checkpoint():
             self._work_checkpoint()
             if self._stop_after_step or self._closing or self.paused: raise StopRequested()
@@ -861,7 +861,28 @@ class Worker:
         self._set('planning', 'Proposing acceptance checks for a milestone ('
                   + ('the check autopilot reviews them' if autopilot_on else 'you approve them') + ')')   # J11-F13
         self.say('Asking the planner model to propose acceptance checks from the milestone’s own words')
-        proposal = propose(self.ws, self.ws.router(on_call=self._on_call, backoff_s=()), milestone, checkpoint=checkpoint)
+        try:
+            proposal = propose(self.ws, self.ws.router(on_call=self._on_call, backoff_s=()), milestone, checkpoint=checkpoint)
+        except (StopRequested, SkippedByOwner):
+            raise
+        except Exception as error:
+            # A scheduled request that failed is counted (journey J11, review of batch CC): after two on the same milestone
+            # and source the schedule stops asking, so a request whose answer is not usable cannot hold every build back
+            # for ever. The owner's own request is never counted, and never held back.
+            if (self.current or {}).get('by') == 'schedule':
+                try:
+                    failures = note_request_failure(self.ws, milestone, error)
+                except Exception:                    # the record is a convenience: never hide the failure itself
+                    failures = None
+                if failures and type(error).__name__ in ('PlannerUnavailable', 'WorkspaceError'):
+                    error.args = (f"{error} " + (f"That was failed request {failures['count']} of {REQUEST_FAILURES} for "
+                                                 'these checks, so Runesmith stops asking for them by itself and builds other '
+                                                 'work until the project’s files or this milestone change.'
+                                                 if failures['count'] >= REQUEST_FAILURES else
+                                                 f"(Failed request {failures['count']} of {REQUEST_FAILURES}; Runesmith asks "
+                                                 'once more.)'),)
+            raise
+        clear_request_failures(self.ws, milestone)          # answered: the count of failures ends
         self.bus.publish('plan', {'acceptance': proposal['id']})
         dry = proposal.get('dry_run') or {}
         failing = f"{(dry.get('failures') or 0) + (dry.get('errors') or 0)} of {dry['ran']}" if dry.get('ran') else 'They'

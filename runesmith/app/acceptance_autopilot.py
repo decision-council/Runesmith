@@ -694,8 +694,13 @@ def needs_checks(ws) -> str | None:
     """A ready milestone with no checks and nothing proposed or waiting, which the autopilot may ask for; or one
     whose waiting proposal the autopilot never reviewed (its job ended between the proposal and its review, as when
     the Studio stopped: the proposal waited for the owner for the whole unattended run, review of batch CC). Asking
-    for checks again reuses that proposal when nothing changed, and the review then runs."""
-    from runesmith.app.acceptance_proposals import acceptance_file, _proposal_rows
+    for checks again reuses that proposal when nothing changed, and the review then runs.
+
+    Not a milestone whose last scheduled requests failed twice on this very milestone and source (journey J11, review of
+    batch CC: an answer that was not usable, or no answer, was asked for again at once and for ever, ahead of every
+    build): the schedule builds something else until the source or the milestone changes. The owner's own request
+    still runs."""
+    from runesmith.app.acceptance_proposals import acceptance_file, _proposal_rows, requests_paused
     from runesmith.app.planner import ready_milestones
     for milestone in ready_milestones(ws.plan()):
         if acceptance_file(ws, milestone['id']).is_file():
@@ -705,7 +710,7 @@ def needs_checks(ws) -> str | None:
             if (waiting[-1].get('autopilot') or {}).get('decision'):
                 continue                            # judged: it waits for the owner (or is approved)
             return milestone['id']
-        if rounds_used(ws, milestone['id']) >= MAX_ROUNDS:
+        if rounds_used(ws, milestone['id']) >= MAX_ROUNDS or requests_paused(ws, milestone) is not None:
             continue
         return milestone['id']
     return None

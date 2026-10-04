@@ -11,7 +11,8 @@ from runesmith.app.acceptance_examples import validate_examples
 from runesmith.app.acceptance_proposals import _record_path, acceptance_file, packet, propose, proven_inputs
 from runesmith.app.worker import EventBus, Worker
 from runesmith.app.workspace import Workspace, WorkspaceError, _write_json
-from runesmith.instruments import CallOutcome
+from runesmith.app.planner import PlannerUnavailable, SkippedByOwner
+from runesmith.instruments import CallOutcome, TransportCensored
 from test_acceptance_examples import EXAMPLES, T, workspace
 from test_check_autopilot import answers_for, autopilot_workspace, proposal
 
@@ -752,3 +753,126 @@ def test_23_a_model_whose_route_refused_the_full_request_as_too_large_is_asked_a
     assert seen == [("verifier", True, "autopilot-" + first["id"]), ("verifier", False, "autopilot-lean-" + first["id"]),
                     ("verifier2", False, "autopilot-again-" + first["id"])], seen
     assert verdict["decision"] == "approve", verdict
+
+
+# ------------------------------------------------------------------ failed scheduled requests (review of batch CC, #19)
+
+def checker_that_fails(monkeypatch, outcome):
+    """Every model of the Checker's role fails each request with `outcome()`; the state counts the asks, and its
+    'works' flips them back to answering."""
+    from runesmith import instruments
+    real, state = instruments.ScriptedInstrument.complete, {"asked": 0, "works": False}
+
+    def complete(self, **kwargs):
+        if self.name not in ("offline", "verifier") or state["works"]:
+            return real(self, **kwargs)
+        state["asked"] += 1
+        return outcome()
+    monkeypatch.setattr(instruments.ScriptedInstrument, "complete", complete)
+    return state
+
+
+def unusable_answer():
+    return CallOutcome(False, error_kind="output", error="no JSON in the answer")
+
+
+def run_request(worker, by="schedule", n=[0]):
+    n[0] += 1
+    worker._execute({"id": f"{by}{n[0]}", "kind": "propose_acceptance", "params": {"milestone": "m1"}, "by": by})
+    return worker.history[-1]
+
+
+def test_two_scheduled_requests_whose_answers_are_not_usable_stop_the_asking_and_the_schedule_builds(tmp_path, monkeypatch):
+    # Review of batch CC (#19, wider class): the Checker's answer was not usable, nothing was stored, and every round
+    # asked again at once, ahead of every build, for ever.
+    ws = autopilot_workspace(tmp_path, [], [])
+    asked = checker_that_fails(monkeypatch, unusable_answer)
+    worker = scheduled(ws)
+    for n in (1, 2):
+        assert worker.scheduled_job() == ("propose_acceptance", {"milestone": "m1"})
+        row = run_request(worker)
+        assert row["result"] == "failed" and "not usable" in row["outcome"]["error"]
+        assert f"{n} of 2" in row["outcome"]["error"]
+    assert "stops asking for them by itself and builds other work" in row["outcome"]["error"]
+    assert asked["asked"] == 2 and autopilot.needs_checks(ws) is None and worker.scheduled_job() == ("build", {})
+    said = proposals.status(ws)["m1"]["requests_paused"]
+    assert said["count"] == 2 and "stopped asking for them by itself" in said["message"] and "not usable" in said["message"]
+    assert proposals.status(ws)["m1"]["approved"] is None and proposals.status(ws)["m1"]["proposal"] is None
+
+
+def test_a_change_of_the_source_or_the_milestone_lets_the_schedule_ask_again_and_the_count_starts_afresh(tmp_path, monkeypatch):
+    ws = autopilot_workspace(tmp_path, [], [])
+    checker_that_fails(monkeypatch, unusable_answer)
+    worker = scheduled(ws)
+    run_request(worker), run_request(worker)
+    assert autopilot.needs_checks(ws) is None
+    (ws.root / "tally" / "extra.py").write_text("EXTRA = 1\n", encoding="utf-8")            # the project's files change
+    assert autopilot.needs_checks(ws) == "m1"
+    assert "(Failed request 1 of 2;" in run_request(worker)["outcome"]["error"]                # counted afresh
+    assert proposals.status(ws).get("m1") is None                                           # one failure: not paused
+    run_request(worker)
+    assert autopilot.needs_checks(ws) is None and proposals.status(ws)["m1"]["requests_paused"]["count"] == 2
+    ws.update_milestone("m1", {"detail": "Months: python -m tally months prints how many entries each month has."})
+    assert autopilot.needs_checks(ws) == "m1"                                               # the milestone changed
+
+
+def test_the_owner_s_own_request_still_runs_when_the_schedule_has_stopped_and_an_answer_ends_the_count(tmp_path, monkeypatch):
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    state = checker_that_fails(monkeypatch, unusable_answer)
+    worker = scheduled(ws)
+    run_request(worker), run_request(worker)
+    assert state["asked"] == 2 and autopilot.needs_checks(ws) is None
+    owner = run_request(worker, "owner")                                                    # asked by hand: it runs
+    assert state["asked"] == 3 and owner["result"] == "failed" and "stops asking" not in owner["outcome"]["error"]
+    assert proposals.status(ws)["m1"]["requests_paused"]["count"] == 2                      # his failure is not counted
+    state["works"] = True
+    assert run_request(worker, "owner")["result"] == "done"
+    shown = proposals.status(ws)["m1"]
+    assert shown["proposal"] and "requests_paused" not in shown                              # answered: the count ended
+    assert "request_failures" not in proposals._record(ws, "m1")
+
+
+def test_a_request_that_no_model_accepted_backs_off_and_does_not_count_but_a_model_that_did_not_answer_does(tmp_path, monkeypatch):
+    ws = autopilot_workspace(tmp_path, [], [])
+    ws.update_settings({"full_speed": True})
+    nobody = checker_that_fails(monkeypatch, lambda: CallOutcome(False, error_kind="transport", error="capacity",
+                                                                 receipt={"no_route_accepted": True}))
+    worker = scheduled(ws)
+    for _ in range(3):
+        assert run_request(worker)["result"] == "failed"
+    assert autopilot.needs_checks(ws) == "m1" and proposals.status(ws).get("m1") is None   # nothing ran: not counted
+    assert worker._due() > 30                                                               # it waits, and asks later
+    silent = checker_that_fails(monkeypatch, lambda: CallOutcome(False, error_kind="transport", error="timeout"))
+    run_request(worker), run_request(worker)
+    assert silent["asked"] >= 2 and autopilot.needs_checks(ws) is None                      # asked, not answered: counted
+    assert nobody["asked"] >= 3
+
+
+def test_what_counts_as_a_failed_request_and_when_the_pause_ends_by_itself(tmp_path, monkeypatch):
+    assert proposals.counts_as_failure(PlannerUnavailable("the model's answer was not usable: no JSON"))
+    assert proposals.counts_as_failure(WorkspaceError("Both answers broke a rule of the examples format."))
+    assert not proposals.counts_as_failure(SkippedByOwner("you skipped the request"))
+    assert not proposals.counts_as_failure(WorkspaceError("You withdrew checks for this milestone while these were being written"))
+    for flag in ("not_admitted", "no_route_accepted"):
+        try:
+            try:
+                raise TransportCensored("every model turned it away", receipt={flag: True})
+            except TransportCensored as cause:
+                raise PlannerUnavailable("no acceptance checks: every model turned it away") from cause
+        except PlannerUnavailable as error:
+            assert not proposals.counts_as_failure(error), flag
+    ws = autopilot_workspace(tmp_path, [], [])
+    ws.update_settings({"build_steps": True})
+    for _ in range(2):
+        proposals.note_request_failure(ws, "m1", PlannerUnavailable("not usable"))
+    assert autopilot.needs_checks(ws) is None
+    monkeypatch.setattr(proposals, "FORGIVEN_AFTER_S", -1)           # a long outage must not stall a project for good
+    assert autopilot.needs_checks(ws) == "m1" and proposals.status(ws).get("m1") is None
+
+
+def test_an_owner_withdrawing_checks_ends_the_count(tmp_path):
+    ws = format_workspace(tmp_path)
+    proposals.note_request_failure(ws, "g1", PlannerUnavailable("not usable"))
+    assert proposals._record(ws, "g1")["request_failures"]["count"] == 1
+    proposals.withdraw(ws, "g1", reason="These checks put the camera in the wrong place.")
+    assert "request_failures" not in proposals._record(ws, "g1")

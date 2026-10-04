@@ -1993,6 +1993,17 @@ try{
     const asked=posts().filter(r=>r.path==='/api/worker/run').at(-1);
     assert.deepEqual(asked.body,{job:'propose_acceptance',params:{milestone:'m1'}});
     loops.push({id:'B20.03',case:'Approved checks offer Ask for new checks, which only queues a proposal',result:'passed'});
+    // B20.17 (journey J11, review of batch CC): after scheduled requests that did not work, the page says Runesmith stopped
+    // asking for these checks by itself, and the button still asks
+    fixtureAcceptance={m1:{approved:null,proposal:null,requests_paused:{count:2,reason:'the model’s answer was not usable: no JSON',
+      message:'The last 2 requests for these checks did not work (the model’s answer was not usable: no JSON), so Runesmith stopped asking for them by itself. It asks again when the project’s files or this milestone change, or when you ask.'}}};
+    await page.evaluate(()=>window.mount('goals'));text=await block().innerText();
+    assert(text.includes('stopped asking for them by itself')&&text.includes('or when you ask')&&text.includes('No acceptance checks yet'),text);
+    assert.equal(await block().getByRole('button',{name:'Propose acceptance checks',exact:true}).count(),1);
+    assert(!/\bnull\b|undefined/.test(text),text);
+    loops.push({id:'B20.17',case:'A milestone whose scheduled check requests failed twice says Runesmith stopped asking by itself and when it asks again, and still offers Propose acceptance checks',result:'passed'});
+    fixtureAcceptance={m1:{approved:{provenance:'model-proposed, owner-approved',proposed_by:'Fixture chat',checks},proposal:null}};
+    await page.evaluate(()=>window.mount('goals'));
     // B20.13 (journey J11-G37): approved checks can be withdrawn with a reason
     await block().getByRole('button',{name:'Withdraw these checks',exact:true}).click();
     const why=page.getByRole('dialog');
