@@ -139,7 +139,7 @@ async function showAuthorContext() {
     };
     search.addEventListener('input', draw);
     body.append(...[h('p.small', `${data.included_count} files included${data.parts_count ? ` (${data.parts_count} in parts)` : ''}; ${data.omitted_count} omitted. Source text uses ${data.used_chars} / ${data.budget_chars} characters. This excludes prompt instructions and retained candidate text.`),
-      h('p.tiny.muted', `Prioritize up to ${data.max_focus_paths} files. Other files over ${data.normal_file_bytes} bytes are still shown, up to the same size, when the source budget has room after the rest. Total source budget stays fixed. Empty the list to restore default selection.`),
+      h('p.tiny.muted', `Prioritize up to ${data.max_focus_paths} files. Other files over ${data.normal_file_bytes} bytes are still shown, up to ${data.context_file_bytes || data.focused_file_bytes} bytes, when the source budget has room after the rest; a file a step names, or one you prioritize, is shown whole up to ${data.focused_file_bytes} bytes. Total source budget stays fixed. Empty the list to restore default selection.`),
       // A file over its limit, or one the budget cannot hold whole, is shown in parts rather than not at all (J11-B15).
       h('p.tiny.muted', `A file over ${data.focused_file_bytes} bytes, or one the budget cannot hold whole, is shown in parts: an outline of its declarations and the lines the step is about${data.parts_for ? ` (here for “${data.parts_for.title}”)` : ''}. A change to such a file uses exact edits copied from those lines.`),
       data.settings_error ? h('p.callout.warn', data.settings_error) : null,

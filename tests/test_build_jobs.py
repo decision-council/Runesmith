@@ -97,7 +97,7 @@ def test_author_only_exhaustion_cannot_schedule_breakdown(tmp_path, monkeypatch)
 
 @pytest.mark.parametrize('spent', [1, 3])
 @pytest.mark.parametrize('change', ['focus', 'source'])
-def test_matched_draft_is_reused_without_a_second_author_entry(tmp_path, monkeypatch, spent, change):
+def test_matched_draft_is_reused_without_a_second_author_entry(tmp_path, monkeypatch, spent, change, old_caps):
     from runesmith.app.workspace import _write_json
     from runesmith.app.source_focus import save_focus
     from runesmith.app.snapshots import collect_snapshot

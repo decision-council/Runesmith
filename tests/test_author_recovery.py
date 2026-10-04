@@ -258,7 +258,7 @@ def tries_used(ws):
     return ordinary_allowance(ws, contract, source_context(ws)['snapshot_digest'])['used']
 
 
-def test_a_late_answer_for_a_file_the_budget_left_out_settles_its_attempt_without_a_try(tmp_path, monkeypatch):
+def test_a_late_answer_for_a_file_the_budget_left_out_settles_its_attempt_without_a_try(tmp_path, monkeypatch, old_caps):
     # Review of J11-B15: _settle_attempt recorded such a late answer as a used "failed" try, and a replay of the
     # recovery would have turned a settled "context_gap" back into one.
     for name, lines in (('a_pad.js', 4000), ('b_pad.js', 4000), ('c_pad.js', 1000), ('huge.js', 5600)):
@@ -273,7 +273,7 @@ def test_a_late_answer_for_a_file_the_budget_left_out_settles_its_attempt_withou
     assert json.loads(attempt.read_text())['state'] == 'context_gap'
 
 
-def test_a_late_answer_for_a_file_that_can_never_be_shown_is_an_ordinary_failed_try(tmp_path, monkeypatch):
+def test_a_late_answer_for_a_file_that_can_never_be_shown_is_an_ordinary_failed_try(tmp_path, monkeypatch, old_caps):
     # Review of J11-B15: the retained selection's reasons are as select_context gives them, not always the budget.
     (tmp_path / 'huge.js').write_bytes(b'// y ' * 8200)        # one line of 41,000 bytes, too long to quote: no part can show it
     ws, gateway, inst, row, attempt = interrupted_build(tmp_path, monkeypatch)

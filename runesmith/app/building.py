@@ -508,7 +508,8 @@ def _used_up_cause(ws, contract, context):
     """Why the tries were used up, when it was a file no model can be shown (journey J11-B15, review of the 40,000-byte
     wall): every answer that edits it is refused, so smaller steps that edit it fail the same way. The summary and the
     breakdown packet say so, instead of only that the tries are gone."""
-    from runesmith.app.source_focus import FOCUSED_FILE_BYTES
+    from runesmith.app.source_focus import CONTEXT_FILE_BYTES, FOCUSED_FILE_BYTES
+    from runesmith.app.workspace import MAX_DRAFT_FILE_BYTES
     newest = None
     for path in (ws.home / 'build-attempts').glob('*.json'):
         row = _read_json(path, {})
@@ -521,10 +522,27 @@ def _used_up_cause(ws, contract, context):
                 newest = (key, feedback['not_shown'], feedback['reason'])
     if newest is None:
         return ''
-    why = {'file_limit': f'is too large to show a model ({FOCUSED_FILE_BYTES:,} bytes at most)',
-           'not_utf8': 'is not UTF-8 text, so no model can be shown it',
-           'budget_together': 'does not fit the source budget together with the other files this step needs'}[newest[2]]
-    return f'{newest[1]} {why}, so every answer that edits it is refused; smaller steps that edit it fail the same way: split it first.'
+    _, name, reason = newest
+    try:
+        size = (ws.root / name).stat().st_size
+    except OSError:
+        size = 0
+    if reason == 'file_limit' and size > MAX_DRAFT_FILE_BYTES:
+        why = f'is too large to draft ({MAX_DRAFT_FILE_BYTES:,} bytes at most)'
+    elif reason == 'file_limit' and 0 < size <= FOCUSED_FILE_BYTES:
+        why = f'was not shown whole to a model ({size:,} bytes; only a prioritized or named file is shown whole above {CONTEXT_FILE_BYTES:,})'
+    elif reason == 'file_limit':
+        why = f'is too large to show a model, even in parts (over {FOCUSED_FILE_BYTES:,} bytes, and its lines are too long to quote)'
+    else:
+        why = {'not_utf8': 'is not UTF-8 text, so no model can be shown it',
+               'budget_together': 'does not fit the source budget together with the other files this step needs'}[reason]
+    # Splitting is the remedy only for a file nobody can be shown at all, and then by hand: a step that moves a part into a
+    # new file needs the file shown.
+    remedy = {'file_limit': ('prioritize it under Author context first' if 0 < size <= FOCUSED_FILE_BYTES else
+                             'split it first, yourself (no model can be shown it, so no step can do that for you)'),
+              'not_utf8': 'save it as UTF-8 text first',
+              'budget_together': 'take the prioritized files these steps do not need out of Author context first'}[reason]
+    return f'{name} {why}, so every answer that edits it is refused; smaller steps that edit it fail the same way: {remedy}.'
 
 
 def _context_gap(ws, contract, context):

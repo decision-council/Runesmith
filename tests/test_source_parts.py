@@ -154,7 +154,7 @@ def test_budget_excerpts_never_push_the_packet_past_the_limit_and_small_files_ke
     assert 'motion.mjs' not in tight.get('excerpts', {}) and tight['omission_reasons']['motion.mjs'] == 'packet_budget'
 
 
-def test_a_prioritized_file_is_shown_first_and_the_owner_can_prioritize_one_over_the_cap(tmp_path):
+def test_a_prioritized_file_is_shown_first_and_the_owner_can_prioritize_one_over_the_cap(tmp_path, old_caps):
     ws = plan_for(tmp_path)
     program(tmp_path)
     for n in range(4):
@@ -185,7 +185,7 @@ def test_the_outline_lists_every_declaration_with_its_line_and_the_cases_at_thei
 
 def test_a_file_none_of_whose_lines_can_be_quoted_is_not_shown_even_in_parts(tmp_path):
     ws = plan_for(tmp_path)
-    (tmp_path / 'wide.mjs').write_bytes(b'const a = 1; ' * 4000)                  # one line of 52,000 characters
+    (tmp_path / 'wide.mjs').write_bytes(b'const a = 1; ' * 12500)                 # one line of 162,500 characters: over the cap
     context = source_context(ws, milestone=milestone(ws))
     assert 'wide.mjs' not in context.get('excerpts', {}) and context['omission_reasons']['wide.mjs'] == 'file_limit'
 
