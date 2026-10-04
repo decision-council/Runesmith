@@ -269,4 +269,4 @@ The experiments, their preregistrations and receipts live in the MillinerOS rese
 
 ## License
 
-To be chosen by the project owner before public release.
+Runesmith is released by AI ThinkLab under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
