@@ -9,7 +9,9 @@ from runesmith.app import acceptance_autopilot as autopilot
 from runesmith.app import acceptance_proposals as proposals
 from runesmith.app.acceptance_examples import validate_examples
 from runesmith.app.acceptance_proposals import _record_path, acceptance_file, packet, propose, proven_inputs
+from runesmith.app.worker import EventBus, Worker
 from runesmith.app.workspace import Workspace, WorkspaceError, _write_json
+from runesmith.instruments import CallOutcome
 from test_acceptance_examples import EXAMPLES, T, workspace
 from test_check_autopilot import answers_for, autopilot_workspace, proposal
 
@@ -371,8 +373,8 @@ def test_the_checker_is_asked_once_more_with_the_refusal_while_it_drafts(tmp_pat
     assert made["revision"]["after"] == "unusable" and "backup.json" in made["revision"]["error"]
     assert not any(c.get("missing_input") for c in made["checks"])
     stubborn = workspace(tmp_path / "again", [{"examples": EXAMPLES["examples"] + [backup]}] * 2)
-    with pytest.raises(WorkspaceError, match="Both answers broke a rule of the examples format.*Example 4 runs backup.json"):
-        propose(stubborn, stubborn.router(), "m1")
+    kept = propose(stubborn, stubborn.router(), "m1")      # the one more try is kept, with the finding (review of batch CC)
+    assert kept["checks"][-1]["missing_input"] == ["backup.json"] and kept["revision"]["after"] == "unusable"
 
 
 # ---------------------------------------------------------------------------------------------------- CC5
@@ -526,3 +528,227 @@ def test_the_second_call_is_a_separate_request(tmp_path, monkeypatch):
     autopilot.review(ws, "m1", first)
     assert [(name, key.rsplit("-a", 1)[0]) for name, key in keys] == [("verifier", "autopilot-" + first["id"]),
                                                                     ("verifier2", "autopilot-again-" + first["id"])]
+
+
+# ------------------------------------------------------------------------------------- review of batch CC (fix-cc)
+
+BACKUP = {"name": "listed from a backup", "says": "Entries are listed from a backup file.",
+          "steps": [{"run": T + ["list", "backup.json"], "expect": {"exit": "ok"}}]}
+UNUSABLE = {"examples": [{"name": "x", "says": "x", "steps": [{"run": ["bash", "-c", "true"]}]}]}
+
+
+def scheduled(ws):
+    ws.update_settings({"build_steps": True, "auto_work": True, "policy_chosen": True, "onboarded": True})
+    return Worker(ws, EventBus())
+
+
+def test_13_a_checker_that_still_runs_an_unlisted_file_on_its_one_more_try_is_turned_down_and_counted(tmp_path):
+    # Review of batch CC: refused twice, nothing was stored, so rounds_used stayed 0 and the schedule asked again at once
+    # for ever, and never built (before CC4 this was a stored, counted turn-down that ended at MAX_ROUNDS).
+    ws = autopilot_workspace(tmp_path, [{"examples": EXAMPLES["examples"] + [BACKUP]}] * 2, [])
+    worker = scheduled(ws)
+    for used in (1, 2):
+        assert worker.scheduled_job() == ("propose_acceptance", {"milestone": "m1"})
+        made = propose(ws, ws.router(), "m1")                      # kept with the finding, not refused
+        assert made["checks"][-1]["missing_input"] == ["backup.json"] and made["revision"]["after"] == "unusable"
+        verdict = autopilot.review(ws, "m1", made)
+        assert verdict["decision"] == "turn_down" and "backup.json" in verdict["reason"], verdict
+        assert autopilot.act(ws, "m1", made, verdict)[1] == "turn_down" and autopilot.rounds_used(ws, "m1") == used
+    assert autopilot.needs_checks(ws) is None and worker.scheduled_job() == ("build", {})     # the owner, and the schedule builds
+
+
+def test_19_a_checker_answer_refused_twice_leaves_a_trace_that_counts_and_the_next_checker_reads(tmp_path):
+    ws = autopilot_workspace(tmp_path, [UNUSABLE] * 2, [])
+    worker = scheduled(ws)
+    for used in (1, 2):
+        assert worker.scheduled_job() == ("propose_acceptance", {"milestone": "m1"})
+        with pytest.raises(WorkspaceError, match="Both answers broke a rule"):
+            propose(ws, ws.router(), "m1")
+        assert autopilot.rounds_used(ws, "m1") == used
+    assert autopilot.needs_checks(ws) is None and worker.scheduled_job() == ("build", {})
+    row = proposals._proposal_rows(ws, "m1")[-1]
+    assert row["state"] == "discarded" and row["refused"] and "could not use either answer" in row["reason"]
+    assert any("could not use either answer" in said for said in packet(ws, "m1", "examples")["owner_said_about_earlier_checks"])
+    nothing = {"examples": [{"name": "files", "says": "Nothing to run.", "steps": []}]}      # "nothing could be checked": too
+    quiet = autopilot_workspace(tmp_path / "nothing", [nothing] * 2, [])
+    with pytest.raises(WorkspaceError, match="Nothing in this milestone could be checked"):
+        propose(quiet, quiet.router(), "m1")
+    assert autopilot.rounds_used(quiet, "m1") == 1
+
+
+def test_19_with_the_autopilot_off_the_trace_tells_the_next_checker_but_counts_no_round(tmp_path):
+    ws = workspace(tmp_path, [UNUSABLE] * 2)
+    with pytest.raises(WorkspaceError, match="Both answers broke a rule"):
+        propose(ws, ws.router(), "m1")
+    assert autopilot.rounds_used(ws, "m1") == 0
+    assert "could not use either answer" in packet(ws, "m1", "examples")["owner_said_about_earlier_checks"][0]
+
+
+def test_14_what_is_typed_in_or_run_is_not_demanded_of_the_output():
+    # Review of batch CC: 'square_demo with d "M 0 0 l 100 0" prints Invalid project structure': the path is the input
+    # the program refuses, never printed; the only way past the gate was a check on the file the example writes itself.
+    done_when = 'square_demo with d "M 0 0 l 100 0" prints Invalid project structure, exit 1'
+    assert autopilot.named_texts(done_when) == ["M 0 0 l 100 0"]
+    refused = {"test": "t", "files": [{"name": "square_bad.motion.json",
+                                       "text": '{"timeline": [{"elements": [{"type": "path", "d": "M 0 0 l 100 0"}]}]}'}],
+               "steps": [{"run": ["node", "motion.mjs", "square_bad.motion.json"],
+                          "expect": {"exit": "error", "shows": ["Invalid project structure"]}}]}
+    assert autopilot.gates(proposal(examples=[refused]), done_when) == []
+    command = 'The command "python -m tally months" prints total="12" and creates "my notes.txt".'
+    ran = {"test": "t", "files": [], "steps": [{"run": ["python", "-m", "tally", "months"]}], "exists": ["my notes.txt"]}
+    assert autopilot.uncovered(proposal(examples=[ran]), command) == ['total="12"']          # only the output is asked for
+
+
+def test_14_prose_maths_and_escaped_text_are_not_demanded_in_a_form_no_output_has():
+    assert autopilot.named_texts("(2*sqrt(100)=20, then x=\"112.4\") and sqrt(100) alone") == ['x="112.4"', 'sqrt(100)']
+    assert autopilot.named_texts("a spring that overshoots: 3 + sqrt(9) and scale(1.5)") == ["scale(1.5)"]
+    escaped = svg_checks('<text>Runesmith &amp; co</text>')
+    assert autopilot.uncovered(escaped, 'A text "Runesmith & co" renders as Runesmith &amp; co') == []
+    assert autopilot.uncovered(svg_checks(), 'A text "Runesmith & co" renders') == ["Runesmith & co"]
+
+
+def test_14_a_check_on_a_file_the_example_writes_itself_with_the_text_already_in_it_covers_nothing():
+    own = {"test": "t", "files": [{"name": "in.svg", "text": '<g total="12"/>'}],
+           "steps": [{"run": ["node", "motion.mjs", "in.svg", "--svg", "out.svg"]}],
+           "contains": [{"name": "in.svg", "texts": ['total="12"']}]}
+    assert autopilot.uncovered(proposal(examples=[own]), 'out.svg has total="12"') == ['total="12"']
+    in_the_output = dict(own, contains=[{"name": "out.svg", "texts": ['total="12"']}])
+    assert autopilot.uncovered(proposal(examples=[in_the_output]), 'out.svg has total="12"') == []
+    edited = dict(own, contains=[{"name": "in.svg", "texts": ['total="13"']}])                  # a step may change it
+    assert autopilot.uncovered(proposal(examples=[edited]), 'in.svg then has total="13"') == []
+
+
+def test_15_a_line_check_that_starts_the_attribute_covers_the_attribute():
+    # Review of batch CC: the Checker writes has 'r=', 'x="' or 'x1="0" y1=' (the first number after that text).
+    for has, number, covers in (("r=", 10, 'r="10"'), ('x="', 100, 'x="100"'), ('x1="0" y1=', 0.5, 'y1="0.5"'), ("r:", 3, 'r="3"')):
+        assert autopilot.uncovered(svg_checks(file_lines=[{"name": "out.svg", "has": has, "number": number}]), covers) == [], has
+        assert autopilot.uncovered(svg_checks(lines=[{"has": has, "number": number}]), covers) == [], has
+    assert autopilot.uncovered(svg_checks(file_lines=[{"name": "out.svg", "has": "r=", "number": 10}]), 'r="20"') == ['r="20"']
+    assert autopilot._line_texts("r=", 10.0) == ['r=="10"', "r= 10", 'r="10"', "r 10"]
+
+
+def test_24_a_longer_name_does_not_cover_the_named_attribute():
+    # Review of batch CC: stop-opacity="0.5" held opacity="0.5", cx="100" held x="100", fr held r, data-class held class.
+    wrong = svg_checks('stop-opacity="0.5"', 'cx="100"', 'stroke-width="100"')
+    assert autopilot.uncovered(wrong, 'opacity="0.5" x="100" width="100"') == ['opacity="0.5"', 'x="100"', 'width="100"']
+    assert autopilot.uncovered(svg_checks('rx="0"', 'stroke-width="100"'), 'x="0" and width="100"') == ['x="0"', 'width="100"']
+    assert autopilot.uncovered(svg_checks('data-class="rs-layer"', 'fr="55.902"'),
+                               'class="rs-layer" and r="55.902"') == ['class="rs-layer"', 'r="55.902"']
+    right = svg_checks('<rect x="100" y="0" width="100"', "translate(480,270) scale(1) translate(-510,-270)", 'fill-opacity="0.5" opacity="0.5"')
+    assert autopilot.uncovered(right, 'x="100" width="100" translate(-510,-270) opacity="0.5"') == []
+
+
+FILLERS = ["N/A", "n/a", "N.A.", "not applicable", "Not applicable: nothing is written under a different name.", "not found",
+           "-", "nil", "null", "Empty", "All fields are placed correctly.", "Everything is consistent.",
+           "All fields match the proven inputs.", "The examples are consistent with the proven inputs and the milestone.",
+           "Every example uses the same fields as the proven inputs."]
+CLAIMS = ['Example 1 writes "color" where the proven inputs use "fill".',
+          "All examples write the camera as timeline elements instead of project.camera.",
+          "Not found: the camera is written as keyframes"]
+
+
+def test_16_and_26_filler_in_the_misplaced_list_is_no_finding_and_a_real_claim_is():
+    assert autopilot._misplaced(FILLERS) == []
+    assert autopilot._misplaced(FILLERS + CLAIMS) == CLAIMS
+    assert autopilot._contradiction("N/A") is None and autopilot._contradiction("Everything is consistent.") is None
+    assert autopilot._contradiction("m1 refuses an empty project file, which this check requires") is not None
+
+
+@pytest.mark.parametrize("filler", ["N/A", "All fields are placed correctly.", "Not applicable: nothing is written elsewhere."])
+def test_16_and_26_a_second_model_that_answers_filler_does_not_turn_correct_checks_down(tmp_path, filler):
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+    config = ws.config()
+    config["instruments"]["verifier"]["answers"] = [dict(answers_for(first), misplaced=[filler])]
+    ws.save_config(config)
+    assert autopilot.review(ws, "m1", first)["decision"] == "approve"
+
+
+def test_17_a_second_model_that_gives_no_answer_is_followed_by_another(tmp_path):
+    # Review of batch CC: its free quota used up, or it is down: every proposal waited for the owner for as long as
+    # that lasted, and the next model in the role was never asked.
+    ws = two_models(tmp_path, [], [])
+    first = propose(ws, ws.router(), "m1")
+    config = ws.config()
+    config["instruments"]["verifier"]["answers"] = []                       # unavailable: script exhausted
+    config["instruments"]["verifier2"]["answers"] = [answers_for(first)]
+    ws.save_config(config)
+    verdict = autopilot.review(ws, "m1", first)
+    assert verdict["decision"] == "approve" and "verifier2-model worked out the same" in verdict["reason"], verdict
+    assert calls(ws) == {"verifier": 1, "verifier2": 1}
+    assert "got no answer" in verdict["cross_check"]["attempts"][0]["undecided"]
+    config["instruments"]["verifier"]["answers"] = [["not", "an", "object"]]        # an answer that is no JSON object
+    ws.save_config(config)
+    assert autopilot.review(ws, "m1", first)["decision"] == "approve"
+    config["instruments"]["verifier2"]["answers"] = []                       # both down: the owner, with both reasons
+    ws.save_config(config)
+    verdict = autopilot.review(ws, "m1", first)
+    assert verdict["decision"] == "owner" and "asked once more: the cross-check got no answer" in verdict["reason"], verdict
+
+
+def test_18_a_proposal_whose_review_never_happened_is_reviewed_and_reused_without_asking_the_checker_again(tmp_path):
+    # Review of batch CC: the Studio stopped between the proposal and its review; the row stayed 'proposed' without a
+    # verdict, and needs_checks skipped the milestone for the whole unattended run.
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    router = ws.router()
+    first = propose(ws, router, "m1")                      # ... the job ended here
+    assert autopilot.needs_checks(ws) == "m1" and scheduled(ws).scheduled_job() == ("propose_acceptance", {"milestone": "m1"})
+    again = propose(ws, router, "m1")
+    assert again["id"] == first["id"] and len(router.instruments["offline"].requests) == 1      # reused, no new Checker call
+    config = ws.config()
+    config["instruments"]["verifier"]["answers"] = [answers_for(first)]
+    ws.save_config(config)
+    verdict = autopilot.review(ws, "m1", again)
+    assert autopilot.act(ws, "m1", again, verdict)[1] == "approve" and autopilot.needs_checks(ws) is None
+
+
+def test_18_a_review_that_breaks_off_with_an_error_is_left_for_the_owner_and_not_asked_for_again(tmp_path, monkeypatch):
+    ws = autopilot_workspace(tmp_path, [EXAMPLES], [])
+    first = propose(ws, ws.router(), "m1")
+
+    def broken(*args):
+        raise AttributeError("'NoneType' object has no attribute 'get'")
+    monkeypatch.setattr(autopilot, "_review", broken)
+    verdict = autopilot.review(ws, "m1", first)
+    assert verdict["decision"] == "owner" and "could not finish its review (AttributeError" in verdict["reason"]
+    assert autopilot.act(ws, "m1", first, verdict)[1] == "owner" and autopilot.needs_checks(ws) is None   # a note: no loop
+
+
+def test_23_the_one_more_model_reads_a_lean_packet(tmp_path):
+    # Review of batch CC: the full packet measured up to 31 KB and J11's Groq route refuses about 22 KB; the one more
+    # model can be Groq, and had no lean fallback.
+    ws = format_workspace(tmp_path)
+    (ws.root / "HOUSE_RULES.md").write_text("# Rules\n" + "More rules. " * 2000, encoding="utf-8")
+    ws.set_brief(blueprints=["HOUSE_RULES.md"])
+    checks = proposal()
+    asked = autopilot.questions(checks)
+    full, lean = autopilot._packet(ws, "m9", checks, asked), autopilot._packet(ws, "m9", checks, asked, lean=True)
+    assert "other_milestones_checks" in full and "other_milestones_checks" not in lean and "program_excerpts" not in lean
+    assert len(lean["documents"]) <= autopilot.LEAN_DOCUMENTS < len(full["documents"])
+    assert len(json.dumps(lean["proven_inputs"])) <= autopilot.LEAN_PROVEN
+    assert len(json.dumps(lean, ensure_ascii=False)) < len(json.dumps(full, ensure_ascii=False)) - 2000
+    assert lean["examples"] == full["examples"] and lean["milestone"] == full["milestone"]    # what is judged is the same
+
+
+@pytest.mark.parametrize("kind,refusal", [("config", {"refused_before_answer": "too_large"}), ("transport", {"no_route_accepted": True})])
+def test_23_a_model_whose_route_refused_the_full_request_as_too_large_is_asked_again_leaner(tmp_path, monkeypatch, kind, refusal):
+    ws = two_models(tmp_path / "second", [], [])
+    first = propose(ws, ws.router(), "m1")
+    config = ws.config()
+    config["instruments"]["verifier"]["answers"] = [unclear(first)]
+    config["instruments"]["verifier2"]["answers"] = [answers_for(first)]
+    ws.save_config(config)
+    from runesmith import instruments
+    real, seen = instruments.ScriptedInstrument.complete, []
+
+    def spy(self, **kwargs):
+        seen.append((self.name, '"other_milestones_checks"' in kwargs["prompt"], kwargs["key"].rsplit("-a", 1)[0]))
+        if self.name == "verifier" and len(seen) == 1:                 # the first, full request is refused as too large
+            return CallOutcome(False, error_kind=kind, error="too large for this route", receipt=dict(refusal))
+        return real(self, **kwargs)
+    monkeypatch.setattr(instruments.ScriptedInstrument, "complete", spy)
+    verdict = autopilot.review(ws, "m1", first)
+    # the full request, refused; the same model again, leaner; it is unclear, so the other model, leaner
+    assert seen == [("verifier", True, "autopilot-" + first["id"]), ("verifier", False, "autopilot-lean-" + first["id"]),
+                    ("verifier2", False, "autopilot-again-" + first["id"])], seen
+    assert verdict["decision"] == "approve", verdict

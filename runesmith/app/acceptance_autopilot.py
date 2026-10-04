@@ -24,6 +24,7 @@ owner-approved.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 from typing import Any
@@ -51,6 +52,9 @@ SCHEMA = {'type': 'object', 'properties': {
     'contradicts': {'type': 'boolean'}, 'contradiction': {'type': 'string'},
     'misplaced': {'type': 'array', 'items': {'type': 'string'}}}, 'required': ['answers', 'contradicts']}
 DOCUMENTS = 4000                # characters of the owner's shared documents the second model reads (journey J11-G38)
+# The one more model's packet is smaller (journey J11-CC5, review): J11's Groq route refuses prompts of about 22 KB, and
+# the full packet, with the program's excerpts, the other milestones' checks and the documents, measured up to 31 KB.
+LEAN_DOCUMENTS, LEAN_PROVEN = 1500, 3000
 
 # The exact texts a 'done when' names (journey J11-G40), found in one pass so a text inside another is not named twice:
 # an attribute with its value (class="rs-layer", d="M 0 0 L 150 50": the value has no = < > and none of its edges is a
@@ -64,6 +68,24 @@ NAMED = re.compile(f'(?P<attribute>{_ATTRIBUTE})|(?P<call>{_CALL})|(?P<phrase>{_
 COVERAGE_ROOM = 380             # characters of texts the finding lists: the next Checker is told at most 600 of it
 
 
+def _named(done_when) -> list[tuple[str, str]]:
+    """(text, what kind of text it is: attribute, call or phrase), in the order named, each text once."""
+    said = str(done_when or '')
+    found = []
+    for match in NAMED.finditer(said):
+        text = match.group()
+        if match.lastgroup == 'phrase':
+            text = text[1:-1].rstrip('.,;:!?')
+            if len(text.split()) < 2:
+                continue
+        elif match.lastgroup == 'call' and (re.search(r'[*+/^]\s*$', said[:match.start()])
+                                            or re.match(r'\s*=', said[match.end():])):
+            continue                # a maths aside, "(2*sqrt(100)=20)": nothing a program prints (journey J11 review)
+        if text not in [t for t, _ in found]:
+            found.append((text, match.lastgroup))
+    return found
+
+
 def named_texts(done_when) -> list[str]:
     """The exact texts a milestone's 'done when' names, in the order it names them, each once: attribute pairs
     (name="value"), calls written with numbers (translate(-510,-270)) and quoted phrases of two or more words
@@ -73,16 +95,7 @@ def named_texts(done_when) -> list[str]:
     'done when' spells out (translate(-510,-270), translate(-480,-270), translate(-540,-270)), Masks' left out the
     ids it names and Colour grade's the colours, and the autopilot approved all three; it never compared them.
     """
-    found = []
-    for match in NAMED.finditer(str(done_when or '')):
-        text = match.group()
-        if match.lastgroup == 'phrase':
-            text = text[1:-1].rstrip('.,;:!?')
-            if len(text.split()) < 2:
-                continue
-        if text not in found:
-            found.append(text)
-    return found
+    return [text for text, _ in _named(done_when)]
 
 
 def _squash(text) -> str:
@@ -91,40 +104,96 @@ def _squash(text) -> str:
 
 
 def _line_texts(has, number) -> list[str]:
-    """How a line check "has" + number looks in a file: has="3" and has 3 (the number without a trailing .0)."""
+    """How a line check "has" + number looks in a file: has="3" and has 3 (the number without a trailing .0). The
+    Checker often ends "has" with the start of the attribute ('r=', 'x="', 'x1="0" y1='), which the check reads as the
+    first number after that text, so the forms from "has" without that ending are given too (review: Envelope's
+    r="10" was said to be left out by a check on 'r=' and 10)."""
     try:
         shown = int(number) if float(number).is_integer() else number
     except (TypeError, ValueError, OverflowError):
         return []
-    return [f'{has}="{shown}"', f'{has} {shown}']
+    forms = [f'{has}="{shown}"', f'{has} {shown}']
+    name = str(has).rstrip('=:" ')
+    if name and name != has:
+        forms += [f'{name}="{shown}"', f'{name} {shown}']
+    return forms
+
+
+def _file_key(name) -> str:
+    return str(name).replace('\\', '/').removeprefix('./').casefold()
 
 
 def _required_texts(proposal) -> list[str]:
-    """Every text the proposed checks require or forbid, in the forms they are looked for."""
+    """Every text the proposed checks require or forbid, in the forms they are looked for. A text a check requires of
+    a file the example writes itself, which that file already holds, is left out: it passes on any build and proves
+    nothing (review: adding such a "contains" was the way past the gate)."""
     texts = []
     for example in proposal.get('examples') or []:
+        own = {_file_key(f.get('name')): _squash(f.get('text')) for f in example.get('files') or []
+               if isinstance(f, dict) and isinstance(f.get('text'), str)}
+
+        def new(name, forms):
+            return [t for t in forms if _squash(t) not in own.get(_file_key(name), '\0')]
         for step in example.get('steps') or []:
             expect = step.get('expect') or {}
             for key in ('shows', 'hides', 'order'):
                 texts += [t for t in expect.get(key) or [] if isinstance(t, str)]
             for line in expect.get('lines') or []:
                 texts += _line_texts(line.get('has'), line.get('number'))
-        for key in ('contains', 'lacks'):
-            for files in example.get(key) or []:
-                texts += [t for t in files.get('texts') or [] if isinstance(t, str)]
+        for files in example.get('contains') or []:
+            texts += new(files.get('name'), [t for t in files.get('texts') or [] if isinstance(t, str)])
+        for files in example.get('lacks') or []:
+            texts += [t for t in files.get('texts') or [] if isinstance(t, str)]
         for line in example.get('file_lines') or []:
-            texts += _line_texts(line.get('has'), line.get('number'))
+            texts += new(line.get('name'), _line_texts(line.get('has'), line.get('number')))
     return texts
+
+
+def _typed(proposal) -> list[str]:
+    """What the examples themselves type in: their files (names and texts), the commands they run and what they pipe
+    in. A quoted phrase of the 'done when' found there is an input or a command, not something the output must show
+    (review: 'M 0 0 l 100 0' is the path the program is given and refuses, never printed)."""
+    found = []
+    for example in proposal.get('examples') or []:
+        for file in example.get('files') or []:
+            found += [file.get('name'), file.get('text')] if isinstance(file, dict) else []
+        for step in example.get('steps') or []:
+            found += [' '.join(str(w) for w in step.get('run') or []), step.get('input')]
+        for key in ('exists', 'unchanged'):
+            found += example.get(key) or []
+        for key in ('contains', 'lacks', 'file_lines'):
+            found += [row.get('name') for row in example.get(key) or [] if isinstance(row, dict)]
+    return [_squash(text) for text in found if isinstance(text, str) and text.strip()]
+
+
+def _inside(text, wanted) -> bool:
+    """`wanted` is in `text`; a name does not count inside a longer name (review: stop-opacity="0.5" does not hold
+    opacity="0.5", cx="100" not x="100", data-class not class)."""
+    if wanted[:1].isalnum() or wanted[:1] == '_':
+        return re.search(r'(?<![\w:.-])' + re.escape(wanted), text) is not None
+    return wanted in text
 
 
 def uncovered(proposal, done_when) -> list[str]:
     """The texts the 'done when' names that none of the checks requires or forbids, inside any text they use (journey
-    J11-G40): `translate(-510,-270)` is covered by a check on `translate(480,270) scale(1) translate(-510,-270)`."""
-    needed = named_texts(done_when)
+    J11-G40): `translate(-510,-270)` is covered by a check on `translate(480,270) scale(1) translate(-510,-270)`.
+
+    A quoted phrase is also covered by the examples' own input (a file, a command: not output), and by its escaped
+    form (`Runesmith &amp; co` for "Runesmith & co"): only an attribute or a call has to be required or forbidden."""
+    needed = _named(done_when)
     if not needed:
         return []
     held = [_squash(text) for text in _required_texts(proposal)]
-    return [text for text in needed if not any(_squash(text) in one for one in held)]
+    typed = _typed(proposal)
+    left = []
+    for text, kind in needed:
+        forms = [_squash(text)] + ([_squash(html.escape(text))] if kind == 'phrase' else [])
+        if any(_inside(one, form) for one in held for form in forms):
+            continue
+        if kind == 'phrase' and any(_inside(one, forms[0]) for one in typed):
+            continue
+        left.append(text)
+    return left
 
 
 def _coverage_finding(texts) -> str:
@@ -332,6 +401,12 @@ def _flip(text) -> bool:
 
 
 NO_CONTRADICTION = ('no', 'none', 'false', 'nothing', 'no contradiction', 'no contradictions')
+# What a free model writes when it means "none": "N/A", "-", "Empty" (review: each was read as a finding).
+FILLER = re.compile(r"[-\u2013\u2014_.\s]*|n\.?\s?/?\s?a\.?|not applicable|not found|nil|null|empty")
+ALL_FINE = re.compile(r"(all|every|each|everything|the (examples?|fields|inputs)|these|they)\b.*\b(match(es)?|consistent"
+                      r"|same|agree[sd]?|correct(ly)?|fine|ok(ay)?|uses?|placed|follows?)\b", re.I)
+NOT_FINE = re.compile(r"\b(instead|rather than|should|differ\w*|wrong\w*|mismatch\w*|but|where|whereas|not|never|however|"
+                      r"beside|unlike)\b", re.I)
 
 
 def _contradiction(value) -> str | None:
@@ -340,7 +415,8 @@ def _contradiction(value) -> str | None:
     if value is None or value is False:
         return None
     said = _said(value)
-    if said in NO_CONTRADICTION or re.match(r"(no|nope|none|nothing|all good|consistent|there (is|are) no)\b", said):
+    if (said in NO_CONTRADICTION or FILLER.fullmatch(said)
+            or re.match(r"(no|nope|none|nothing|all good|all fields|everything|consistent|there (is|are) no)\b", said)):
         return None
     return str(value).strip()[:400]
 
@@ -398,15 +474,18 @@ def second_model(ws, drafted_by, skip=()) -> str | None:
     return None
 
 
-def _documents(ws) -> str:
-    """The documents the owner shared with models, at most DOCUMENTS characters of them."""
+def _documents(ws, limit=DOCUMENTS) -> str:
+    """The documents the owner shared with models, at most `limit` characters of them."""
     try:
-        return ws.blueprint_text(DOCUMENTS)[:DOCUMENTS]
+        return ws.blueprint_text(limit)[:limit]
     except (OSError, WorkspaceError):
         return ''
 
 
-def _packet(ws, milestone_id, proposal, asked) -> dict[str, Any]:
+def _packet(ws, milestone_id, proposal, asked, lean=False) -> dict[str, Any]:
+    """What the second model reads. `lean`: without the other milestones' checks and the program's excerpts, and with
+    shorter documents and proven inputs, for a route that refuses a large prompt (journey J11-CC5, review: the one more
+    model can be Groq, whose free window takes about 22 KB, and the full packet measured up to 31 KB)."""
     from runesmith.app.acceptance_proposals import _milestone, _other_checks, proven_inputs
     from runesmith.app.planner import program_excerpts
     milestone = _milestone(ws, milestone_id)
@@ -415,14 +494,14 @@ def _packet(ws, milestone_id, proposal, asked) -> dict[str, Any]:
         by_test.setdefault(row['test'], []).append({'id': row['id'], 'question': row['question']})
     return {'task': TASK,
             'milestone': {k: milestone.get(k) for k in ('title', 'detail', 'done_when')},
-            'other_milestones_checks': _other_checks(ws, milestone_id),
+            **({} if lean else {'other_milestones_checks': _other_checks(ws, milestone_id)}),
             # What the program reads, which the second model is never shown: input files of checks that pass today, and
             # the owner's own documents (journey J11-G38: it "worked out the same 23 expected values" of examples whose
             # camera was written as timeline elements, where the owner's HOUSE_RULES.md says a list of keyframes).
-            'proven_inputs': proven_inputs(ws, milestone_id),
-            'documents': _documents(ws),
+            'proven_inputs': proven_inputs(ws, milestone_id, LEAN_PROVEN) if lean else proven_inputs(ws, milestone_id),
+            'documents': _documents(ws, LEAN_DOCUMENTS if lean else DOCUMENTS),
             # The lines of the program the Checker was shown, so the examples are worked out from its code (J11-B16).
-            **({'program_excerpts': excerpts} if (excerpts := program_excerpts(ws, milestone)) else {}),
+            **({'program_excerpts': excerpts} if not lean and (excerpts := program_excerpts(ws, milestone)) else {}),
             'examples': [{'name': e['test'], 'files': e.get('files') or [],
                           'steps': [_command(s) for s in e.get('steps') or [] if _command(s)],
                           'questions': by_test.get(e['test'], [])} for e in proposal.get('examples') or []]}
@@ -434,7 +513,12 @@ def _misplaced(value) -> list[str]:
     found = []
     for item in value if isinstance(value, list) else [value]:
         if isinstance(item, str) and (said := _contradiction(item)):
-            found.append(' '.join(said.split())[:240])
+            said = ' '.join(said.split())
+            # "Not applicable: nothing is written under another name", "All fields match the proven inputs": no claim
+            # (review: each turned correct checks down and told the next Checker something false).
+            if re.match(r"\W*(n\.?/?a|not applicable)\b", said, re.I) or (ALL_FINE.match(said) and not NOT_FINE.search(said)):
+                continue
+            found.append(said[:240])
     return found[:5]
 
 
@@ -446,8 +530,10 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
     to), ONE more model is asked: a different instrument that is still not the drafter's family, its answer judged by
     the same rules. Journey J11-CC5: the owner was away for 36 hours, and Envelope's sound checks waited for him
     because one free model answered unclearly. Both attempts are kept under 'attempts'; only when the second is
-    undecided too do the checks wait for the owner. No second model, a model that did not answer, and a claimed
-    contradiction are not asked again.
+    undecided too do the checks wait for the owner. A model that gave no answer at all (its free quota used up, it is
+    down) is followed by another the same way (review: every proposal waited for the owner for as long as the first
+    stayed down). No second model and a claimed contradiction are not asked again. The one more model reads a leaner
+    packet (see _packet).
     """
     name = second_model(ws, proposal.get('drafted_by'))
     if name is None:
@@ -458,7 +544,7 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
     other = second_model(ws, proposal.get('drafted_by'), skip=(name,))
     if other is None:
         return first
-    second = _ask_second(ws, milestone_id, proposal, other, 'again-')
+    second = _ask_second(ws, milestone_id, proposal, other, 'again-', lean=True)
     second.pop('retry', None)
     second['attempts'] = [{k: attempt[k] for k in ('model', 'undecided', 'answers') if k in attempt}
                           for attempt in (first, second)]
@@ -467,8 +553,16 @@ def cross_check(ws, milestone_id, proposal) -> dict[str, Any]:
     return second
 
 
-def _ask_second(ws, milestone_id, proposal, name, key='') -> dict[str, Any]:
-    """One second model's cross-check; a dict with 'retry' when it gave no clear judgement, so another may be asked."""
+def _too_large(result) -> bool:
+    """Whether every route refused the request before generating anything (a prompt over the model's window)."""
+    receipt = getattr(result, 'receipt', None) or getattr(getattr(result, '__cause__', None), 'receipt', None) or {}
+    return bool(receipt.get('no_route_accepted') or receipt.get('not_admitted')
+                or receipt.get('refused_before_answer') == 'too_large')
+
+
+def _ask_second(ws, milestone_id, proposal, name, key='', lean=False) -> dict[str, Any]:
+    """One second model's cross-check; a dict with 'retry' when it gave no clear judgement or no answer, so another
+    may be asked. A request the model's route refused as too large is asked again, leaner, of the same model."""
     from runesmith.config import build_router
     from runesmith.app.acceptance_proposals import _milestone, _other_checks
     try:
@@ -481,17 +575,26 @@ def _ask_second(ws, milestone_id, proposal, name, key='') -> dict[str, Any]:
         return {'undecided': 'the checks expect nothing that can be worked out by hand'}
     if all(row['about'] in ('exit', 'decoy') for row in asked):
         return {'undecided': 'the checks only ask whether the program finishes; there is nothing to work out by hand'}
-    try:
-        spec = ws.config()['instruments'][name]
-        router = build_router({'instruments': {name: spec}, 'roles': {'acceptance': [name]}}, home=ws.home,
-                              on_call=ws.record_call, backoff_s=())
-        out = router.call('acceptance', prompt=json.dumps(_packet(ws, milestone_id, proposal, asked), ensure_ascii=False),
-                          system=SYSTEM, schema=SCHEMA, max_tokens=VERIFY_TOKENS,
-                          key='autopilot-' + key + str(proposal.get('id')))
-    except Exception as error:
-        return {'undecided': f'the cross-check got no answer ({str(error)[:160]})', 'model': name}
+    out = None
+    for small in ((True,) if lean else (False, True)):
+        try:
+            spec = ws.config()['instruments'][name]
+            router = build_router({'instruments': {name: spec}, 'roles': {'acceptance': [name]}}, home=ws.home,
+                                  on_call=ws.record_call, backoff_s=())
+            out = router.call('acceptance', prompt=json.dumps(_packet(ws, milestone_id, proposal, asked, small),
+                                                              ensure_ascii=False),
+                              system=SYSTEM, schema=SCHEMA, max_tokens=VERIFY_TOKENS,
+                              key='autopilot-' + key + ('lean-' if small and not lean else '') + str(proposal.get('id')))
+        except Exception as error:
+            if not small and _too_large(error):
+                continue
+            return {'undecided': f'the cross-check got no answer ({str(error)[:160]})', 'model': name, 'retry': True}
+        if not out.ok and not small and _too_large(out):
+            continue
+        break
     if not out.ok or not isinstance(out.data, dict):
-        return {'undecided': f'the cross-check answer was unusable ({(out.error or "no JSON")[:160]})', 'model': name}
+        return {'undecided': f'the cross-check answer was unusable ({(out.error or "no JSON")[:160]})', 'model': name,
+                'retry': True}
     answers = {str(a.get('id')): a.get('answer') for a in out.data.get('answers') or [] if isinstance(a, dict)}
     # Kept with the decision, so the owner can see what was asked and answered (journey J11-F15).
     record = [{'test': row['test'], 'question': row['question'][:300], 'expected': row['expected'],
@@ -543,7 +646,19 @@ def rounds_used(ws, milestone_id) -> int:
 
 
 def review(ws, milestone_id, proposal) -> dict[str, Any]:
-    """Decide on one waiting proposal: {'decision': 'approve'|'turn_down'|'owner', 'reason': ..., ...}."""
+    """Decide on one waiting proposal: {'decision': 'approve'|'turn_down'|'owner', 'reason': ..., ...}.
+
+    A review that breaks off with an error leaves the proposal for the owner, with the reason: needs_checks asks for a
+    review of a waiting proposal that has none (journey J11-CC5, review), and one that failed the same way each time
+    would be asked again for ever."""
+    try:
+        return _review(ws, milestone_id, proposal)
+    except Exception as error:
+        return {'decision': 'owner', 'reason': f'the autopilot could not finish its review ({type(error).__name__}: '
+                                               f'{str(error)[:200]})'}
+
+
+def _review(ws, milestone_id, proposal) -> dict[str, Any]:
     from runesmith.app.acceptance_proposals import _milestone, status
     approved = (status(ws).get(milestone_id) or {}).get('approved')
     if approved and approved.get('provenance') != 'model-proposed, autopilot-approved':
@@ -576,15 +691,20 @@ def review(ws, milestone_id, proposal) -> dict[str, Any]:
 
 
 def needs_checks(ws) -> str | None:
-    """A ready milestone with no checks and nothing proposed or waiting, which the autopilot may ask for."""
+    """A ready milestone with no checks and nothing proposed or waiting, which the autopilot may ask for; or one
+    whose waiting proposal the autopilot never reviewed (its job ended between the proposal and its review, as when
+    the Studio stopped: the proposal waited for the owner for the whole unattended run, review of batch CC). Asking
+    for checks again reuses that proposal when nothing changed, and the review then runs."""
     from runesmith.app.acceptance_proposals import acceptance_file, _proposal_rows
     from runesmith.app.planner import ready_milestones
     for milestone in ready_milestones(ws.plan()):
         if acceptance_file(ws, milestone['id']).is_file():
             continue
         proposals = _proposal_rows(ws, milestone['id'])
-        if any(p.get('state') == 'proposed' for p in proposals):
-            continue
+        if waiting := [p for p in proposals if p.get('state') == 'proposed']:
+            if (waiting[-1].get('autopilot') or {}).get('decision'):
+                continue                            # judged: it waits for the owner (or is approved)
+            return milestone['id']
         if rounds_used(ws, milestone['id']) >= MAX_ROUNDS:
             continue
         return milestone['id']

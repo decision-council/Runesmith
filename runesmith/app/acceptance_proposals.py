@@ -423,8 +423,12 @@ def _holds(ws):
     return held
 
 
-def _clean(answer, style, data, ws=None) -> dict[str, Any]:
-    """The proposal as stored, from the model's answer in either style; a WorkspaceError says what is wrong."""
+def _clean(answer, style, data, ws=None, final=False) -> dict[str, Any]:
+    """The proposal as stored, from the model's answer in either style; a WorkspaceError says what is wrong.
+
+    `final`: this is the answer to the Checker's one more try. A file it still runs without listing is then no reason
+    to refuse it: it is kept with the finding under its check, so the autopilot turns it down and counts the round
+    (journey J11-CC4, review: refused twice, nothing was stored, and the schedule asked again at once, for ever)."""
     if style != 'examples':
         return validate(answer)
     milestone = data['milestone']
@@ -436,7 +440,7 @@ def _clean(answer, style, data, ws=None) -> dict[str, Any]:
     shaped = acceptance_examples.validate_examples(
         answer, ' '.join(str(milestone.get(k) or '') for k in ('title', 'detail', 'done_when')),
         json.dumps(context, ensure_ascii=False) + '\n' + str(data.get('documents') or ''),
-        refuse_missing=listed, held=_holds(ws) if ws is not None else None)
+        refuse_missing=listed and not final, held=_holds(ws) if ws is not None else None)
     # The limit is for check code a model writes; here the file is Runesmith's own template plus the examples,
     # which the examples format already bounds (journey J11-B12: the template grew, and three examples with their
     # motion files were refused as too long).
@@ -568,13 +572,15 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
             raise PlannerUnavailable(f'the first answer broke a rule ({str(error)[:200]}), and asking again failed: {again}') from again
         checkpoint()
         try:
-            clean = _clean(out.data, style, data, ws)
+            clean = _clean(out.data, style, data, ws, final=True)
         except WorkspaceError as again:
             # Both answers are kept, so what the Checker wrote can be read (journey J11-G3).
             kept = ws.home / 'acceptance-proposals' / 'refused' / (key + '.json')
             _write_json(kept, {'milestone': milestone_id, 'utc': _now(), 'drafted_by': drafted_by,
                                'errors': [str(error)[:300], str(again)[:300]],
                                'answers': [_bounded(first_answer), _bounded(out.data)]})
+            note_refusal(ws, milestone_id, key, out.receipt.get('answered_by') or out.receipt.get('model') or drafted_by,
+                         f'Runesmith could not use either answer. First: {str(error)[:250]} Then: {str(again)[:250]}')
             if isinstance(error, acceptance_examples.NothingToCheck) and isinstance(again, acceptance_examples.NothingToCheck):
                 said = acceptance_examples._notes((out.data or {}).get('not_checked') if isinstance(out.data, dict) else None)
                 raise WorkspaceError('Nothing in this milestone could be checked automatically'
@@ -613,6 +619,24 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
     ws.ledger.append('acceptance.proposed', {'milestone': milestone_id, 'proposal': key, 'checks': len(clean['checks']),
                                              'code_sha256': clean['code_sha256'], 'proposed_by': proposal['drafted_by']})
     return proposal
+
+
+def note_refusal(ws, milestone_id, key, drafted_by, reason) -> None:
+    """Keep a trace of a Checker answer Runesmith could not use at all (both tries broke a rule of the examples format),
+    in the milestone's record: the next Checker reads why, and with the check autopilot on it counts as a turned-down
+    round, so the schedule moves on after MAX_ROUNDS instead of asking again at once, for ever, and never building
+    (journey J11-CC4, review). Nothing was proposed, so the row is a discarded one."""
+    now = _now()
+    row = {'id': key, 'state': 'discarded', 'refused': True, 'utc': now, 'discarded_utc': now, 'milestone': milestone_id,
+           'drafted_by': drafted_by, 'reason': reason[:1000], 'checks': []}
+    if ws.settings().get('checks_autopilot'):
+        row['autopilot'] = {'decision': 'turned_down', 'reason': reason[:1000], 'utc': now}
+    with ws._lock:
+        record = _record(ws, milestone_id, {'milestone': milestone_id, 'proposals': []})
+        rows = record['proposals'] + [row]
+        keep = _kept_beyond_window(rows)
+        record['proposals'] = [r for i, r in enumerate(rows) if i >= len(rows) - 10 or id(r) in keep]
+        _write_json(_record_path(ws, milestone_id), record)
 
 
 def findings(proposal) -> list[str]:
