@@ -17,6 +17,28 @@ def _hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
 
 
+def unfunded_origin(ws, draft):
+    """'escalation' or 'supplement' when this draft came from the one more try or from a requirement-clarification
+    supplement, None otherwise (also when that cannot be told). Each is paid from its own single allowance, so no
+    ordinary try stands behind the draft: it is neither revisable from the ordinary three nor a reason to refuse the next
+    ordinary try, which is paid by its own receipt (a failed one-more-try draft refused every build for good)."""
+    if not isinstance(draft, dict):
+        return None
+    if draft.get('supplement_of'):
+        return 'supplement'
+    from runesmith.app.author_allowance import _load
+    try:
+        for _, row in _load(ws, 'build-escalations'):
+            if row.get('draft') == draft.get('id'):
+                return 'escalation'
+    except WorkspaceError:
+        return None
+    return None
+
+
+_ORIGINS = {'escalation': 'the one more try (another author)', 'supplement': 'a requirement clarification'}
+
+
 def _lineage(ws, draft):
     from runesmith.app.author_recovery import read_packet
     from runesmith.app.revision_context import candidate_identity
@@ -26,6 +48,13 @@ def _lineage(ws, draft):
         if node['id'] in seen or len(seen) >= 64:
             raise WorkspaceError('Author allowance lineage is cyclic or too deep; reconcile it first.')
         seen.add(node['id'])
+        origin = unfunded_origin(ws, node)
+        if origin and node is draft:
+            raise WorkspaceError(f'This draft came from {_ORIGINS[origin]}, which has no ordinary tries behind it, so it '
+                                 'cannot be revised from them. No new budget granted: ask for smaller steps, edit the '
+                                 'milestone, or set it aside.')
+        if origin:
+            break                      # an ancestor paid for by its own single allowance neither funds nor blocks this one
         packet = read_packet(ws, node.get('author_request_key'))
         attempt_id = packet.get('attempt_id')
         if not isinstance(attempt_id, str) or not re.fullmatch(r'[0-9a-f]{32}\.json', attempt_id):

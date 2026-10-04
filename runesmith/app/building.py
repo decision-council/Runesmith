@@ -410,8 +410,13 @@ def _ordinary_revision_lineage(ws, drafts, snapshot, milestone):
     # The candidate is the one the build would revise, by the one rule (review of J11-G37).
     revision=next((d for d in revisable_candidates(ws,drafts,milestone,snapshot) if d.get('author_request_key')),None)
     if revision:
-        from runesmith.app.author_revisions import _lineage
-        _lineage(ws,revision)
+        from runesmith.app.author_revisions import _lineage, unfunded_origin
+        # A draft of the one more try or of a supplement has no ordinary try behind it, and none is needed to build on
+        # it: the next try is paid by its own receipt. Refusing here stalled a milestone for good after a failed
+        # one-more-try draft (journey J11-B28); with the tries used up the build now ends in the used-up verdict, so the
+        # stuck setting and the owner are told, and with tries left it builds a new draft from this one.
+        if not unfunded_origin(ws,revision):
+            _lineage(ws,revision)
 
 
 def build_step(ws, router, *, checkpoint=lambda: None, author_only=False, milestone_id=None):
@@ -579,18 +584,21 @@ def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only)
     except WorkspaceError as error:
         return {'summary':str(error), 'allowance_blocked':True, 'milestone':milestone['id']}, str(error)[:120]
     scope = allowance['scope']
-    if not pending:
-        try:_ordinary_revision_lineage(ws,previous,context['snapshot_digest'],milestone)
-        except (WorkspaceError,ValueError,KeyError,TypeError,OSError) as error:
-            return {'summary':str(error),'allowance_blocked':True,'milestone':milestone['id']}, str(error)[:120]
     if pending is not None and (unchanged := _unchanged_verdict(ws, pending, milestone, contract, context, checkpoint)):
         return unchanged, (None if unchanged.get('advanced') else 'a draft waits for you')
     if not pending and not allowance['remaining']:
+        # Said before the lineage guard: with the tries used up no author call can be made, so there is no lineage to
+        # fund, and an unreadable one must not hide that the milestone is stuck (the stuck setting and the owner act on
+        # this verdict, not on a refusal that says nothing about what to do).
         cause = _used_up_cause(ws, contract, context)
         return {'summary':'Ordinary author allowance exhausted on this source and milestone. Review retained evidence; changing feedback does not grant more calls.'
                           + (' The cause: ' + cause if cause else ''),
                 'replan_needed':True,'milestone':milestone['id'],**({'cause':cause} if cause else {})}, \
             'its three tries are used up' + (' (' + cause + ')' if cause else '')
+    if not pending:
+        try:_ordinary_revision_lineage(ws,previous,context['snapshot_digest'],milestone)
+        except (WorkspaceError,ValueError,KeyError,TypeError,OSError) as error:
+            return {'summary':str(error),'allowance_blocked':True,'milestone':milestone['id']}, str(error)[:120]
     unshowable = None if pending else focus_problem(context)
     if unshowable:
         # A prioritized path is gone or hidden: no call can be made, and recording one as a failed try used up every

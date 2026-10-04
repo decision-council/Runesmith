@@ -20,6 +20,40 @@ function automaticCard(s) {
     h('div.list', rows.map((r) => h('div.item', h('div.body', h('div.title', r.what), h('div.meta', `${ago(r.utc)} · ${r.by}`))))));
 }
 
+// A stuck milestone nothing more is tried for by itself (journey J11-B28: after a failed one more try and a refused break-down
+// the project idled for good and the owner was told nothing). What is stuck, why, and what he can do; no choice grants tries.
+function needsYouCard(s, navigate, redraw) {
+  const rows = s.needs_you || [];
+  if (!rows.length) return null;
+  const act = {
+    escalate: (e) => withBusy(e.currentTarget, async () => {
+      await post('/api/worker/run', { job: 'escalate' });
+      toast('Asked for one more try with another model. It is checked like any other.', 'good');
+    }),
+    breakdown: (e, r) => withBusy(e.currentTarget, async () => {
+      await post('/api/worker/run', { job: 'breakdown', params: { milestone: r.milestone } });
+      toast('Asked a model for smaller steps. They wait for your review under Goals & plan.', 'good', 6000);
+    }),
+    review: () => navigate('goals'),
+    show_file: () => navigate('goals'),
+    edit: () => navigate('goals'),
+    set_aside: (e, r) => withBusy(e.currentTarget, async () => {
+      if (!(await confirmDialog({ title: 'Set this milestone aside?', confirm: 'Set it aside', icon: 'flag',
+        text: `“${r.title}” is dropped from the plan, and the plan goes on without it. You can reopen it any time in Goals & plan.` }))) return;
+      await post(`/api/plan/milestones/${r.milestone}`, { status: 'dropped' });
+      toast('Set aside. The plan goes on without it.', 'good');
+      redraw?.();
+    }),
+  };
+  return h('section.card.mt-24', { 'aria-label': 'Needs you', 'data-needs-you': '' },
+    h('div.card-head', h('h3', icon('alert'), 'Needs you'), h('span.badge.warn', plural(rows.length, 'milestone'))),
+    h('div.list', rows.map((r) => h('div.item', { 'data-milestone': r.milestone },
+      h('div.body', h('div.title', r.title), h('p.small', r.what),
+        h('div.row.wrap.mt-8', r.choices.map((c, i) => h(i === 0 ? 'button.btn.sm.primary' : 'button.btn.sm', {
+          title: c.detail || '', 'data-choice': c.id,
+          onclick: (e) => act[c.id]?.(e, r) }, c.label))))))));
+}
+
 function numbersCard(s, navigate) {
   const rows = s.numbers || [];
   if (!rows.length) return null;
@@ -128,6 +162,7 @@ export default async function render(root, { app, navigate, refreshState }) {
     // Rounds that find every try used up end "done", but building waits all the same (journey J2-F16).
     else if (last?.outcome?.replan_needed) line += ' The tries for this step are used up, so building waits for you: Work & proposals → Drafts shows what you can do, and Goals & plan may offer smaller steps to adopt.'
       + (last.outcome.cause ? ` The cause: ${last.outcome.cause}` : '');
+    if (s.needs_you?.length) line += ` Runesmith has nothing more to try by itself for ${s.needs_you.length === 1 ? `“${s.needs_you[0].title}”` : plural(s.needs_you.length, 'milestone')}: see Needs you below.`;
     cta = h('button.btn.primary.lg', { onclick: () => navigate('goals') }, icon('target'), 'Continue the plan');
   } else {
     line = 'Review enabled modes and their prerequisites before starting. A configured route is not a capacity test, and a saved work outcome is not proof that the project is complete.';
@@ -317,7 +352,7 @@ export default async function render(root, { app, navigate, refreshState }) {
   caps.append(h('p.tiny.faint.mt-8', 'Bands: bad · minimal · optimal. "Unknown" means there is no evidence yet, not that things are fine.'));
 
   // A plain DOM append prints "null" for an empty card (journey J6-B1), so only real cards are passed.
-  root.append(hero, ...[automaticCard(s), numbersCard(s, navigate)].filter(Boolean), policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
+  root.append(hero, ...[needsYouCard(s, navigate, () => navigate('home')), automaticCard(s), numbersCard(s, navigate)].filter(Boolean), policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
     h('div.grid.two.mt-24', objects, next), fixCard, tryCard, h('div.grid.two.mt-24', live, caps));
   function kpisWrap(k) { k.classList.remove('four'); k.classList.add('two'); return k; }
   return () => {closed=true;healthSerial++;offs.forEach((off) => off());};
