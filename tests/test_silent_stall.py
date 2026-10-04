@@ -189,19 +189,45 @@ def test_the_default_offers_the_one_more_try_before_it_has_been_used(tmp_path):
     assert row['kind'] == 'wait' and [c['id'] for c in row['choices']][:2] == ['escalate', 'breakdown']
 
 
-def test_the_notice_goes_when_the_owner_edits_sets_aside_or_the_proposal_waits(tmp_path):
+def test_the_one_more_try_is_offered_only_on_the_row_the_owners_button_would_use(tmp_path):
+    from test_unattended import two_stuck
+    ws, third = two_stuck(tmp_path)                                    # the default: wait for me
+    Worker(ws, EventBus()).scheduled_job()
+    rows = {r['milestone']: r for r in stuck.owner_needed(ws)}
+    assert set(rows) == {'m2', third}
+    assert [c['id'] for c in rows['m2']['choices']][0] == 'escalate'
+    assert 'escalate' not in [c['id'] for c in rows[third]['choices']]  # the button gives the one more try to m2 first
+
+
+def test_the_stuck_judgement_asks_no_more_once_it_has_its_step(tmp_path, monkeypatch):
+    from test_unattended import two_stuck
+    ws, _ = two_stuck(tmp_path, stuck_policy='retry')
+    calls, real = [], stuck.build_escalation_status
+    monkeypatch.setattr(stuck, 'build_escalation_status', lambda *a, **k: (calls.append(a), real(*a, **k))[1])
+    assert stuck.stuck_work(ws, 'retry')[0] == 'escalate'
+    assert len(calls) == 1                                             # each call builds the source context
+
+
+def test_the_notice_follows_the_proposal_and_goes_when_it_is_adopted(tmp_path):
     ws, _ = after_a_failed_one_more_try(tmp_path, stuck_policy='retry')
     Worker(ws, EventBus()).scheduled_job()
     assert [r['milestone'] for r in stuck.owner_needed(ws)] == ['m1']
     # smaller steps proposed (the owner pressed the button): the choice becomes reviewing them
     scripted(ws, [breakdown_answer(('build', ['app.py']), ('build', ['tests/test_app.py']))], roles=('plan',))
-    from runesmith.app.breakdowns import propose_breakdown
-    propose_breakdown(ws, ws.router(), 'm1')
+    from runesmith.app.breakdowns import adopt_breakdown, propose_breakdown
+    proposal = propose_breakdown(ws, ws.router(), 'm1')
     [row] = stuck.owner_needed(ws)
     assert row['code'] == 'proposed' and row['choices'][0]['id'] == 'review'
+    adopt_breakdown(ws, proposal['id'])                       # the milestone now waits for its steps: no longer stuck, same wording
+    assert stuck.owner_needed(ws) == []
+
+
+def test_the_notice_goes_when_the_owner_edits_or_sets_the_milestone_aside(tmp_path):
+    ws, _ = after_a_failed_one_more_try(tmp_path, stuck_policy='retry')
+    Worker(ws, EventBus()).scheduled_job()
+    assert [r['milestone'] for r in stuck.owner_needed(ws)] == ['m1']
     ws.update_milestone('m1', {'detail': 'Make answer() return 42 from a function in app.py.'})        # new wording, new tries
     assert stuck.owner_needed(ws) == []
-    ws.update_milestone('m1', {'detail': ''})
     ws.update_milestone('m1', {'status': 'dropped'})
     assert stuck.owner_needed(ws) == []
 

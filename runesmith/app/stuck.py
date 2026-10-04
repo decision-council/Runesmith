@@ -17,7 +17,7 @@ from runesmith.app import automatic
 from runesmith.app.author_allowance import _load, ordinary_allowance, shared_reads
 from runesmith.app.breakdowns import adopt_breakdown, can_break_down, propose_breakdown, room_for_breakdown
 from runesmith.app.building import build_escalation_status
-from runesmith.app.planner import PlannerUnavailable, milestone_contract, ready_milestones, source_context
+from runesmith.app.planner import PlannerUnavailable, milestone_contract, milestone_ready, ready_milestones, source_context
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
 
 POLICIES = ('retry', 'retry_split')
@@ -112,21 +112,23 @@ def _judge(ws, policy, rows) -> tuple[tuple[str, dict[str, Any]] | None, dict[st
     no break-down left to ask for)."""
     escalate = split = None
     waiting: dict[str, dict[str, Any]] = {}
+    offered = None          # the milestone the owner's "one more try" button would give it to (the default setting offers it)
+    if policy not in POLICIES and any(not row['escalated'] for row in rows):
+        state = build_escalation_status(ws)          # once, for the button's own choice: each call builds the source context
+        offered = state['milestone'] if state and state['eligible'] else None
     for row in rows:
         milestone = row['milestone']
-        note = {'milestone': milestone, 'escalated': row['escalated'], 'retry': False}
+        note = {'milestone': milestone, 'escalated': row['escalated'], 'retry': offered == milestone['id']}
         if policy not in POLICIES:
-            if not row['escalated']:
-                state = build_escalation_status(ws, milestone['id'])
-                note['retry'] = bool(state and state['eligible'])
             waiting[milestone['id']] = dict(note, kind='wait')
         elif not row['escalated']:
             if gap_waits(ws, milestone) is not None:
                 waiting[milestone['id']] = dict(note, kind='gap')
                 continue
-            state = build_escalation_status(ws, milestone['id'])
-            if state and state['eligible'] and escalate is None:
-                escalate = ('escalate', {'milestone_id': milestone['id']})
+            if escalate is None:
+                state = build_escalation_status(ws, milestone['id'])
+                if state and state['eligible']:
+                    escalate = ('escalate', {'milestone_id': milestone['id']})
         elif policy == 'retry_split' and may_split(ws, milestone):
             split = split or ('split', {'milestone': milestone['id']})
         else:
@@ -231,8 +233,8 @@ def owner_needed(ws) -> list[dict[str, Any]]:
     out = []
     for milestone in plan.get('milestones', []):
         note = notes.get(milestone.get('id'))
-        if not isinstance(note, dict) or milestone.get('status') not in ('open', 'doing'):
-            continue
+        if not isinstance(note, dict) or milestone.get('status') not in ('open', 'doing') or not milestone_ready(plan, milestone):
+            continue                                          # adopted smaller steps make it wait for them: no longer stuck
         try:
             if note.get('contract') != milestone_contract(ws, milestone):
                 continue                                          # edited since: new wording, new tries
