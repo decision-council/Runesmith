@@ -11,6 +11,7 @@ import json
 import re
 import uuid
 
+from runesmith.app import runesmith_md
 from runesmith.app.build_memory import recall_for_milestone, _check_summary
 from runesmith.app.acceptance_contracts import expectations, expectation_digest
 from runesmith.app.planner import PlannerUnavailable, milestone_contract, source_context
@@ -264,6 +265,7 @@ def reject_breakdown(ws,key,reason,*,by='owner'):
         if record.get('state')!='proposed':raise WorkspaceError('Only a proposed breakdown can be rejected.')
         _write_json(path,dict(record,state='rejected',rejection_reason=reason[:2000],reviewed_by=by,reviewed_utc=_now()))
         ws.ledger.append('breakdown.rejected',{'id':key,'by':by,'reason':reason[:2000]})
+        runesmith_md.split_rejected(ws,record.get('milestone'))
     return {'id':key,'state':'rejected'}
 
 
@@ -327,4 +329,5 @@ def adopt_breakdown(ws,key,*,by='owner'):
         _write_json(path,dict(record,state='adopted',children=children,adopted_by=by,adopted_utc=_now()))
         ws.ledger.append('breakdown.adopted',{'id':key,'children':children,'by':by,'author':record['drafted_by'],
                         'parent_done_when':parent['done_when']})
+        runesmith_md.split_adopted(ws,record['milestone'],len(children),by)
         return {'id':key,'children':children,'already_adopted':False}

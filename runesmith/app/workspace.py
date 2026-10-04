@@ -31,6 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from runesmith import __version__, generations
+from runesmith.app import runesmith_md
 from runesmith.app.providers import PRESET_BY_ID, PRESETS, public_presets
 from runesmith.config import build_router, load_config
 from runesmith.home import init_home
@@ -77,6 +78,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "stuck_policy": "wait",       # when a milestone's tries are used up: "wait", "retry" (one more try) or "retry_split"
     # A draft whose checks did not finish (journey J11-G44): "wait" for the owner's button, or "recheck" it once itself.
     "recheck_policy": "wait",
+    # Runesmith's own log of what it did here, RUNESMITH.md in the folder's top (runesmith_md). Off: never created or touched.
+    "runesmith_md": True,
 }
 # Homes onboarded before the explicit choices existed keep the behaviour they were onboarded with, until their owner
 # chooses (``policy_chosen`` absent from the stored settings marks such a home).
@@ -86,7 +89,7 @@ SETTING_TYPES: dict[str, Any] = {
     "interval_minutes": (int, float), "probe_tests": bool, "exclude": list, "max_objects": int, "read_notes": bool,
     "kaizen": bool, "min_experience": int, "kaizen_every": int, "theme": str, "policy_chosen": bool,
     "build_steps": bool, "build_apply": bool, "build_paths": list, "checks_autopilot": bool, "full_speed": bool,
-    "recovery_policy": str, "stuck_policy": str, "recheck_policy": str,
+    "recovery_policy": str, "stuck_policy": str, "recheck_policy": str, "runesmith_md": bool,
 }
 CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"},
            "recovery_policy": {"wait", "keep"}, "stuck_policy": {"wait", "retry", "retry_split"},
@@ -396,7 +399,8 @@ class Workspace:
         for path in sorted(walk_files(self.root)):
             if len(found) >= limit:
                 break
-            if path.suffix.lower() in (".md", ".txt", ".rst", ".markdown") and self.home not in path.parents:
+            if (path.suffix.lower() in (".md", ".txt", ".rst", ".markdown") and self.home not in path.parents
+                    and not runesmith_md.is_own(path.name)):         # Runesmith's own log is never offered to models
                 try:
                     size = path.stat().st_size
                 except OSError:
@@ -799,14 +803,17 @@ class Workspace:
             _write_json(self.home / "PLAN.json", body)
         self.ledger.append("plan.saved", {"version": body["version"], "milestones": len(milestones),
                                           "drafted_by": body["drafted_by"]})
+        runesmith_md.plan_saved(self, previous, body)
         return body
 
-    def update_milestone(self, milestone_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+    def update_milestone(self, milestone_id: str, patch: dict[str, Any], *, log: bool = True) -> dict[str, Any]:
+        """Change a milestone. `log=False` for a caller that writes its own, fuller line to RUNESMITH.md (a build)."""
         with self._lock:
             plan = self.plan()
             for m in (plan or {}).get("milestones", []):
                 if m["id"] == milestone_id:
                     _milestone_text_fits(patch)
+                    was = m.get("status", "open")
                     if patch.get("status") in MILESTONE_STATES:
                         m["status"] = patch["status"]
                     if "depends_on" in patch:
@@ -820,6 +827,8 @@ class Workspace:
                             m[key] = patch[key].strip()[:limit]
                     _write_json(self.home / "PLAN.json", plan)
                     self.ledger.append("milestone.updated", {"id": milestone_id, "status": m["status"]})
+                    if log and m["status"] != was and m["status"] in ("done", "dropped"):
+                        runesmith_md.milestone_status(self, milestone_id, m["status"])
                     return m
         raise KeyError(milestone_id)
 
@@ -841,6 +850,7 @@ class Workspace:
             plan["milestones"].append(milestone)
             _write_json(self.home / "PLAN.json", plan)
         self.ledger.append("milestone.added", {"id": milestone["id"]})
+        runesmith_md.milestone_added(self, milestone["title"])
         return milestone
 
     # ----------------------------------------------------------------------- work --
@@ -975,6 +985,9 @@ class Workspace:
                 return {"ok": False, "detail": "this fix belongs to a folder outside this workspace"}
             conflicts, plans, outside = [], [], []
             for rel, new_text in sorted(p["fix"].items()):
+                if runesmith_md.is_own(rel):                         # Runesmith's own log is never a fix's to write
+                    conflicts.append(rel)
+                    continue
                 target = repo / rel
                 real = target.resolve()
                 if real != repo and repo not in real.parents:           # through a link or junction: not ours to write
@@ -995,6 +1008,7 @@ class Workspace:
             state[key] = {"state": "applied", "utc": _now(), "files": [rel for rel, *_ in plans], "repo": str(repo)}
             _write_json(self.home / "PROPOSALS_STATE.json", state)
         self.ledger.append("proposal.applied", {"key": key, "files": [rel for rel, *_ in plans]})
+        runesmith_md.fix_applied(self, [rel for rel, *_ in plans])
         return {"ok": True, "files": [rel for rel, *_ in plans]}
 
     def undo_proposal(self, key: str) -> dict[str, Any]:
@@ -1014,6 +1028,7 @@ class Workspace:
             state[key] = {"state": "undone", "utc": _now()}
             _write_json(self.home / "PROPOSALS_STATE.json", state)
         self.ledger.append("proposal.undone", {"key": key})
+        runesmith_md.fix_undone(self, entry["files"])
         return {"ok": True}
 
     def reject_proposal(self, key: str, reason: str = "") -> dict[str, Any]:
@@ -1027,6 +1042,7 @@ class Workspace:
         if (reason or "").strip():
             self.notes.add(target_type="proposal", target_id=key, target_label=f"fix {key}", text=f"Rejected: {reason}")
         self.ledger.append("proposal.rejected", {"key": key})
+        runesmith_md.fix_rejected(self)
         return {"ok": True}
 
     def _backup_and_write(self, backup_key: str, plans: list[tuple[str, Path, bytes | None, bytes]]) -> None:
@@ -1097,6 +1113,8 @@ class Workspace:
     def _restore(self, backup_key: str, base: Path, files: list[str]) -> None:
         backup = self.home / "backups" / backup_key
         for rel in files:
+            if runesmith_md.is_own(rel):              # an undo never reaches Runesmith's own log
+                continue
             target, saved = base / rel, backup / rel
             if saved.is_file():
                 target.write_bytes(saved.read_bytes())
@@ -1114,8 +1132,8 @@ class Workspace:
         if (not rel or not path.parts or path.is_absolute() or ":" in path.parts[0] or ".." in path.parts
                 or any(p in ("", ".") for p in path.parts) or len(rel) > 240):
             return None
-        if path.parts[0] in (self.home.name, ".git", ".hg", ".svn"):
-            return None
+        if path.parts[0] in (self.home.name, ".git", ".hg", ".svn") or runesmith_md.is_own(rel):
+            return None                               # Runesmith's own records and log are never a draft's to write
         target = (self.root / rel).resolve()
         if not self._inside(target) or target == self.root or self.home == target or self.home in target.parents:
             return None
@@ -1293,8 +1311,9 @@ class Workspace:
             f.pop("exists_now", None)
         _write_json(self.home / "drafts" / draft["id"] / "DRAFT.json", draft)
 
-    def apply_draft(self, draft_id: str, *, overwrite: bool = False) -> dict[str, Any]:
-        """Write a draft's files. A file that exists now with other content is replaced only with ``overwrite``."""
+    def apply_draft(self, draft_id: str, *, overwrite: bool = False, by: str = "owner") -> dict[str, Any]:
+        """Write a draft's files. A file that exists now with other content is replaced only with ``overwrite``.
+        `by="build"`: a checked build applied it, and the build writes its own line to RUNESMITH.md."""
         with self._lock:
             draft = self._draft(draft_id)
             if draft["state"] == "applied":
@@ -1327,6 +1346,8 @@ class Workspace:
             self._backup_and_write(f"draft-{draft_id}", plans)
             self._save_draft_state(draft, "applied", applied_files=[rel for rel, *_ in plans])
         self.ledger.append("draft.applied", {"id": draft_id, "files": [rel for rel, *_ in plans]})
+        if by == "owner":
+            runesmith_md.draft_applied(self, draft, [rel for rel, *_ in plans])
         moved = None
         plan = self.plan() or {}
         milestone = next((m for m in plan.get("milestones", []) if m["id"] == draft.get("milestone")), None)
@@ -1352,6 +1373,7 @@ class Workspace:
             if draft.get('applied_by') == 'delegated_build' and draft.get('milestone'):
                 self.update_milestone(draft['milestone'], {'status':'doing'})
         self.ledger.append("draft.undone", {"id": draft_id})
+        runesmith_md.draft_undone(self, draft, files)
         return {"ok": True}
 
     def reject_draft(self, draft_id: str, reason: str = "") -> dict[str, Any]:
@@ -1363,6 +1385,7 @@ class Workspace:
         if (reason or "").strip():
             self.notes.add(target_type="draft", target_id=draft_id, target_label=draft["title"], text=f"Rejected: {reason}")
         self.ledger.append("draft.rejected", {"id": draft_id})
+        runesmith_md.draft_rejected(self, draft)
         return {"ok": True}
 
     # --------------------------------------------------------------- improvement --

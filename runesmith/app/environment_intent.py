@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from runesmith.canon import digest
+from runesmith.app.runesmith_md import is_log
 from runesmith.app.snapshots import EXCLUDED_DIRS
 from runesmith.app.workspace import WorkspaceError
 
@@ -37,6 +38,8 @@ def inspect_intent(ws):
             if name.lower() not in NAMES or (name.lower() != 'agents.md' and depth and rel_dir != 'docs'):
                 continue
             path = parent/name; rel = path.relative_to(ws.root).as_posix()
+            if name.lower() == 'runesmith.md' and is_log(path):
+                continue                  # Runesmith's own log is not the owner's instruction (an owner-written one still is)
             if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
                 blockers.append(f'Instruction is a link; inspect its scope explicitly: {rel}'); continue
             if excluded_path(rel): continue

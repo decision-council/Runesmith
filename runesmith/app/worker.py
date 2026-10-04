@@ -33,6 +33,7 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from runesmith.app import runesmith_md
 from runesmith.app.planner import SkippedByOwner
 from runesmith.app.workspace import Workspace, WorkspaceError, _read_json, _write_json
 from runesmith.app.worker_journal import Record, MAX_JOBS, validate_job, validate_queue
@@ -365,6 +366,7 @@ class Worker:
             self._jobs = deque(jobs)
             self._recovery = None
         self.say('Recovery review recorded. Queue remains paused; Resume is a separate decision.')
+        runesmith_md.restart_decision(self.ws, decision, by, len(receipt['jobs']))
         self._publish_state()
         return self.snapshot()
 

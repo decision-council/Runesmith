@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from runesmith.app.runesmith_md import is_own
 from runesmith.instruments import LenientSchema, TransportCensored
 
 PLAN_SCHEMA = {
@@ -505,7 +506,8 @@ def draft_prompt(ws, milestone: dict[str, Any], context: dict | None = None, *, 
         "recent_host_refusals": [{'error':a['error'],'feedback':a.get('feedback')} for a in failed],
         "historical_build_observations": memories,
         "candidate_to_revise": candidate,
-        "existing_documents_not_to_replace": [p.relative_to(ws.root).as_posix() for p in ws.root.glob('*.md') if p.is_file()][:40],
+        "existing_documents_not_to_replace": [p.relative_to(ws.root).as_posix() for p in ws.root.glob('*.md')
+                                              if p.is_file() and not is_own(p.name)][:40],
         "previous_attempts": [{"id":d.get("id"), "title":d.get("title"), "state":d.get("state"),
                                "verification":{"status":(d.get("verification") or {}).get("status"),
                                   "project_checks":_check_summary((d.get("verification") or {}).get("project_checks")),

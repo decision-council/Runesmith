@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 
+from runesmith.app.runesmith_md import is_own
+
 POLICY = 'local-build-inputs-v1'
 # JavaScript modules too (.mjs, .cjs): a node project's `motion.mjs` was "outside the local verification profile",
 # so no draft of it could be checked (journey J11-B5). The map already knew them (envmap.NODE_SOURCE_SUFFIXES).
@@ -45,6 +47,10 @@ def path_kind(rel, declared=()):
     parts=[part.lower() for part in p.parts]
     name=parts[-1]
     if any(part in EXCLUDED_DIRS or part.startswith('.') for part in parts):
+        return None
+    # Runesmith's own log (RUNESMITH.md) is never project source: with documents declared it would be one, and every line
+    # it gains would change the snapshot's digest, so each waiting draft would read as stale.
+    if is_own(rel):
         return None
     if (p.suffix.lower() in {'.key','.pem','.p12','.pfx','.db','.sqlite','.sqlite3','.log','.jsonl'}
             or any(word in name for word in ('secret','credential','token','private'))

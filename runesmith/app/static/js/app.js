@@ -98,7 +98,7 @@ function renderShell(root) {
   } }, icon('menu'), h('span.label', 'Collapse'));
   const sidebar = h('aside.sidebar',
     h('div.brand', h('div.mark', { html: LOGO }), h('div.word', 'RUNESMITH', h('small', 'Studio'))),
-    nav, h('div.side-foot', ws, collapse));
+    nav, h('div.side-foot', ws, collapse, h('div.version.label', { title: 'The version of Runesmith running this Studio' }, 'Runesmith')));
   const pill = h('button.status-pill.idle', { title: 'What Runesmith is doing (click for details)', onclick: () => {
     if (app.state?.manual_waiting) import('./views/inference.js').then((m) => m.openRelayDrawer());
     else if (app.state && !app.state.ready.any) navigate('inference');
@@ -154,6 +154,8 @@ export async function refreshState() {
   const [dot, label] = [shell.ws.querySelector('.dot'), shell.ws.querySelector('.label')];
   dot.textContent = name.trim().charAt(0).toUpperCase() || 'R';
   label.querySelector('b').textContent = name; label.querySelector('span').textContent = s.workspace.path;
+  const version = $('.side-foot .version', shell.sidebar);                 // named like a model: "Runesmith 1.0.0"
+  if (version && s.version) version.textContent = `Runesmith ${s.version}`;
   const struggling = s.attention && ['SUSPECTED_BLOCKAGE', 'SUBJECT_BLOCKED'].includes(s.attention.mode);
   const counts = { work: (s.proposals.waiting || 0) + (s.drafts.waiting || 0), notes: s.notes_open, inference: s.manual_waiting,
     improve: struggling ? '!' : 0 };

@@ -39,6 +39,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import Request, urlopen
 
 from runesmith import __version__
+from runesmith.app import runesmith_md
 from runesmith.app.worker import EventBus, Worker
 from runesmith.app.workspace import Workspace, WorkspaceError, _read_json, _write_json
 from runesmith.app.workspace_ownership import Bindings, RootLease
@@ -338,7 +339,10 @@ def api_worker_run(s: Studio, q, body):
                "reconcile_check":{"draft_id","quote_id","reason"},
                "correct":{"attempt"}, "readmit":{"escalation"}, "readmit_answer":{"attempt"}, "breakdown":{"milestone"}, "propose_acceptance":{"milestone"}}.get(job, set())
     params = {k: v for k, v in (body.get("params") or {}).items() if k in allowed}
-    return s.worker.enqueue(job, **params)
+    queued = s.worker.enqueue(job, **params)
+    if job in runesmith_md.RETRIES:         # the owner's "one more try" and its kin: decisions for RUNESMITH.md
+        runesmith_md.retry_asked(_ws(s), job)
+    return queued
 
 
 @route("POST", r"/api/worker/(pause|resume|stop)")
