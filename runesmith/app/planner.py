@@ -568,6 +568,17 @@ def settled_state(error, otherwise='failed') -> str:
     return 'context_gap' if getattr(error, 'context_gap', None) else otherwise
 
 
+def _provider_hint(raw: str) -> str | None:
+    from runesmith.app.providers import model_hint
+    return model_hint(raw)
+
+
+def _with_hint(text: str) -> str:
+    """A refusal's words, with the replacement the provider named for a retired model (it becomes a button under Thinking power)."""
+    from runesmith.app.providers import with_model_hint
+    return with_model_hint(text)
+
+
 def why_no_answer(error) -> str:
     """Why a model call brought no answer, in plain words and with what to try; the gateway's words follow, short (F15)."""
     raw = str(error)
@@ -584,6 +595,9 @@ def why_no_answer(error) -> str:
                  'or put another model first under Thinking power')
     elif any(word in low for word in ('auth_failed', 'token unavailable', '401', '403')):
         plain = 'the model service refused the key or token: check it under Thinking power'
+    elif _provider_hint(raw):
+        plain = (f'the service no longer offers this model and suggests {_provider_hint(raw)}: under Thinking power, '
+                 'press Test on that model and then the button that offers the switch')
     else:
         plain = 'the model did not answer'
     return f'{plain} ({raw[:160]})'
@@ -669,7 +683,7 @@ def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_toke
     if isinstance(outcome.data, dict) and outcome.data.get("skipped_by_owner"):
         raise SkippedByOwner("you skipped the request, so nothing changed")
     if not outcome.ok and outcome.error_kind == "config":
-        failure = PlannerUnavailable(outcome.error or "the model service refused this request")
+        failure = PlannerUnavailable(_with_hint(outcome.error or "the model service refused this request"))
         if (outcome.receipt or {}).get("refused_before_answer"):
             failure.remote_receipt = dict(outcome.receipt)    # refused before answering: no try is used (J2-B9)
         raise failure

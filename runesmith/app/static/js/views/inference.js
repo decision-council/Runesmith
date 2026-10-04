@@ -10,6 +10,8 @@ const ROLE_ICON = { repair: 'hammer', kaizen: 'spark', plan: 'wand', acceptance:
 const shownRoles = (data) => ['repair', 'kaizen', 'plan', 'acceptance'].filter((r) => data.role_labels[r]);
 // In-memory only; keep a pending typed reply across redraws/panel navigation.
 const relayReplies = new Map();
+// In-memory only: each model's last test, so a provider's "use X instead" survives the page being redrawn.
+const lastTest = new Map();
 
 export default async function render(root, ctx) {
   const offs = [];
@@ -85,8 +87,16 @@ export default async function render(root, ctx) {
       const p = chosen;
       const firstModel = !data.instruments.length;
       const name = h('input.input', { value: uniqueName(p.id, data), placeholder: 'a short name', 'aria-label': 'Instrument name' });
-      const model = h('input.input', { value: extra.model || (p.suggested || [])[0] || '', placeholder: p.kind === 'manual' ? 'which chat you will use, e.g. ChatGPT, Claude, Gemini' : 'model id', list: 'rs-models', 'aria-label': p.kind === 'manual' ? 'Chat/model label (optional)' : 'Model ID' });
+      // Never empty: the preset's first suggestion is the value (not a placeholder) until the provider's own list says
+      // better. A model name that came with the choice (a running local server's), or one the owner typed or picked, is kept.
+      const fallbackName = (p.suggested || [])[0] || '';
+      const hosted = p.kind === 'openai' && p.key === 'required';
+      let touched = Boolean(extra.model);
+      const model = h('input.input', { value: extra.model || fallbackName, placeholder: p.kind === 'manual' ? 'which chat you will use, e.g. ChatGPT, Claude, Gemini' : 'model id', list: 'rs-models', 'aria-label': p.kind === 'manual' ? 'Chat/model label (optional)' : 'Model ID' });
+      model.addEventListener('input', () => { touched = true; });
       const dl = h('datalist#rs-models', [...new Set([...(extra.models || []), ...(p.suggested || [])])].map((x) => h('option', { value: x })));
+      const modelNote = h('span.hint', { role: 'status', 'aria-live': 'polite' }, hosted && fallbackName && !extra.model ? `Suggested for now: ${fallbackName} (checked when you add your key).` : '');
+      const chipBox = h('div.pillbox.mt-8');
       const base = h('input.input.mono', { value: p.base_url || '', placeholder: 'https://… or http://127.0.0.1:…' });
       const providerFilter = h('input.input.mono', { placeholder: 'all providers, or e.g. opencode / cline' });
       const fallbacks = h('textarea.input.mono', {rows:3, placeholder:'provider:model — one fallback per line (up to five)'});
@@ -97,19 +107,54 @@ export default async function render(root, ctx) {
       const defaultOn = (r) => r !== 'acceptance' && (p.kind === 'manual' ? r !== 'repair' : firstModel || (r === 'repair' && !data.ready.repair));
       const roleBoxes = shownRoles(data).map((r) => { const cb = h('input', { type: 'checkbox', checked: defaultOn(r), value: r });
         return { r, cb, el: h('label.chip', cb, icon(ROLE_ICON[r]), data.role_labels[r].split(':')[0]) }; });
+      // Ask the provider what it serves now. The newest answer wins; an older one that comes back late is dropped.
+      let seq = 0, pending = null, checkedWith = null;
+      const label = p.label;
+      const showChips = (names) => {
+        clear(chipBox);
+        for (const name of [...new Set(names)].filter((x) => x && x !== model.value.trim()))
+          chipBox.append(h('button.chip', { type: 'button', title: `Use ${name}`, onclick: () => { model.value = name; touched = true; showChips(names); modelNote.textContent = `Using ${name}.`; } }, name));
+      };
+      const applyList = (r) => {
+        if (!r.ok) {
+          clear(chipBox);
+          modelNote.textContent = r.status === 401 || r.status === 403 ? `${label} refused the key, so its model list could not be read: check the key.`
+            : `Could not read ${label}'s model list${model.value.trim() ? `; keeping ${model.value.trim()}` : ''}. Any model id can be typed.`;
+          return;
+        }
+        clear(dl).append(...r.models.map((x) => h('option', { value: x })));
+        if (r.recommended && (!touched || !model.value.trim())) model.value = r.recommended;
+        const now = model.value.trim();
+        showChips([r.recommended, ...(r.choices || [])]);
+        if (r.recommended && now === r.recommended) modelNote.textContent = `Recommended from ${label}'s list today: ${now}.${chipBox.children.length ? ' Other good choices:' : ''}`;
+        else if (r.models.length && now && !r.models.includes(now)) modelNote.textContent = `${now} is not in ${label}'s list. Pick one of these, or keep it if you know it works.`;
+        else modelNote.textContent = `${plural(r.models.length, 'model')} listed by ${label}.`;
+      };
+      const check = () => {
+        const mine = ++seq, k = key.value.trim();
+        pending = post('/api/inference/models', { preset: p.id, base_url: base.value, key: key.value,
+          provider: p.kind === 'milliner' ? providerFilter.value.trim().toLowerCase() : '' }).catch(() => ({ ok: false, status: 0, models: [] }))
+          .then((r) => { if (mine === seq) { checkedWith = k; applyList(r); } return r; });
+        return pending;
+      };
       const listBtn = h('button.btn', { type: 'button', onclick: () => withBusy(listBtn, async () => {
-        const r = await post('/api/inference/models', { preset: p.id, base_url: base.value, key: key.value,
-          provider: p.kind === 'milliner' ? providerFilter.value.trim().toLowerCase() : '' });
+        const r = await check();
         if (r.ok) {
-          clear(dl).append(...r.models.map((x) => h('option', { value: x })));
           toast(`${r.models.length} catalog entries shown. ${r.detail || 'Start typing to pick one.'}`, r.models.length ? 'good' : 'warn', 8000);
           model.focus();
         } else toast(r.status === 401 ? 'The provider refused the key.' : (r.detail || 'Could not list models (the provider may not support it, or it is not running).'), 'warn', 6000);
       }) }, icon('search'), 'List models');
+      // The key goes in: look at once (a paste, or leaving the field), not on every keystroke, so a half-typed key is never sent.
+      if (hosted) {
+        key.addEventListener('paste', () => setTimeout(() => { if (key.value.trim().length >= 8) check(); }, 0));
+        key.addEventListener('change', () => { if (key.value.trim().length >= 8 && checkedWith !== key.value.trim()) check(); });
+      }
+      // A local server needs no key: show what it has loaded.
+      if (p.local && !extra.model && base.value) check();
       const fields = [h('div.field', h('label', 'Name'), name, h('span.hint', 'How Runesmith refers to this model.'))];
       if (p.kind === 'milliner') fields.push(h('div.field', h('label', 'Catalog provider filter'), providerFilter,
         h('span.hint', 'Narrows List models without making an inference call. It does not change the saved model, routing or fallback policy.')));
-      if (p.kind !== 'manual') fields.push(h('div.field', h('label', 'Model'), h('div.row', model, listBtn), dl, h('span.hint', 'Use a served model id. Qualify it on representative work: authoring needs coherent design and complete changes; workers may handle narrower, checked tasks. Free or paid is not a capability grade.')));
+      if (p.kind !== 'manual') fields.push(h('div.field', h('label', 'Model'), h('div.row', model, listBtn), dl, modelNote, chipBox, h('span.hint', 'Use a served model id. Qualify it on representative work: authoring needs coherent design and complete changes; workers may handle narrower, checked tasks. Free or paid is not a capability grade.')));
       else fields.push(h('div.field', h('label', 'Which chat will you use? (for the record)'), model));
       if (p.id === 'custom' || p.id === 'milliner' || p.local) fields.push(h('div.field', h('label', 'Address'), base));
       if (p.kind === 'milliner') fields.push(h('div.field', h('label', 'Milliner fallback models'), fallbacks,
@@ -121,6 +166,13 @@ export default async function render(root, ctx) {
       if (p.setup) fields.push(h('div.callout', icon('info'), h('div', 'First time? Install it, then run ', h('code', p.setup))));
       const save = h('button.btn.primary', icon('check'), p.kind === 'manual' ? 'Save chat instrument' : 'Save and test');
       save.addEventListener('click', () => withBusy(save, async () => {
+        // A key that was never checked (typed, then Save at once): ask the provider's list first. Only a name the owner did
+        // not choose is replaced, and the screen says so.
+        const suggestedName = model.value.trim();
+        if (pending) await pending;
+        if (hosted && key.value.trim() && checkedWith !== key.value.trim() && !touched) await check();
+        if (!touched && suggestedName && model.value.trim() !== suggestedName)
+          toast(`Using ${model.value.trim()}: that is what ${label} serves today (${suggestedName} was only a suggestion).`, 'info', 8000);
         const spec = { kind: p.kind, preset: p.id, model: model.value.trim(), base_url: (p.id === 'custom' || p.id === 'milliner' || p.local) ? base.value.trim() : p.base_url, label: p.label };
         if (p.kind === 'openai') spec.json_mode = p.json_mode || 'json_object';      // LM Studio refuses json_object
         if (p.max_request_tokens) spec.max_request_tokens = p.max_request_tokens;      // a free tier's per-minute window
@@ -244,7 +296,7 @@ async function recordedUsage(){
 
 function instrumentRow(i, data, reload) {
   const st = data.stats[i.name];
-  const status = h('div.small');
+  const status = h('div.small', ...testStatus(i, reload));
   const row = h('div.instrument', h('div.monogram', { style: { background: MONO_COLORS[i.preset] || '#475569' } }, (i.label || i.name).replace(/[^A-Za-z]/g, '').slice(0, 2)),
     h('div', {style:{paddingRight:'22px'}}, h('div.row.wrap', h('b', i.label), h('span.badge.mono', i.name), i.local ? h('span.badge.good', 'local') : null, i.usable ? null : h('span.badge.warn', 'incomplete'),
       i.key.secret ? h('span', { class: `badge ${i.key.saved ? 'good' : 'bad'}` }, icon('key'), i.key.saved ? 'key saved' : 'key missing') : null),
@@ -254,19 +306,36 @@ function instrumentRow(i, data, reload) {
         st ? ` · ${st.calls} host callbacks, ${st.errors} errors, ~${(st.latency_s / Math.max(1, st.calls)).toFixed(1)} s each${i.kind==='milliner'?' · see Usage & cost coverage for reconciled gateway receipts':st.costed_calls ? ` · $${st.estimated_usd.toFixed(4)} reported estimate (${st.costed_calls}/${st.calls} callbacks costed)` : ' · spend not reported'}` : ''), status),
     h('div.row.wrap.instrument-actions', i.kind === 'milliner' ? h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, () => recordedAvailability(i.name))}, icon('clock'), 'Recorded availability') : null,
       i.kind === 'milliner' ? h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, () => editMillinerRoute(i.name, reload))}, icon('layers'), 'Route') : null,
-      i.kind !== 'manual' ? h('button.btn.sm', { onclick: () => testInstrument(i.name, reload, status) }, icon('zap'), 'Test') : null,
-      h('button.btn.sm.icon.ghost', { title: 'Remove', onclick: async () => { if (await confirmDialog({ title: `Remove ${i.label}?`, text: 'Its saved key is deleted too.', confirm: 'Remove', danger: true })) { await del(`/api/inference/instruments/${i.name}`); reload(); } } }, icon('trash'))));
+      i.kind !== 'manual' ? h('button.btn.sm', { onclick: () => testInstrument(i.name, reload) }, icon('zap'), 'Test') : null,
+      h('button.btn.sm.icon.ghost', { title: 'Remove', onclick: async () => { if (await confirmDialog({ title: `Remove ${i.label}?`, text: 'Its saved key is deleted too.', confirm: 'Remove', danger: true })) { await del(`/api/inference/instruments/${i.name}`); lastTest.delete(i.name); reload(); } } }, icon('trash'))));
   commentable(row, 'instrument', i.name, i.label);
   row.querySelector('.note-btn').style.right = '8px';
   return row;
 }
-async function testInstrument(name, reload, statusEl) {
+// What the last test said, kept on the model's row. When the provider named a replacement ("no longer available to new
+// users, use X"), it is offered as a button: one click changes only the model name, and nothing switches without it.
+function testStatus(i, reload) {
+  const t = lastTest.get(i.name);
+  if (!t) return [];
+  const out = [t.ok ? `✓ tested just now (${t.latency_s} s)` : `✗ ${t.detail}`];
+  if (!t.ok && t.hint) out.push(h('div.row.wrap.mt-8', h('span', `${t.label || 'The provider'} suggests ${t.hint}:`),
+    h('button.btn.sm.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
+      await post(`/api/inference/instruments/${encodeURIComponent(i.name)}/model`, { model: t.hint, expect: i.model });
+      lastTest.delete(i.name);
+      toast(`${i.name} now uses ${t.hint}.`, 'good');
+      await reload();
+      testInstrument(i.name, reload);
+    }) }, icon('check'), `Use ${t.hint}`)));
+  return out;
+}
+async function testInstrument(name, reload) {
   toast(`Testing ${name}: one tiny call…`, 'info', 2500);
   try {
     const r = await post(`/api/inference/test/${name}`, {});
+    lastTest.set(name, { ok: r.ok, detail: r.detail, latency_s: r.latency_s, hint: r.ok ? null : r.suggested_model || null, label: r.label });
     if (r.ok) toast(`${name} works: ${r.detail}${r.latency_s != null ? ` in ${r.latency_s} s` : ''}.`, 'good', 6000);
     else toast(`${name} did not work: ${r.detail}`, 'bad', 10000);
-    if (statusEl) statusEl.textContent = r.ok ? `✓ tested just now (${r.latency_s} s)` : `✗ ${r.detail}`;
+    if (reload) await reload();
   } catch (e) { toast(e.message, 'bad'); }
 }
 

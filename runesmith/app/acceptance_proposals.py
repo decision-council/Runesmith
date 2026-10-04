@@ -27,6 +27,7 @@ from runesmith.app import acceptance_examples, runesmith_md
 from runesmith.app.acceptance_contracts import expectations, publish_expectations
 from runesmith.app.building import _run_checks
 from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, milestone_contract, source_context, why_no_answer
+from runesmith.app.providers import with_model_hint
 from runesmith.app.snapshots import SnapshotUnsupported, collect_snapshot
 from runesmith.instruments import LenientSchema
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
@@ -487,7 +488,7 @@ def _ask(router, request, style, key):
     if isinstance(out.data, dict) and out.data.get('skipped_by_owner'):
         raise SkippedByOwner('you skipped the request, so nothing changed')
     if not out.ok and out.error_kind == "config":
-        failure = PlannerUnavailable(out.error or "the model service refused this request")
+        failure = PlannerUnavailable(with_model_hint(out.error or "the model service refused this request"))
         failure.receipt = dict(out.receipt or {})          # a model called directly may have refused it as too large
         raise failure
     if not out.ok:

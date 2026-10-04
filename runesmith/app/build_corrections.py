@@ -328,7 +328,8 @@ def correct_rejected_answer(ws, router, attempt_id: str, *, checkpoint=lambda:No
         # Every model refused the correction before answering (too large for it, a refused key): nothing ran, so
         # nothing is used up (review of J11-G17; like J2-B9's calls no model answered).
         _write_json(receipt_path,dict(receipt,state='transport_failed',error=(outcome.error or '')[:300],finished=_now()))
-        raise PlannerUnavailable((outcome.error or 'the model service refused this request')+
+        from runesmith.app.providers import with_model_hint
+        raise PlannerUnavailable(with_model_hint(outcome.error or 'the model service refused this request')+
                                  ' Nothing was used up: the correction can be asked again.')
     receipt.update(state='answered',finished=_now(),answer=outcome.data,
                    instrument={k:outcome.receipt.get(k) for k in ('model','requested_model','answered_by','job_id','est_usd')})

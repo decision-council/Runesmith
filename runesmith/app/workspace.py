@@ -591,8 +591,33 @@ class Workspace:
         if not spec:
             raise KeyError(name)
         result = test_instrument(name, spec, self.home)
+        result["label"] = spec.get("label") or name           # who answered, for "Google suggests X" on the screen
         self.ledger.append("instrument.tested", {"name": name, "ok": result["ok"]})
         return result
+
+    def set_instrument_model(self, name: str, model: str, *, expect: str | None = None,
+                             reason: str = "provider_hint") -> dict[str, Any]:
+        """Change one OpenAI-style instrument's model name and nothing else (its key, address, roles and any other
+        setting stay as they are). ``expect`` is the name the owner saw when asking: if the instrument has been
+        changed since, nothing is switched."""
+        import re
+        model = (model or "").strip()
+        if not model or len(model) > 300 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]*", model):
+            raise WorkspaceError("a model name uses letters, digits and . _ : / @ + - only")
+        with self._lock:
+            config = self.config()
+            spec = config["instruments"].get(name)
+            if not spec:
+                raise KeyError(name)
+            if spec.get("kind") != "openai":
+                raise WorkspaceError("only a model on an OpenAI-style endpoint can be switched here")
+            before = spec.get("model")
+            if expect is not None and before != expect:
+                raise WorkspaceError(f"this model is now {before!r}, not {expect!r}; look again before switching")
+            spec["model"] = model
+            self.save_config(config)
+        self.ledger.append("instrument.model_switched", {"name": name, "from": before, "to": model, "reason": reason})
+        return next(i for i in self.inference()["instruments"] if i["name"] == name)
 
     def list_models(self, *, name: str | None = None, preset: str | None = None, base_url: str | None = None,
                     key_value: str | None = None, provider: str = "") -> dict[str, Any]:
@@ -617,7 +642,9 @@ class Workspace:
             base_url = (PRESET_BY_ID.get(preset) or {}).get("base_url")
         if not base_url:
             return {"ok": False, "models": [], "detail": "no endpoint address"}
-        return list_models(base_url, key, kind=kind, provider=provider)
+        if name and not preset:
+            preset = (self.config()["instruments"].get(name) or {}).get("preset")
+        return list_models(base_url, key, kind=kind, provider=provider, preset=preset or "")
 
     def record_call(self, event: dict[str, Any]) -> None:
         """Count one model call per instrument (the router's on_call hook), for the operations view."""

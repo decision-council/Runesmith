@@ -3,7 +3,10 @@
 Everything here is a convenience over one fact: any OpenAI-compatible endpoint
 works, and so do Milliner and a person relaying to a chat window. Suggested model
 names are starting points, not requirements; the owner can type any model id, and
-``list_models`` asks the provider what it actually serves.
+``list_models`` asks the provider what it actually serves. Model names go stale every few months, so the names
+below are only the fallback for when the provider's own list cannot be read: with a key, ``list_models`` also
+returns a ``recommended`` model and a few ``choices`` chosen from what the provider serves today, and a provider's
+own "no longer available, use X instead" answer becomes a one-click switch (``model_hint``).
 """
 
 from __future__ import annotations
@@ -15,6 +18,12 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+# The "suggested" names are a FALLBACK, shown before a key is added and used when the provider's list cannot be read;
+# with a key, the live list decides (recommend_models). Names last checked against the providers' public model pages
+# on 2026-10-04: Gemini (3.8 and 3.6 flash are current; 2.5 is limited to users who already used it), Anthropic (Opus 5.5 and
+# Sonnet 5.5 are current), Groq (gpt-oss-20b/120b are production), DeepSeek (its page lists deepseek-flash and deepseek-v4-pro),
+# Together (gpt-oss-120b and Llama 3.3 70B Turbo are in its chat table). Not confirmable from a page, left as they were:
+# OpenAI, Mistral (the -latest aliases), OpenRouter, NVIDIA (checked 2026-09-28). The live list covers them once a key is in.
 PRESETS: list[dict[str, Any]] = [
     {"id": "ollama", "label": "Ollama", "group": "This computer", "kind": "openai",
      "base_url": "http://127.0.0.1:11434/v1", "key": "none", "local": True,
@@ -40,7 +49,7 @@ PRESETS: list[dict[str, Any]] = [
      "blurb": "Very fast, with a free tier (up to 8,000 tokens a minute per model, so large requests need another model)."},
     {"id": "gemini", "label": "Google Gemini", "group": "With a key", "kind": "openai",
      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "key": "required",
-     "key_url": "https://aistudio.google.com/apikey", "suggested": ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+     "key_url": "https://aistudio.google.com/apikey", "suggested": ["gemini-3.8-flash", "gemini-3.6-flash"],
      "blurb": "A free tier through Google AI Studio."},
     {"id": "mistral", "label": "Mistral", "group": "With a key", "kind": "openai",
      "base_url": "https://api.mistral.ai/v1", "key": "required", "key_url": "https://console.mistral.ai/api-keys",
@@ -54,17 +63,17 @@ PRESETS: list[dict[str, Any]] = [
      "blurb": "Many models with a free endpoint, among them NVIDIA Nemotron and Kimi."},
     {"id": "deepseek", "label": "DeepSeek", "group": "With a key", "kind": "openai",
      "base_url": "https://api.deepseek.com/v1", "key": "required", "key_url": "https://platform.deepseek.com/api_keys",
-     "suggested": ["deepseek-chat", "deepseek-reasoner"], "blurb": "Strong and inexpensive."},
+     "suggested": ["deepseek-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"], "blurb": "Strong and inexpensive."},
     {"id": "openai", "label": "OpenAI", "group": "With a key", "kind": "openai",
      "base_url": "https://api.openai.com/v1", "key": "required", "key_url": "https://platform.openai.com/api-keys",
-     "suggested": ["gpt-5.1", "gpt-5-mini"], "blurb": "Paid models."},
+     "suggested": ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.1", "gpt-5-mini"], "blurb": "Paid models."},
     {"id": "anthropic", "label": "Anthropic (OpenAI-compatible)", "group": "With a key", "kind": "openai",
      "base_url": "https://api.anthropic.com/v1", "key": "required", "key_url": "https://console.anthropic.com/settings/keys",
-     "suggested": ["claude-opus-4-5", "claude-sonnet-4-5"],
+     "suggested": ["claude-opus-5-5", "claude-sonnet-5-5"],
      "blurb": "Claude through Anthropic's OpenAI-compatible layer. Test the connection after saving."},
     {"id": "together", "label": "Together AI", "group": "With a key", "kind": "openai",
      "base_url": "https://api.together.xyz/v1", "key": "required", "key_url": "https://api.together.ai/settings/api-keys",
-     "suggested": [], "blurb": "Many open models."},
+     "suggested": ["openai/gpt-oss-120b", "meta-llama/Llama-3.3-70B-Instruct-Turbo"], "blurb": "Many open models."},
     {"id": "custom", "label": "Any OpenAI-compatible endpoint", "group": "Advanced", "kind": "openai",
      "base_url": "", "key": "optional", "suggested": [],
      "blurb": "vLLM, a company gateway, or any server that speaks the OpenAI chat API."},
@@ -86,6 +95,152 @@ def public_presets(kinds_in_use=()) -> list[dict[str, Any]]:
     import os
     internal = os.environ.get("RUNESMITH_INTERNAL") == "1"
     return [p for p in PRESETS if not p.get("internal") or internal or p["kind"] in set(kinds_in_use)]
+
+
+# ----------------------------------------------------------------- which model to suggest, from the live list --
+
+def _versions(text: str) -> tuple[int, ...]:
+    """Numbers as integers, so 3.10 is newer than 3.8, padded so 3 is older than 3.8."""
+    return (tuple(int(n) for n in re.findall(r"\d+", text)) + (0, 0, 0, 0))[:4]
+
+
+def _older_first(version: tuple[int, ...]) -> tuple[int, ...]:
+    return tuple(-n for n in version)
+
+
+_GEMINI = re.compile(r"^gemini-(?P<v>\d+(?:\.\d+)*)-(?P<tier>flash|pro)(?P<rest>(?:-[a-z0-9.]+)*)$")
+# Models in Google's list that do not chat in text (or are not for general use): never recommended.
+_GEMINI_NOT_CHAT = ("image", "tts", "audio", "live", "embed", "robotics", "computer", "native", "vision", "dictation",
+                    "translate", "customtools")
+
+
+def _gemini_model(model_id: str) -> dict[str, Any] | None:
+    found = _GEMINI.match(model_id)
+    if not found or any(word in found["rest"] for word in _GEMINI_NOT_CHAT):
+        return None
+    rest = found["rest"]
+    lite = "lite" in rest
+    preview = bool(re.search(r"preview|exp|beta|\d{2}-\d{2,4}", rest))
+    # 0 stable, 1 stable lite, 2 preview, 3 preview lite: a stable model beats any preview, and "-lite" is the last resort.
+    return {"id": model_id, "tier": found["tier"], "version": _versions(found["v"]), "lite": lite, "preview": preview,
+            "rank": (2 if preview else 0) + (1 if lite else 0), "pinned": bool(re.search(r"-\d{3}$", rest))}
+
+
+def _gemini_order(row: dict[str, Any]) -> tuple:
+    return (row["rank"], _older_first(row["version"]), row["pinned"], row["id"])
+
+
+def _recommend_gemini(ids: list[str]) -> tuple[str | None, list[str]]:
+    """The newest generally available "flash" model: not "pro", "-lite" only when nothing else, a preview only when no
+    stable one exists. The other good choices: the next flash generations, the newest lite, the newest pro."""
+    rows = [row for row in map(_gemini_model, ids) if row]
+    flash = sorted((r for r in rows if r["tier"] == "flash"), key=_gemini_order)
+    pro = sorted((r for r in rows if r["tier"] == "pro" and not r["lite"]), key=_gemini_order)
+    if not flash:
+        return None, [r["id"] for r in pro[:2]]
+    best = flash[0]
+    choices: list[str] = []
+    seen = {best["version"]}
+    for row in flash[1:]:                                       # older flash generations, one name each
+        if not row["lite"] and not row["preview"] and row["version"] not in seen and len(choices) < 2:
+            choices.append(row["id"]); seen.add(row["version"])
+    lite = next((r for r in flash if r["lite"] and r["id"] != best["id"] and not r["preview"]), None)
+    if lite:
+        choices.append(lite["id"])
+    if pro:
+        choices.append(pro[0]["id"])
+    return best["id"], choices
+
+
+# Families used when none of a preset's suggestions is served any more: the newest name of each, best first.
+_FAMILIES: dict[str, list[str]] = {
+    "openai": [r"gpt-(?P<v>\d+(?:\.\d+)*)", r"gpt-(?P<v>\d+(?:\.\d+)*)-mini"],
+    "anthropic": [r"claude-opus-(?P<v>\d+(?:[.-]\d+)*?)", r"claude-sonnet-(?P<v>\d+(?:[.-]\d+)*?)"],
+}
+_DATED = r"(?:-\d{8}|-\d{4}-\d{2}-\d{2})?"
+
+
+def _family_top(pattern: str, ids: list[str]) -> str | None:
+    rows = []
+    for model_id in ids:
+        found = re.fullmatch(pattern + _DATED, model_id)
+        if found:                                               # newest version first, an undated name before a dated one
+            dated = bool(re.search(r"-(?:\d{8}|\d{4}-\d{2}-\d{2})$", model_id))
+            rows.append((_older_first(_versions(found["v"])), dated, model_id))
+    return min(rows)[2] if rows else None
+
+
+def _match_suggestion(suggestion: str, ids: list[str]) -> str | None:
+    """A suggested name the list serves, exactly or as its dated release (claude-opus-4-5 -> claude-opus-4-5-20251101)."""
+    if suggestion in ids:
+        return suggestion
+    dated = [i for i in ids if i.startswith(suggestion + "-") and re.fullmatch(r"\d{8}|\d{4}-\d{2}-\d{2}", i[len(suggestion) + 1:])]
+    return max(dated) if dated else None
+
+
+def recommend_models(preset_id: str, ids: list[str]) -> dict[str, Any]:
+    """Pick a default model for a preset from the model ids its provider serves right now, and a few other good
+    choices. ``recommended`` is None when nothing in the list fits (the form then keeps the preset's fallback name).
+    Gemini: the newest generally available flash. Local servers: a suggestion that is loaded, else the first model.
+    Others: the first suggestion the list contains, else the newest name of a known family."""
+    preset = PRESET_BY_ID.get(preset_id) or {}
+    ids = [i for i in dict.fromkeys(ids) if isinstance(i, str) and i]
+    best: str | None = None
+    choices: list[str] = []
+    if preset_id == "gemini":
+        best, choices = _recommend_gemini(ids)
+    if best is None:
+        served = [m for m in (_match_suggestion(s, ids) for s in preset.get("suggested") or []) if m]
+        if served:
+            best, choices = served[0], served[1:]
+        if preset.get("local"):
+            chat = [i for i in ids if "embed" not in i.lower()]
+            if best is None and chat:
+                best = chat[0]
+            choices = [i for i in chat[:6] if i != best] if best else []
+        else:
+            tops = [t for t in (_family_top(p, ids) for p in _FAMILIES.get(preset_id, [])) if t]
+            if best is None and tops:
+                best = tops[0]
+            choices += [t for t in tops if t != best and t not in choices]
+    return {"recommended": best, "choices": [c for c in dict.fromkeys(choices) if c != best][:5]}
+
+
+# ----------------------------------------------------------------- the provider's own "use X instead" --
+
+_GONE = re.compile(r"no longer|deprecat|retire|decommission|discontinu|shut ?down|sunset|not[ _]found|does not exist"
+                   r"|doesn't exist|no such model|invalid model|not a valid model|unknown model|no endpoints found|not available"
+                   r"|unavailable",
+                   re.IGNORECASE)
+_USE = re.compile(r"\b(?:use|using|try|switch to|migrate to|move to|upgrade to|replaced (?:by|with)|superseded by"
+                  r"|did you mean)\s+(?:the\s+)?(?:model\s+)?[\\\"'`]*(?P<id>[A-Za-z0-9][A-Za-z0-9._:/@+-]{1,118}[A-Za-z0-9])",
+                  re.IGNORECASE)
+
+
+def model_hint(message: str, current: str = "") -> str | None:
+    """The model a provider's refusal points to ("... is no longer available to new users. Please update your code to
+    use models/gemini-3.8-flash"), or None. Works on the plain words and on the JSON or repr they come wrapped in;
+    answers only when the message says the model is gone, and never returns the current model or a web address."""
+    text = str(message or "")
+    if not _GONE.search(text):
+        return None
+    now = str(current or "").lower().removeprefix("models/")
+    for found in _USE.finditer(text):
+        name = found["id"].removeprefix("models/")
+        low = name.lower()
+        if (low == now or low.startswith(("http:", "https:")) or "//" in name or re.search(r"\.(com|ai|org|io|dev|net)\b", low)
+                or re.match(r"v\d", low) or not re.search(r"[\d/-]", name)):
+            continue
+        return name
+    return None
+
+
+def with_model_hint(text: str) -> str:
+    """A refusal's plain words, plus "the service suggests X" when it named a replacement for a retired model."""
+    hint = model_hint(text)
+    if not hint:
+        return text
+    return f"{text} The service suggests {hint}: under Thinking power, press Test on that model to switch with one click."
 
 
 def _get_json(url: str, *, headers: dict[str, str] | None = None, timeout: float = 3.0) -> tuple[int, Any]:
@@ -119,8 +274,10 @@ def discover_local(timeout: float = 0.8) -> list[dict[str, Any]]:
 
 
 def list_models(base_url: str, key: str = "", *, kind: str = "openai", provider: str = "",
-                timeout: float = 8.0) -> dict[str, Any]:
-    """Read the selected endpoint's catalog, without generating or probing models."""
+                timeout: float = 8.0, preset: str = "") -> dict[str, Any]:
+    """Read the selected endpoint's catalog, without generating or probing models. For an OpenAI-style endpoint the
+    answer also carries ``recommended`` (the model to pre-fill, or None) and ``choices`` (other good ones), chosen from
+    the whole list by the preset's rule (``recommend_models``)."""
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     base = base_url.rstrip("/")
     if kind == "milliner":
@@ -151,7 +308,11 @@ def list_models(base_url: str, key: str = "", *, kind: str = "openai", provider:
                 model_id = provider + ":" + bare
         if isinstance(model_id, str) and model_id.strip():
             ids.add(model_id.strip())
+    if kind != "milliner" and (preset == "gemini" or "generativelanguage.googleapis.com" in base):
+        ids = {i.removeprefix("models/") for i in ids}      # Google lists "models/gemini-..."; the chat call takes the bare name
     result = {"ok": True, "status": status, "models": sorted(ids)[:500], "count": len(ids)}
+    if kind != "milliner":
+        result.update(recommend_models(preset, sorted(ids)))      # from the whole list, not the first 500 names
     if kind == "milliner":
         result['provider'] = provider
         result['detail'] = ('Up to 500 free-catalog entries. Listing does not confirm routing permission, '
@@ -181,5 +342,10 @@ def test_instrument(name: str, spec: dict[str, Any], home) -> dict[str, Any]:
     else:                                                   # journey J8-F3: say what happened, then the service's words
         from runesmith.app.planner import why_no_answer
         detail = why_no_answer(out.error or "no answer")[:300]
-    return {"ok": bool(out.ok), "latency_s": round(time.monotonic() - started, 2), "kind": out.error_kind,
-            "detail": detail, "model": (out.receipt or {}).get("model") or spec.get("model")}
+    result = {"ok": bool(out.ok), "latency_s": round(time.monotonic() - started, 2), "kind": out.error_kind,
+              "detail": detail, "model": (out.receipt or {}).get("model") or spec.get("model")}
+    if not out.ok and spec.get("kind") == "openai":
+        hint = model_hint(out.error or "", spec.get("model") or "")      # from the whole answer, before it is cut short
+        if hint:
+            result["suggested_model"] = hint
+    return result
