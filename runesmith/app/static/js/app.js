@@ -1,7 +1,7 @@
 // Runesmith Studio: the shell (navigation, status, command palette, comment mode) and the router.
 import { $, $$, h, icon, clear, get, post, bus, connectEvents, toast, notesState, openNotes, refreshNoteBadges,
   confirmDialog, debounce, ago, modal, withBusy, closeDrawers, humanize } from './core.js';
-import { LOGO } from './icons.js';
+import { logoMark, wordmark } from './icons.js';
 
 // What a job is called in plain words (the worker's JOB_WORDS), for toasts (journey J2-F9).
 const JOB_WORDS = { propose_acceptance: 'Proposing acceptance checks', plan: 'Drafting a plan', goalposts: 'Proposing goalposts',
@@ -72,7 +72,7 @@ async function boot() {
 
 function renderLocked(root) {
   clear(root).append(h('div.lock-screen', h('div.box',
-    h('div', { html: LOGO, style: { width: '72px', height: '72px', margin: '0 auto 18px' } }),
+    h('div', { html: logoMark({ forge: true }), style: { width: '72px', height: '72px', margin: '0 auto 18px' } }),
     h('h2', 'Runesmith Studio is locked'),
     h('p.muted', 'For your safety, the Studio opens only through the link its launcher prints. Start Runesmith again (double-click the launcher or run `runesmith` in your folder) and it will open this page for you.'),
     h('p.small.faint', 'Why: anything that can reach this page could otherwise act on your folder. The link carries a one-time key that stays in this browser.'))));
@@ -97,7 +97,7 @@ function renderShell(root) {
     const on = !$('.app').classList.contains('collapsed'); $('.app').classList.toggle('collapsed', on); localStorage.setItem('rs-collapsed', on ? '1' : '0');
   } }, icon('menu'), h('span.label', 'Collapse'));
   const sidebar = h('aside.sidebar',
-    h('div.brand', h('div.mark', { html: LOGO }), h('div.word', 'RUNESMITH', h('small', 'Studio'))),
+    h('div.brand', h('div.mark', { html: logoMark() }), h('div.word', h('span.wm', { html: wordmark() }), h('small', 'Studio'))),
     nav, h('div.side-foot', ws, collapse));
   const pill = h('button.status-pill.idle', { title: 'What Runesmith is doing (click for details)', onclick: () => {
     if (app.state?.manual_waiting) import('./views/inference.js').then((m) => m.openRelayDrawer());

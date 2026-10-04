@@ -70,7 +70,7 @@ export default async function render(root, ctx) {
         r.ok ? toast(`${e.name} adopted as ${r.id}; the trial is open.`, 'good', 7000) : toast(r.detail, 'warn', 8000);
         load();
       }));
-      const card = h('div.card.flat.mt-8', h('div.row', h('div.monogram', { style: { background: 'linear-gradient(135deg,#ff7a30,#8b6cff)' } }, e.name), h('div.grow', h('b', e.title), h('div.small.muted', e.id))),
+      const card = h('div.card.flat.mt-8', h('div.row', h('div.monogram', { style: { background: 'linear-gradient(135deg,#f8dc94,#c58a34)', color: '#0b0e14' } }, e.name), h('div.grow', h('b', e.title), h('div.small.muted', e.id))),
         h('p', e.summary), h('div.evidence', h('b', 'Evidence. '), e.evidence), h('p.small.muted.mt-8', h('b', 'Caveat. '), e.caveat), h('p.tiny.faint', `Authored by ${e.authored_by}.`), h('div.row', adopt));
       commentable(card, 'generation', e.id, `${e.name} (${e.id})`);
       lib.append(card);

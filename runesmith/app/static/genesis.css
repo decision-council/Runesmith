@@ -1,39 +1,42 @@
-/* Genesis: Runesmith's opening sequence. Always cinematic dark, whatever the theme. */
+/* Genesis: Runesmith's opening sequence. Always cinematic dark, whatever the theme: slate, gold and the heat of the forge. */
 /* Everything is sized to the player, not the window (container units), so the sequence fits a full screen, a
    laptop and a small web player alike: the scene has the upper band, the words the lower one. */
 .genesis {
-  position: fixed; inset: 0; z-index: 100; overflow: hidden; color: #eef2fa; font-family: var(--font, system-ui);
-  background: radial-gradient(ellipse at 50% 45%, #141a2b 0%, #0a0d16 55%, #05070c 100%);
+  position: fixed; inset: 0; z-index: 100; overflow: hidden; color: #f3ead8; font-family: var(--font, system-ui);
+  background: radial-gradient(ellipse at 50% 45%, #1b2030 0%, #11151e 52%, #0b0e14 100%);
   container-type: size;
 }
+.genesis::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(232, 176, 74, .03) 0 1px, transparent 1px 36px), repeating-linear-gradient(90deg, rgba(232, 176, 74, .03) 0 1px, transparent 1px 36px); }
 .genesis.embedded { position: absolute; z-index: 1; border-radius: inherit; }
 .genesis svg.stage { position: absolute; left: 0; right: 0; top: 7%; width: 100%; height: 66%; }
 .genesis svg.stars { position: absolute; inset: 0; width: 100%; height: 100%; }
 .genesis .g-caption { position: absolute; left: 0; right: 0; bottom: 7.5%; text-align: center; padding: 0 5cqw; pointer-events: none; }
-.genesis .g-caption .t { font-size: clamp(17px, 5.2cqh, 50px); font-weight: 760; letter-spacing: -.02em; line-height: 1.12; opacity: 0; transform: translateY(14px);
+.genesis .g-caption .t { font-family: var(--display, system-ui); font-size: clamp(17px, 5.2cqh, 50px); font-weight: 600; letter-spacing: .02em; line-height: 1.12; opacity: 0; transform: translateY(14px);
   transition: opacity .9s cubic-bezier(.2,.8,.2,1), transform .9s cubic-bezier(.2,.8,.2,1); text-shadow: 0 4px 40px rgba(0,0,0,.6); }
-.genesis .g-caption .s { margin: 1.3cqh auto 0; max-width: min(840px, 86cqw); font-size: clamp(11.5px, 2.2cqh, 18.5px); color: #aeb8cf; opacity: 0; transform: translateY(10px);
+.genesis .g-caption .s { margin: 1.3cqh auto 0; max-width: min(840px, 86cqw); font-size: clamp(11.5px, 2.2cqh, 18.5px); color: #b9b3a8; opacity: 0; transform: translateY(10px);
   transition: opacity .9s .25s cubic-bezier(.2,.8,.2,1), transform .9s .25s cubic-bezier(.2,.8,.2,1); line-height: 1.5; }
-.genesis .g-caption .fine { margin-top: 1cqh; font-size: clamp(9.5px, 1.4cqh, 12px); color: #7e8aa4; letter-spacing: .06em; opacity: 0; transition: opacity .9s .6s; }
+.genesis .g-caption .fine { margin-top: 1cqh; font-size: clamp(9.5px, 1.4cqh, 12px); color: #9b958c; letter-spacing: .06em; opacity: 0; transition: opacity .9s .6s; }
 .genesis .g-caption.on .t, .genesis .g-caption.on .s { opacity: 1; transform: none; }
 .genesis .g-caption.on .fine { opacity: 1; }
 @container (max-height: 460px) { .genesis .g-caption .fine { display: none; } .genesis .g-caption .s { -webkit-line-clamp: 2; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; } }
-.genesis .g-title { font-size: clamp(28px, 10cqh, 116px) !important; letter-spacing: .28em !important; font-weight: 800 !important; padding-left: .28em;
-  background: linear-gradient(100deg, #ffd08a 0%, #ff8a3d 40%, #ff4d5e 70%, #ffb547 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
-  filter: drop-shadow(0 6px 30px rgba(255,110,50,.35)); }
+.genesis .g-title { font-family: var(--display, system-ui) !important; font-size: clamp(28px, 10cqh, 116px) !important; letter-spacing: .28em !important; font-weight: 700 !important; padding-left: .28em;
+  background: linear-gradient(100deg, #f8dc94 0%, #e8b04a 42%, #ff8a3d 78%, #f8dc94 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 6px 30px rgba(232, 176, 74, .35)); }
 .genesis .g-top { position: absolute; top: 18px; right: 20px; display: flex; gap: 8px; z-index: 3; }
-.genesis .g-btn { border: 1px solid rgba(255,255,255,.16); background: rgba(10,13,22,.55); color: #cfd6e6; padding: 7px 14px; border-radius: 99px; cursor: pointer; font-size: 13px;
+.genesis .g-btn { --c: 7px; --edge: rgba(232, 176, 74, .38); background-color: rgba(11, 14, 20, .6); color: #e6dfcf; padding: 7px 14px; cursor: pointer; font-family: var(--display, system-ui); font-size: 13px; letter-spacing: .04em;
   backdrop-filter: blur(8px); display: inline-flex; gap: 8px; align-items: center; }
-.genesis .g-btn:hover { border-color: rgba(255,138,61,.7); color: #fff; }
+.genesis .g-btn:hover { --edge: #e8b04a; color: #fff; }
 .genesis .g-btn svg { width: 15px; height: 15px; }
-.genesis .g-brand { position: absolute; top: 20px; left: 24px; display: flex; gap: 10px; align-items: center; font-weight: 750; letter-spacing: .2em; font-size: 12px; color: #c9d1e3; opacity: .8; z-index: 3; }
-.genesis .g-brand svg { width: 24px; height: 24px; }
+.genesis .g-brand { position: absolute; top: 20px; left: 24px; display: flex; gap: 12px; align-items: center; color: #e6dfcf; opacity: .9; z-index: 3; }
+.genesis .g-brand .mk svg { display: block; width: 28px; height: 28px; }
+.genesis .g-brand .wm svg { display: block; height: 11px; width: auto; }
 .genesis .g-dots { position: absolute; bottom: 3%; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; z-index: 3; }
-.genesis .g-dots i { width: 22px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.14); overflow: hidden; position: relative; cursor: pointer; }
-.genesis .g-dots i.done { background: rgba(255,138,61,.75); }
+.genesis .g-dots i { width: 24px; height: 4px; background: rgba(255, 255, 255, .14); overflow: hidden; position: relative; cursor: pointer; clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%); }
+.genesis .g-dots i.done { background: rgba(232, 176, 74, .8); }
 .genesis .g-dots i.now::after { content: ""; position: absolute; inset: 0; background: #ff8a3d; transform-origin: left; animation: g-fill var(--dur, 5s) linear forwards; }
 @keyframes g-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-.genesis .hint { position: absolute; bottom: 2.4%; right: 24px; font-size: 12px; color: #7e8aa4; z-index: 3; }
+.genesis .hint { position: absolute; bottom: 2.4%; right: 24px; font-size: 12px; color: #9b958c; z-index: 3; }
 @container (max-width: 760px) { .genesis .hint { display: none; } }
 
 /* svg animation vocabulary */
@@ -57,43 +60,43 @@
 /* the naming: one centred column, sized to the player; it sheds optional parts when the player is short */
 .genesis .g-name { position: absolute; inset: 0; display: grid; place-items: center; z-index: 4; padding: 9cqh 4cqw 8cqh; }
 .genesis .g-name form { width: min(700px, 90cqw); text-align: center; animation: g-fade 1s ease both; }
-.genesis .g-name .sigil { width: clamp(34px, 8cqh, 76px); height: clamp(34px, 8cqh, 76px); margin: 0 auto 1.6cqh; filter: drop-shadow(0 0 24px rgba(255,122,48,.45)); }
+.genesis .g-name .sigil { width: clamp(34px, 8cqh, 76px); height: clamp(34px, 8cqh, 76px); margin: 0 auto 1.6cqh; filter: drop-shadow(0 0 26px rgba(255, 138, 61, .4)); }
 .genesis .g-name .sigil svg { width: 100%; height: 100%; }
-.genesis .g-name h2 { font-size: clamp(19px, 6cqh, 56px); margin: 0 0 .8cqh; font-weight: 780; letter-spacing: -.02em; line-height: 1.08; }
-.genesis .g-name p.lead { color: #aeb8cf; margin: 0 0 2.4cqh; font-size: clamp(11.5px, 2cqh, 16px); }
-.genesis .g-name .big { width: 100%; background: transparent; border: 0; border-bottom: 2px solid rgba(255,255,255,.18); color: #fff; text-align: center;
-  font-size: clamp(20px, 6.4cqh, 58px); font-weight: 760; letter-spacing: -.01em; padding: .5cqh 0 1.1cqh; outline: none; transition: border-color .3s, text-shadow .3s; caret-color: #ff8a3d; }
-.genesis .g-name .big:focus, .genesis .g-name .big:focus-visible { border-bottom-color: #ff8a3d; text-shadow: 0 0 34px rgba(255,138,61,.35); box-shadow: none; border-radius: 0; }
+.genesis .g-name h2 { font-family: var(--display, system-ui); font-size: clamp(19px, 6cqh, 56px); margin: 0 0 .8cqh; font-weight: 600; letter-spacing: .02em; line-height: 1.08; }
+.genesis .g-name p.lead { color: #b9b3a8; margin: 0 0 2.4cqh; font-size: clamp(11.5px, 2cqh, 16px); }
+.genesis .g-name .big { width: 100%; background: transparent; border: 0; border-bottom: 2px solid rgba(232, 176, 74, .3); color: #fff; text-align: center;
+  font-family: var(--display, system-ui); font-size: clamp(20px, 6.4cqh, 58px); font-weight: 600; letter-spacing: .02em; padding: .5cqh 0 1.1cqh; outline: none; transition: border-color .3s, text-shadow .3s; caret-color: #e8b04a; }
+.genesis .g-name .big:focus, .genesis .g-name .big:focus-visible { border-bottom-color: #e8b04a; text-shadow: 0 0 34px rgba(232, 176, 74, .4); box-shadow: 0 6px 18px -10px rgba(232, 176, 74, .7); border-radius: 0; }
 .genesis .g-name .big::placeholder { color: rgba(255,255,255,.18); }
-.genesis .g-name textarea { width: 100%; margin-top: 1.8cqh; min-height: clamp(40px, 9cqh, 84px); background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; color: #e6ebf5;
-  padding: 1.2cqh 1.6cqh; font: inherit; font-size: clamp(12px, 1.9cqh, 15px); resize: vertical; outline: none; transition: border-color .2s; }
-.genesis .g-name textarea:focus { border-color: rgba(255,138,61,.7); }
+.genesis .g-name textarea { --c: 10px; --edge: rgba(232, 176, 74, .25); width: 100%; margin-top: 1.8cqh; min-height: clamp(40px, 9cqh, 84px); background-color: rgba(255, 255, 255, .04); color: #f3ead8;
+  padding: 1.2cqh 1.6cqh; font: inherit; font-size: clamp(12px, 1.9cqh, 15px); resize: vertical; outline: none; }
+.genesis .g-name textarea:focus { --edge: #e8b04a; box-shadow: var(--focus); }
 .genesis .g-name .types { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 1.8cqh 0 0; }
-.genesis .g-name .types button { border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.03); color: #c7cfdf; padding: .9cqh 1.5cqh; border-radius: 99px; cursor: pointer;
-  font-size: clamp(11px, 1.75cqh, 13.5px); display: inline-flex; gap: 7px; align-items: center; transition: all .15s; }
+.genesis .g-name .types button { --c: 7px; --edge: rgba(232, 176, 74, .3); background-color: rgba(255, 255, 255, .03); color: #d8d1c3; padding: .9cqh 1.5cqh; cursor: pointer;
+  font-family: var(--display, system-ui); letter-spacing: .03em; font-size: clamp(11px, 1.75cqh, 13.5px); display: inline-flex; gap: 7px; align-items: center; }
 .genesis .g-name .types button svg { width: 1.2em; height: 1.2em; }
-.genesis .g-name .types button:hover { border-color: rgba(255,138,61,.6); color: #fff; }
-.genesis .g-name .types button.on { background: rgba(255,138,61,.16); border-color: #ff8a3d; color: #fff; }
-.genesis .g-name .go { margin-top: 2.2cqh; display: inline-flex; gap: 10px; align-items: center; border: 0; cursor: pointer; padding: 1.4cqh 3.2cqh; border-radius: 14px;
-  font-size: clamp(13px, 2.1cqh, 17px); font-weight: 760; color: #1b0c03; background: linear-gradient(135deg, #ffb547, #ff7a30 55%, #ff4d5e);
-  box-shadow: 0 10px 40px rgba(255,110,50,.4); transition: transform .12s, filter .2s; }
+.genesis .g-name .types button:hover { --edge: #e8b04a; color: #fff; }
+.genesis .g-name .types button.on { background-color: rgba(232, 176, 74, .16); --edge: #e8b04a; color: #fff; }
+.genesis .g-name .go { --c: 12px; --edge: #f8dc94; margin-top: 2.2cqh; display: inline-flex; gap: 10px; align-items: center; cursor: pointer; padding: 1.4cqh 3.2cqh;
+  font-family: var(--display, system-ui); font-size: clamp(13px, 2.1cqh, 17px); font-weight: 600; letter-spacing: .05em; color: #0b0e14; background-color: #e8b04a;
+  background-image: var(--cuts), linear-gradient(180deg, #f8dc94, #e8b04a 55%, #c58a34); background-size: var(--cuts-size), 100% 100%; background-position: var(--cuts-pos), 0 0; }
 .genesis .g-name .go:hover { filter: brightness(1.07); transform: translateY(-1px); }
 .genesis .g-name .go svg { width: 1.1em; height: 1.1em; }
-.genesis .g-name .skip { display: block; margin: 1.4cqh auto 0; background: none; border: 0; color: #7e8aa4; cursor: pointer; font-size: clamp(11px, 1.7cqh, 13px); }
-.genesis .g-name .skip:hover { color: #cfd6e6; }
-.genesis .g-name .where { font-size: clamp(10px, 1.6cqh, 12.5px); color: #7e8aa4; margin-top: 1.2cqh; font-family: var(--mono, monospace); }
+.genesis .g-name .skip { display: block; margin: 1.4cqh auto 0; background: none; border: 0; color: #9b958c; cursor: pointer; font-size: clamp(11px, 1.7cqh, 13px); }
+.genesis .g-name .skip:hover { color: #f3ead8; }
+.genesis .g-name .where { font-size: clamp(10px, 1.6cqh, 12.5px); color: #9b958c; margin-top: 1.2cqh; font-family: var(--mono, monospace); }
 @container (max-height: 560px) { .genesis .g-name .where, .genesis .g-name .skip { display: none; } }
 @container (max-height: 470px) { .genesis .g-name textarea { display: none; } }
 @container (max-height: 360px) { .genesis .g-name .types, .genesis .g-name p.lead, .genesis .g-name .sigil { display: none; } }
 .genesis .forged { position: absolute; inset: 0; display: grid; place-items: center; z-index: 5; pointer-events: none; padding: 0 5cqw; }
-.genesis .forged .word { font-size: clamp(26px, 9.5cqh, 100px); font-weight: 800; letter-spacing: .04em; display: flex; flex-wrap: wrap; justify-content: center; gap: .02em; }
+.genesis .forged .word { font-family: var(--display, system-ui); font-size: clamp(26px, 9.5cqh, 100px); font-weight: 700; letter-spacing: .06em; display: flex; flex-wrap: wrap; justify-content: center; gap: .02em; }
 .genesis .forged .word span { display: inline-block; opacity: 0; transform: translateY(30px) scale(.6); filter: blur(6px);
-  animation: g-letter .9s cubic-bezier(.2,1.2,.3,1) forwards; background: linear-gradient(180deg, #fff, #ffb547 60%, #ff7a30); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  animation: g-letter .9s cubic-bezier(.2,1.2,.3,1) forwards; background: linear-gradient(180deg, #fff6dc, #e8b04a 60%, #c58a34); -webkit-background-clip: text; background-clip: text; color: transparent; }
 @keyframes g-letter { to { opacity: 1; transform: none; filter: blur(0); } }
-.genesis .forged .sub { margin-top: 1.6cqh; color: #aeb8cf; opacity: 0; animation: g-fade 1s 1s forwards; text-align: center; font-size: clamp(12px, 2.2cqh, 18px); }
+.genesis .forged .sub { margin-top: 1.6cqh; color: #b9b3a8; opacity: 0; animation: g-fade 1s 1s forwards; text-align: center; font-size: clamp(12px, 2.2cqh, 18px); }
 .genesis.leaving { animation: g-leave 1.1s cubic-bezier(.6,0,.2,1) forwards; }
 @keyframes g-leave { to { opacity: 0; transform: scale(1.06); filter: blur(4px); } }
-.genesis .typer::after { content: "▍"; color: #ff8a3d; animation: g-twinkle 1s steps(2) infinite; }
+.genesis .typer::after { content: "▍"; color: #e8b04a; animation: g-twinkle 1s steps(2) infinite; }
 @media (prefers-reduced-motion: reduce) {
   .genesis *, .genesis *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

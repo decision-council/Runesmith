@@ -85,7 +85,7 @@ async function health(body) {
     const data = await get(`/api/health?network=${network ? 1 : 0}`);
     clear(list);
     for (const c of data.checks) list.append(h('div.item', h('div', { class: `ico ${c.ok === true ? 'good' : c.ok === false ? 'bad' : 'warn'}` }, icon(c.ok === true ? 'check' : c.ok === false ? 'x' : 'info')),
-      h('div.body', h('div.title', humanize(c.check)), h('div.meta', c.detail), c.fix ? h('div.small', { style: { color: 'var(--accent)' } }, `Fix: ${c.fix}`) : null)));
+      h('div.body', h('div.title', humanize(c.check)), h('div.meta', c.detail), c.fix ? h('div.small', { style: { color: 'var(--accent-text)' } }, `Fix: ${c.fix}`) : null)));
   };
   const net = h('button.btn', icon('globe'), 'Also check the models over the network');
   net.addEventListener('click', () => withBusy(net, () => run(true)));
