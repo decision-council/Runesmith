@@ -578,12 +578,13 @@ class Worker:
             if (draft := rechecks.next_draft(self.ws)) is not None:
                 return rechecks.KIND, {'draft_id': draft['id'], 'reason': rechecks.REASON}
         from runesmith.app import stuck
-        if settings['build_steps'] and settings.get('stuck_policy') in stuck.POLICIES:
+        if settings['build_steps'] and settings['autonomy'] != 'observe':
             # The owner's setting for a milestone whose tries are used up (journey J11-G43): its one more try, or its
             # breakdown, takes a turn, and the step after it builds the others, so a milestone that waits on a model
-            # never holds the plan.
+            # never holds the plan. The same judgement tells the owner of a stuck milestone the setting has nothing left
+            # for (with the default "wait for me" too), so a project never idles with nobody told (journey J11-B28).
             if _read_json(self.ws.home / 'WORK.json', {}).get('kind') not in stuck.TURN_KINDS:
-                if (turn := stuck.stuck_work(self.ws, settings['stuck_policy'])) is not None:
+                if (turn := stuck.stuck_turn(self.ws, settings.get('stuck_policy'))) is not None:
                     return turn
         return None
 
@@ -718,6 +719,9 @@ class Worker:
                 self.current = None
             self._set("idle", "")
             self.bus.publish("job", done)
+            if job['kind'] in ('escalate', 'split'):    # the owner is told at once when this left a milestone with nothing to try
+                from runesmith.app import stuck
+                stuck.refresh_notices(self.ws)
             from runesmith.app.work_modes import configuration
             try:
                 legacy = not configuration(self.ws)['configured']

@@ -220,10 +220,22 @@ def test_workspace_api_forwards_breakdown_milestone():
 
 
 def test_missing_candidate_file_is_not_a_current_repair_target(tmp_path):
+    # A repair is for files that exist now. A step the model labelled a repair that names a file which does not exist yet is
+    # a build of that file: recorded so, with a note, instead of refusing the whole answer (which, under the owner's
+    # stuck setting, spent the one break-down and left the milestone with nothing to try; journey J11-B28).
     ws=setup(tmp_path);data=answer();data['steps'][0]['kind']='repair'
     scripted(ws,[data],roles=('plan',))
-    with pytest.raises(WorkspaceError,match='absent file'):propose_breakdown(ws,ws.router(),'m2')
-    assert len(ws.plan()['milestones'])==2
+    record=propose_breakdown(ws,ws.router(),'m2')
+    assert [s['kind'] for s in record['steps']]==['build','build']
+    assert len(record['corrections'])==1 and 'tests/test_tool.py' in record['corrections'][0] and 'src/tool.py' not in record['corrections'][0]
+    assert len(ws.plan()['milestones'])==2                       # proposing adopts nothing
+
+
+def test_a_repair_step_that_names_only_existing_files_stays_a_repair(tmp_path):
+    ws=setup(tmp_path);data=answer();data['steps'][0].update(kind='repair',suggested_paths=['src/tool.py'])
+    scripted(ws,[data],roles=('plan',))
+    record=propose_breakdown(ws,ws.router(),'m2')
+    assert [s['kind'] for s in record['steps']]==['repair','build'] and 'corrections' not in record
 
 
 def test_rejection_is_retained_and_enters_new_proposal_context(tmp_path):

@@ -368,6 +368,17 @@ def restart_decision(ws: Any, decision: str, by: str, jobs: int) -> None:
         record(ws, f"After a restart, Runesmith chose to {what} ({jobs} jobs), as your setting says.")
 
 
+@_safe
+def stuck_needs_owner(ws: Any, milestone_id: str, kind: str) -> None:
+    """A milestone whose tries are used up, and for which Runesmith has nothing left to try by itself: said once, when it
+    starts to wait, so the log shows why the project stands still."""
+    why = {"gap": "its one more try could not change a file no model is shown",
+           "wait": "your setting is to wait for you when tries are used up"}.get(
+        kind, "its tries and its one more try are used up and nothing more is left for your setting to try")
+    record(ws, f"{_sentence(_milestone(ws, milestone_id))} needs you: {why}. Ask for smaller steps, edit the milestone "
+               "or set it aside (Overview, Needs you).")
+
+
 # What the owner asked for when he pressed a button that tries something again (the jobs the Studio's route queues).
 RETRIES = {
     "escalate": "You asked for one more try, with another model, for the milestones whose tries were used up.",

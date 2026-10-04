@@ -185,14 +185,24 @@ def _validate(ws,data,packet):
         paths=raw.get('suggested_paths')
         if not isinstance(paths,list) or not 1<=len(paths)<=6:
             raise WorkspaceError('Each step needs 1-6 suggested code/test paths.')
+        absent=[]
         for path in paths:
             if not isinstance(path,str) or ws._safe_rel(path)!=path or path.lower().endswith(('.md','.rst','.txt')):
                 raise WorkspaceError('Step paths must be workspace-relative code/test paths, not documentation.')
             from runesmith.app.building import _within_scope
             if not _within_scope(path, packet['allowed_build_paths']):
                 raise WorkspaceError('A prerequisite cannot broaden the existing build-path grant.')
-            if row['kind']=='repair' and path not in packet['source_context']['inventory']:
-                raise WorkspaceError('A repair prerequisite names an absent file; candidate failures are not current-source failures.')
+            if path not in packet['source_context']['inventory']:
+                absent.append(path)
+        if row['kind']=='repair' and absent:
+            # A repair is for files that exist now; a failed candidate's files are not the project's (candidate failures are not
+            # current-source failures). A step that also names files its milestone creates is a build: the label was the model's
+            # slip, and refusing the whole answer cost the one break-down the owner's setting makes, which left a stuck
+            # milestone with nothing to try (journey J11-B28: the milestone's own checks name the files it creates).
+            row['kind']='build'
+            clean.setdefault('corrections',[]).append(
+                f"The step “{row['title'][:80]}” was labelled a repair but names files that do not exist yet "
+                f"({', '.join(absent[:4])}{' and more' if len(absent)>4 else ''}); it creates them, so it is recorded as a build.")
         row['suggested_paths']=list(dict.fromkeys(paths));clean['steps'].append(row)
     if len({s['title'].casefold() for s in clean['steps']})!=len(clean['steps']):
         raise WorkspaceError('Prerequisite titles must be distinct.')
@@ -240,13 +250,16 @@ def propose_breakdown(ws,router,milestone_id,*,checkpoint=lambda:None):
     receipt.update(state='answered',answer=out.data,finished=_now(),instrument={k:out.receipt.get(k) for k in
                     ('model','requested_model','answered_by','job_id','est_usd')})
     _write_json(path,receipt)
-    if not out.ok:raise PlannerUnavailable('Breakdown answer was unusable; receipt retained.')
+    if not out.ok:
+        unusable=PlannerUnavailable('Breakdown answer was unusable; receipt retained.');unusable.answered=True
+        raise unusable
     checkpoint()
     if input_packet(ws,milestone_id)!=packet:
-        raise WorkspaceError('Breakdown inputs changed; saved answer needs review.')
+        changed=WorkspaceError('Breakdown inputs changed; saved answer needs review.');changed.answered=True
+        raise changed
     try:clean=_validate(ws,out.data,packet)
     except WorkspaceError as error:
-        _write_json(path,dict(receipt,validation_error=str(error)));raise
+        _write_json(path,dict(receipt,validation_error=str(error)));error.answered=True;raise
     record=dict(clean,id=key,state='proposed',utc=_now(),milestone=milestone_id,
                 drafted_by=out.receipt.get('answered_by') or out.receipt.get('model'),
                 input_sha256=packet_digest,plan_digest=packet['plan_digest'],snapshot_digest=packet['snapshot_digest'],

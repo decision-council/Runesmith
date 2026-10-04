@@ -177,7 +177,7 @@ def test_api_limits_resume_to_saved_id(tmp_path,monkeypatch):
     ws=setup(tmp_path);worker=Worker(ws,EventBus());calls=[]
     monkeypatch.setattr('runesmith.app.author_recovery.resume_author',
         lambda workspace,request_id,**kw:calls.append(request_id) or {'summary':'Recovered'})
-    job=api_worker_run(SimpleNamespace(worker=worker),{},
+    job=api_worker_run(SimpleNamespace(worker=worker,ws=ws),{},       # the route logs the owner's retry to RUNESMITH.md, so it needs the workspace
         {'job':'resume_author','params':{'request_id':'saved','url':'https://elsewhere','max_calls':10}})
     assert job['params']=={'request_id':'saved'}
     worker._execute(job)
