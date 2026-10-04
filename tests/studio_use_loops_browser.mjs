@@ -2054,7 +2054,7 @@ try{
     await page.getByRole('button',{name:'Author context',exact:true}).click();
     const warned=page.getByRole('dialog',{name:'Author context'});await warned.waitFor();
     const warning=await warned.locator('.callout.warn').innerText();
-    assert(warning.includes('motion.mjs is over 40000 bytes and has lines too long to show even in parts: split it, then take it out of the list.'),warning);
+    assert(warning.includes('motion.mjs is too large to draft, or has lines too long to show even in parts: split it, then take it out of the list.'),warning);
     assert(warning.includes('gone.mjs is gone or hidden: take it out of the list.'),warning);
     await warned.getByRole('button',{name:'Close'}).click();await warned.waitFor({state:'hidden'});authorFocusErrors={};
     loops.push({id:'B20.14',case:'The Author context drawer says a file over the normal cap is still shown when the source budget has room, says which files are shown in parts and which lines, and names each prioritized file that cannot be shown with what to do',result:'passed'});
