@@ -37,7 +37,7 @@ def j11_program(root):
 
 # -------------------------------------------------------------------- findings 1 and 25 --
 
-def test_a_module_the_milestone_names_is_shown_whole_beside_the_prioritized_program(tmp_path):
+def test_a_module_the_milestone_names_is_shown_whole_beside_the_prioritized_program(tmp_path, old_caps):
     # Finding 1: a_layout.mjs and z_util.mjs took the room before effects.mjs, which the milestone names; with the
     # program's parts spending the rest, effects.mjs was omitted and the milestone waited for the owner.
     ws = plan_for(tmp_path, title='Wire the effects module',
@@ -52,7 +52,7 @@ def test_a_module_the_milestone_names_is_shown_whole_beside_the_prioritized_prog
     assert context['selection']['used_chars'] <= CONTEXT_CHARS
 
 
-def test_room_is_kept_for_new_modules_beside_a_prioritized_program_over_the_cap(tmp_path):
+def test_room_is_kept_for_new_modules_beside_a_prioritized_program_over_the_cap(tmp_path, old_caps):
     # Finding 25: J11's motion.mjs filled about 40,000 of the 48,000 characters, so the modules the models add (each
     # feature in a file of its own) were omitted one by one, also the ones that already existed.
     ws = plan_for(tmp_path, title='Named paints', detail='masks.mjs holds the mask shapes; paints.mjs the named paints',
@@ -69,7 +69,7 @@ def test_room_is_kept_for_new_modules_beside_a_prioritized_program_over_the_cap(
     assert context['selection']['used_chars'] <= CONTEXT_CHARS
 
 
-def test_the_named_files_come_before_the_others_when_the_budget_is_short(tmp_path):
+def test_the_named_files_come_before_the_others_when_the_budget_is_short(tmp_path, old_caps):
     ws = plan_for(tmp_path, title='Late module', detail='z_last.mjs needs a change', done_when='done')
     for n in range(10):
         (tmp_path / f'a_pad{n}.mjs').write_text(module(f'pad{n}', 5000), encoding='utf-8', newline='\n')
@@ -101,7 +101,7 @@ def tries_used(ws):
     return ordinary_allowance(ws, milestone_contract(ws, milestone(ws)), source_context(ws)['snapshot_digest'])['used']
 
 
-def test_a_file_the_last_answer_could_not_change_is_shown_in_the_next_round_with_no_try_and_no_owner(tmp_path):
+def test_a_file_the_last_answer_could_not_change_is_shown_in_the_next_round_with_no_try_and_no_owner(tmp_path, old_caps):
     # Finding 1: the refusal waited for the owner, who was away, and a source change made one more refused call.
     ws, changed = gap_project(tmp_path)
     assert 'effects.mjs' not in source_context(ws, milestone=milestone(ws))['files']
@@ -182,7 +182,7 @@ def test_an_old_text_ending_in_a_newline_cannot_change_the_line_after_the_last_s
 
 # ------------------------------------------------------------------------- finding 4 --
 
-def test_a_kept_answer_is_not_checked_against_a_whole_file_its_call_was_shown_only_in_parts(tmp_path):
+def test_a_kept_answer_is_not_checked_against_a_whole_file_its_call_was_shown_only_in_parts(tmp_path, old_caps):
     ws = plan_for(tmp_path)
     program(tmp_path)
     other = '\n'.join(f'export function helper{i}(a, b) {{\n  const r{i} = a * {i} + b;\n  return r{i};\n}}\n' for i in range(230)) + '\n'
@@ -218,7 +218,7 @@ def test_a_file_over_what_a_draft_can_hold_is_not_shown_and_says_so_before_any_c
     assert settled_state(refused.value) != 'context_gap' and 'Split it' in str(refused.value)
     assert recorded_context(collect_snapshot(ws), [], {})['omission_reasons']['big.py'] == 'file_limit'
     # a file that is quotable and small enough but has no line short enough is still said as before
-    (tmp_path / 'wide.py').write_text('x = 1; ' * 7000, encoding='utf-8', newline='\n')
+    (tmp_path / 'wide.py').write_text('x = 1; ' * 23000, encoding='utf-8', newline='\n')       # one line of 161,000 characters
     with pytest.raises(PlannerUnavailable, match='wide.py is too large to show a model, even in parts'):
         admit_answer_files(ws, source_context(ws, milestone=milestone(ws)),
                            [{'path': 'wide.py', 'edits': [{'old_text': 'x = 1', 'new_text': 'x = 2'}]}])

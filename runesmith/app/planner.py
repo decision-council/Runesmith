@@ -89,7 +89,7 @@ class SkippedByOwner(RuntimeError):
     """The owner skipped the chat-relay request: nothing is saved, and the plan and the drafts stay as they were."""
 
 
-def source_context(ws, limit: int = 48000, *, snapshot=None, milestone=None, feedback=True, parts_share=1.0,
+def source_context(ws, limit: int | None = None, *, snapshot=None, milestone=None, feedback=True, parts_share=1.0,
                    parts_reserve=0, parts=True) -> dict[str, Any]:
     """Bounded, deterministic source bytes, not just filenames. Never follow links.
 
@@ -217,7 +217,7 @@ def milestone_terms(ws, milestone: dict, *, feedback: bool = True) -> dict[str, 
         for _, draft in sorted(failing, key=lambda r: r[0], reverse=True)[:3]:
             texts.append(' '.join(_sentences(draft_owner_feedback(ws, draft)))[:3000])
     terms = extract_terms(*texts, anchors=anchors)
-    return dict(terms, text=' '.join(texts[:3]), wanted=sorted(wanted))
+    return dict(terms, text=' '.join(texts[:3]), checks=' '.join(texts[3:]), wanted=sorted(wanted))
 
 
 def milestone_contract(ws, milestone: dict) -> str:
@@ -962,8 +962,11 @@ def _not_shown(rel, context, ws=None, needed=()):
                  "budget together, so no model can be shown them all and a change to them cannot be checked. Remove "
                  "prioritized files this step does not need, or split this step into smaller ones.")
     elif reason == 'file_limit':
-        # A file over the limit is shown in parts (J11-B15); this is one that cannot be, even then: no line of it is short
-        # enough to quote.
+        # A file the milestone must change is shown whole up to FOCUSED_FILE_BYTES, and one over that in parts (J11-B15);
+        # this is one that cannot be, even then: no line of it is short enough to quote, or a draft cannot hold it. No
+        # model can be shown it to split it, so the owner does that (a step that moves a part into a new file needs the
+        # file shown). A file within FOCUSED_FILE_BYTES is never refused for its size: at worst it is a gap prioritizing closes.
+        from runesmith.app.source_focus import FOCUSED_FILE_BYTES
         from runesmith.app.workspace import MAX_DRAFT_FILE_BYTES
         try:
             size = (ws.root / rel).stat().st_size if ws is not None else 0
@@ -971,10 +974,13 @@ def _not_shown(rel, context, ws=None, needed=()):
             size = 0
         if size > MAX_DRAFT_FILE_BYTES:
             words = (f"{rel} is too large to draft ({MAX_DRAFT_FILE_BYTES:,} bytes at most), so a change to it could not be "
-                     "kept. Split it into smaller files.")
+                     "kept, and no model can be shown it to split it. Split it into smaller files yourself: move a part "
+                     "of it into a new file.")
         else:
-            words = (f"{rel} is too large to show a model, even in parts (its lines are too long to quote), so a change to it "
-                     "cannot be checked against it. Split it into smaller files.")
+            words = (f"{rel} is too large to show a model, even in parts (over {FOCUSED_FILE_BYTES:,} bytes, and its lines "
+                     "are too long to quote), so a change to it cannot be checked against it. No model can be shown it to "
+                     "split it. Split it into smaller files yourself: move a part of it into a new file, or break up its "
+                     "long lines.")
         if _prioritized(ws, context, rel):
             words += " It is prioritized under Author context, which cannot show it either: take it out of the list once it is split."
     elif reason == 'not_utf8':

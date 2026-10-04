@@ -245,9 +245,9 @@ await context.route('**/*',async route=>{
   else if(p==='/api/build')data={apply:false,acceptance_folder:'.runesmith/acceptance',last:null};
   else if(p==='/api/author-context'&&req.method()==='GET')data={focus:{paths:[],reason:'',utc:null},focus_errors:authorFocusErrors,settings_error:null,
     truncated_inventory:false,snapshot_digest:'a'.repeat(64),included_count:2,whole_count:1,parts_count:1,parts_for:{id:'m1',title:'Camera follows the subject'},
-    omitted_count:0,used_chars:20316+9800,budget_chars:48000,
-    max_focus_paths:12,focused_file_bytes:40000,normal_file_bytes:20000,rows:[{path:'motion.mjs',bytes:20316,included:true,focused:false,reason:null},
-      {path:'engine.mjs',bytes:61240,chars:9800,included:true,focused:true,reason:null,in_parts:true,ranges:[[1,25],[300,360],[912,912]],lines:1500}]};
+    omitted_count:0,used_chars:20316+9800,budget_chars:200000,
+    max_focus_paths:12,focused_file_bytes:160000,context_file_bytes:40000,normal_file_bytes:20000,rows:[{path:'motion.mjs',bytes:20316,included:true,focused:false,reason:null},
+      {path:'engine.mjs',bytes:261240,chars:9800,included:true,focused:true,reason:null,in_parts:true,ranges:[[1,25],[300,360],[912,912]],lines:1500}]};
   else if(p==='/api/notes')data={notes:reviewNotes,counts:{},read_notes:true};
   else if(/^\/api\/plan\/milestones\/[^/]+\/expectations$/.test(p)){
     const id=p.split('/')[4],old=fixtureExpectations[id];
@@ -2119,13 +2119,13 @@ try{
     await page.getByRole('button',{name:'Author context',exact:true}).click();
     const context=page.getByRole('dialog',{name:'Author context'});await context.waitFor();
     const contextText=await context.innerText();
-    assert(contextText.includes('Other files over 20000 bytes are still shown, up to the same size, when the source budget has room after the rest'),contextText);
+    assert(contextText.includes('Other files over 20000 bytes are still shown, up to 40000 bytes, when the source budget has room after the rest; a file a step names, or one you prioritize, is shown whole up to 160000 bytes'),contextText);
     assert(!contextText.includes('retain the'),contextText);
     assert(!contextText.includes('cannot be shown'),contextText);                // nothing to warn about yet
     // A file over its limit is shown in parts, and the drawer says which lines (journey J11-B15, DD)
     assert(contextText.includes('2 files included (1 in parts)'),contextText);
-    assert(contextText.includes('engine.mjs')&&contextText.includes('61240 bytes · shown in parts: lines 1–25, 300–360, 912 of 1500 · prioritized'),contextText);
-    assert(contextText.includes('A file over 40000 bytes, or one the budget cannot hold whole, is shown in parts')&&contextText.includes('(here for “Camera follows the subject”)'),contextText);
+    assert(contextText.includes('engine.mjs')&&contextText.includes('261240 bytes · shown in parts: lines 1–25, 300–360, 912 of 1500 · prioritized'),contextText);
+    assert(contextText.includes('A file over 160000 bytes, or one the budget cannot hold whole, is shown in parts')&&contextText.includes('(here for “Camera follows the subject”)'),contextText);
     assert(contextText.includes('20316 bytes · included'),contextText);          // a whole file is still just included
     await context.getByRole('button',{name:'Close'}).click();await context.waitFor({state:'hidden'});
     // A prioritized file that cannot be shown is named, with its remedy (review: the callout only said "some files")

@@ -47,7 +47,7 @@ def test_unseen_replacements_refused(tmp_path):
 
 def test_a_file_no_part_of_which_can_be_shown_is_refused_in_plain_words(tmp_path):
     ws = planned(tmp_path)
-    (tmp_path/'wide.py').write_text('x = 1; '*6000)         # one line of 42,000 characters: too long to quote, so no part shows it
+    (tmp_path/'wide.py').write_text('x = 1; '*23000)        # one line of 161,000 characters: over the cap, too long to quote, so no part shows it
     scripted(ws, [{'title':'Blind edit','files':[{'path':'wide.py','content':'x = 2'}]}], roles=('plan',))
     with pytest.raises(PlannerUnavailable, match='wide.py is too large to show a model, even in parts'):
         draft_files(ws, ws.router())
@@ -397,7 +397,7 @@ def test_a_file_that_can_never_be_shown_is_an_ordinary_refusal_that_says_what_to
             assert "path" not in refused.value.feedback and refused.value.feedback["not_shown"] == name
 
 
-def test_a_file_the_budget_left_out_is_a_gap_the_owner_can_close(tmp_path):
+def test_a_file_the_budget_left_out_is_a_gap_the_owner_can_close(tmp_path, old_caps):
     # Journey J11-B15: the other files filled the source budget; prioritizing the file shows it, so such a refusal
     # uses up no try.
     from runesmith.app.snapshots import collect_snapshot
@@ -484,7 +484,7 @@ def tries_used(ws):
     return ordinary_allowance(ws, contract, source_context(ws)["snapshot_digest"])["used"]
 
 
-def test_a_build_refused_for_an_unshown_file_uses_no_try_and_shows_it_in_the_next_round(tmp_path):
+def test_a_build_refused_for_an_unshown_file_uses_no_try_and_shows_it_in_the_next_round(tmp_path, old_caps):
     # Journey J11-B15, end to end: no try used; the next round shows the file (it is wanted: the owner is not needed, and
     # a source change no longer makes another call that is refused the same way), and its edit is judged like any other.
     from runesmith.app.building import build_step
@@ -499,7 +499,7 @@ def test_a_build_refused_for_an_unshown_file_uses_no_try_and_shows_it_in_the_nex
     assert len(calls) == 2 and tries_used(ws) == 1
 
 
-def test_a_draft_that_waits_is_checked_although_an_older_answer_was_refused_for_an_unshown_file(tmp_path):
+def test_a_draft_that_waits_is_checked_although_an_older_answer_was_refused_for_an_unshown_file(tmp_path, old_caps):
     # Review of J11-B15: the stale refusal was looked at before the waiting draft, so a draft the owner made on the
     # same source was never checked.
     from runesmith.app.building import build_step
@@ -515,7 +515,7 @@ def test_a_draft_that_waits_is_checked_although_an_older_answer_was_refused_for_
     assert result["draft"] == waiting["id"] and "verification" in result and "not shown" not in result["summary"]
 
 
-def test_the_one_more_try_refused_for_an_unshown_file_is_not_used_up(tmp_path):
+def test_the_one_more_try_refused_for_an_unshown_file_is_not_used_up(tmp_path, old_caps):
     # Review of J11-B15: escalate_build recorded such a refusal as a used "failed" try.
     import json as _json
     import uuid
@@ -539,7 +539,7 @@ def test_the_one_more_try_refused_for_an_unshown_file_is_not_used_up(tmp_path):
     assert state["eligible"] and not state["used"]
 
 
-def test_a_correction_refused_for_an_unshown_file_is_not_counted(tmp_path):
+def test_a_correction_refused_for_an_unshown_file_is_not_counted(tmp_path, old_caps):
     # Review of J11-B15: the refusal was recorded as "refused" and spent one of the two corrections.
     import json as _json
     from runesmith.app.build_corrections import _corrections, correct_rejected_answer, correction_candidates
@@ -571,7 +571,7 @@ def marked(root):
         (root / name).write_bytes(f"// {name}\n".encode() + b"// y\n" * 7790)
 
 
-def test_files_that_cannot_be_shown_together_are_no_gap_the_owner_can_close(tmp_path):
+def test_files_that_cannot_be_shown_together_are_no_gap_the_owner_can_close(tmp_path, old_caps):
     # Review of J11-B15: each time the owner prioritized the file named, another became the gap, until Author context
     # refused the whole list; the milestone then waited forever, and used no try, so no replan was ever asked. With
     # parts (DD) it takes four files of this size: one whole, two in the 9,000 characters left, none for the fourth.
@@ -598,7 +598,7 @@ def test_files_that_cannot_be_shown_together_are_no_gap_the_owner_can_close(tmp_
     assert build_step(ws2, ws2.router(), author_only=True)["draft"] and tries_used(ws2) == 1
 
 
-def test_a_retained_candidate_file_that_is_no_longer_shown_is_the_same_uncounted_gap(tmp_path):
+def test_a_retained_candidate_file_that_is_no_longer_shown_is_the_same_uncounted_gap(tmp_path, old_caps):
     # Review of J11-B15: an answer that edits only one file of a candidate retains the others; one the budget no longer
     # shows was refused as a counted failed try with no remedy, where an edit to it is an uncounted gap.
     import json as _json
@@ -643,7 +643,7 @@ def tries_of(ws, milestone_id):
     return ordinary_allowance(ws, milestone_contract(ws, milestone), source_context(ws)["snapshot_digest"])["used"]
 
 
-def test_a_prioritized_file_that_outgrows_the_limit_is_shown_in_parts_and_still_changeable(tmp_path):
+def test_a_prioritized_file_that_outgrows_the_limit_is_shown_in_parts_and_still_changeable(tmp_path, old_caps):
     # Journey J11-B15, with excerpts: the owner prioritized motion.mjs as the remedy said and it grew past 40,000 bytes;
     # it was an omitted file that no milestone could change. It is shown in parts now, and an edit inside a shown part
     # is admitted, with a try used only where a model answered.
@@ -664,7 +664,7 @@ def test_a_prioritized_file_that_outgrows_the_limit_is_shown_in_parts_and_still_
     assert draft["shown_files"] == ["other.py"] or "motion.mjs" not in draft["shown_files"]
 
 
-def test_a_prioritized_file_no_part_of_which_can_be_shown_blocks_only_the_milestones_that_edit_it(tmp_path):
+def test_a_prioritized_file_no_part_of_which_can_be_shown_blocks_only_the_milestones_that_edit_it(tmp_path, old_caps):
     # Review of J11-B15 (verification round): the owner prioritized motion.mjs as the remedy said, it became a file no
     # part of which can be shown (here one line too long to quote), and every milestone was blocked, also the ones that
     # never touch it. It is an omitted file: a milestone that edits it is refused in words naming it, and no try is used
@@ -773,7 +773,7 @@ def test_the_lineage_guard_counts_only_the_candidate_a_build_would_revise(tmp_pa
     assert guarded == [draft["id"]]                                          # hidden from the prompt: not counted
 
 
-def test_another_file_that_can_never_be_shown_is_named_instead_of_the_budget(tmp_path):
+def test_another_file_that_can_never_be_shown_is_named_instead_of_the_budget(tmp_path, old_caps):
     # Review of J11-B15 (fresh review): "do not fit the source budget together" was said when another file the answer
     # edits was over the size limit, whichever file came first in the answer; the real obstacle was that file.
     from runesmith.app.planner import admit_answer_files
@@ -808,7 +808,7 @@ def test_the_used_up_summary_and_the_breakdown_packet_name_the_file_no_model_can
         with pytest.raises(PlannerUnavailable, match="zbig.js is too large to show a model"):
             build_step(ws, router)
     result = build_step(ws, router)
-    assert result["replan_needed"] and "The cause: zbig.js is too large to show a model (40,000 bytes at most)" in result["summary"]
-    assert "split it first" in result["cause"] and "smaller steps that edit it fail the same way" in result["cause"]
+    assert result["replan_needed"] and "The cause: zbig.js is too large to show a model, even in parts (over 160,000 bytes" in result["summary"]
+    assert "split it first, yourself" in result["cause"] and "smaller steps that edit it fail the same way" in result["cause"]
     packet = input_packet(ws, "m1")
     assert packet["files_no_model_can_see"] == {"zbig.js": "file_limit"} and "files_no_model_can_see" in packet["task"]

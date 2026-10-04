@@ -16,9 +16,14 @@ from runesmith.app.source_parts import (MIN_PART_CHARS, build_parts, check_range
                                         split_lines)
 from runesmith.app.workspace import MAX_DRAFT_FILE_BYTES, WorkspaceError, _now, _read_json, _write_json
 
-CONTEXT_CHARS = 48000
+CONTEXT_CHARS = 200000
 DEFAULT_FILE_BYTES = 20000
-FOCUSED_FILE_BYTES = 40000        # raised from 32000: motion.mjs reached 30,023 bytes and grows (journey J11-B15)
+# A file only there as context is shown whole up to this when the budget has room, and a file shown in parts gets at most
+# this many characters of them: the sizes before a file the milestone must change could be shown whole.
+CONTEXT_FILE_BYTES = 40000
+# A file the milestone must change (prioritized, or named by its words or its failed checks) is shown whole up to this: a
+# model may change only what it was shown, so a file it cannot see whole could only be changed in parts (or not at all).
+FOCUSED_FILE_BYTES = 160000
 MAX_FOCUS_PATHS = 12
 
 
@@ -67,13 +72,15 @@ def shown_view(context):
     return {'shown_files': sorted(context['files']), **({'shown_excerpts': parts} if parts else {})}
 
 
-def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, include_rows=False, terms=None,
+def select_context(ws, snapshot, limit=None, *, focus_paths=None, include_rows=False, terms=None,
                    parts_share=1.0, parts_reserve=0, parts=True):
     """The files a model is shown, for a budget of characters: whole where they fit their cap and the budget, else in
     parts (source_parts) when the budget has room for a useful excerpt. `terms` (the milestone's words, from
     planner.milestone_terms) choose the excerpts; `parts_share` bounds how much of the budget one file's parts may take;
     `parts_reserve` holds that many characters back from the whole files when some file needs parts, so a small
     budget (the Checker's) is not all spent on small files before the program is reached; `parts=False` leaves such a file out, as a retained selection that was recorded without parts does."""
+    if limit is None:
+        limit = CONTEXT_CHARS
     if type(limit) is not int or not 0 <= limit <= CONTEXT_CHARS:
         raise WorkspaceError(f'Author source budget must be between 0 and {CONTEXT_CHARS} characters.')
     paths = focus_settings(ws)['paths'] if focus_paths is None else focus_paths
@@ -86,11 +93,12 @@ def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, inclu
     # `wanted` words: a gap closes itself in the next round), then the rest (journey J11-B15, review of the merged batch:
     # a named module was crowded out by the prioritized program's parts and the milestone waited for good).
     rest = [p for p in inventory[:2000] if p not in paths]
-    named = {p for p in rest if named_in(terms.get('text'), p) or p in (terms.get('wanted') or ())}
+    named = {p for p in rest if named_in(terms.get('text'), p) or named_in(terms.get('checks'), p)
+             or p in (terms.get('wanted') or ())}
     order = [p for p in paths if p in visible] + [p for p in rest if p in named] + [p for p in rest if p not in named]
     files, hashes, omitted, reasons, rows, used = {}, {}, [], {}, [], 0
     shown_parts, deferred, row_of, texts = {}, [], {}, {}
-    part_cap = min(FOCUSED_FILE_BYTES, max(MIN_PART_CHARS, int(limit * parts_share)))
+    part_cap = min(CONTEXT_FILE_BYTES, max(MIN_PART_CHARS, int(limit * parts_share)))
 
     def in_parts(rel, budget):
         """Why the file cannot be shown in parts (None when it was): no room for a useful excerpt, or no line short enough."""
@@ -117,10 +125,13 @@ def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, inclu
             part = shown_parts[rel]
             row.update(chars=part['chars'], in_parts=True, ranges=part['ranges'], lines=part['lines'])
         row.update(included=reason is None, reason=reason)
-    # A file over the normal cap, up to the prioritized cap, is shown after the others when the budget has room (journey
-    # J11-B15: motion.mjs grew to 20,316 bytes, was never shown again, and every build that edited it was refused).
-    larger = [rel for rel in order if rel not in paths and DEFAULT_FILE_BYTES < len(snapshot['files'][rel]) <= FOCUSED_FILE_BYTES]
-    caps = {rel: FOCUSED_FILE_BYTES if rel in paths or rel in larger else DEFAULT_FILE_BYTES for rel in order}
+    # A file over the normal cap, up to the context cap, is shown after the others when the budget has room (journey
+    # J11-B15: motion.mjs grew to 20,316 bytes, was never shown again, and every build that edited it was refused). A
+    # file the milestone must change, prioritized or named, is shown whole up to the larger cap.
+    must = set(paths) | named
+    larger = [rel for rel in order if rel not in must and DEFAULT_FILE_BYTES < len(snapshot['files'][rel]) <= CONTEXT_FILE_BYTES]
+    caps = {rel: FOCUSED_FILE_BYTES if rel in must else CONTEXT_FILE_BYTES if rel in larger else DEFAULT_FILE_BYTES
+            for rel in order}
     whole_limit = limit - min(parts_reserve, limit) if parts and any(
         len(snapshot['files'][rel]) > min(caps[rel], limit) for rel in order) else limit
     # Room kept for the other files before a prioritized file's parts take the rest: the small files and the named ones,
@@ -143,7 +154,7 @@ def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, inclu
             row_of[rel].update(included=True)
             continue
         if reason is None and not parts:
-            reason = 'file_limit' if len(data) > cap else 'packet_budget'
+            reason = 'file_limit' if len(data) > FOCUSED_FILE_BYTES else 'packet_budget'      # prioritizing it shows it whole
         elif reason is None:
             # Over its cap, or the budget cannot hold it whole: shown in parts instead of not at all (journey J11-B15,
             # B16). A prioritized file is shown at once, so it keeps its place at the front of the budget; the others
@@ -174,7 +185,7 @@ def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, inclu
     return _context(files, hashes, snapshot, inventory, omitted, shown_parts,
         focus_paths=list(paths), focus_errors=focus_errors, omission_reasons=reasons,
         selection={'budget_chars': limit, 'used_chars': used, 'normal_file_bytes': DEFAULT_FILE_BYTES,
-                   'focused_file_bytes': FOCUSED_FILE_BYTES, 'max_focus_paths': MAX_FOCUS_PATHS,
+                   'context_file_bytes': CONTEXT_FILE_BYTES, 'focused_file_bytes': FOCUSED_FILE_BYTES, 'max_focus_paths': MAX_FOCUS_PATHS,
                    **({'rows': rows} if include_rows else {})})
 
 

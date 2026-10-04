@@ -870,7 +870,7 @@ def test_the_owners_button_and_the_setting_give_the_one_more_try_to_the_same_mil
 
 # -- #8: a refusal for a file no model is shown is not paid for again ---------------------------------------------------
 
-def test_the_setting_does_not_pay_again_for_a_one_more_try_refused_for_an_unshown_file(tmp_path):
+def test_the_setting_does_not_pay_again_for_a_one_more_try_refused_for_an_unshown_file(tmp_path, old_caps):
     # Review of batch EE: such a refusal is not counted as used, so the schedule asked again every other step, a fresh
     # paid call each time, and never reached the split.
     from test_build_context import EDIT_HUGE, counting, gap_project
@@ -897,7 +897,7 @@ def test_the_setting_does_not_pay_again_for_a_one_more_try_refused_for_an_unshow
     assert worker.scheduled_job() == ("escalate", {"milestone_id": "m1"})
 
 
-def test_a_milestone_whose_try_waits_for_a_file_does_not_hold_back_the_next_one(tmp_path, monkeypatch):
+def test_a_milestone_whose_try_waits_for_a_file_does_not_hold_back_the_next_one(tmp_path, monkeypatch, old_caps):
     from test_build_context import EDIT_HUGE, gap_project
     from runesmith.app.building import escalate_build
     from runesmith.app.planner import PlannerUnavailable
