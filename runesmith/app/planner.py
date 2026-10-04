@@ -671,6 +671,20 @@ def _rotate_repeating_author(ws, router, contract) -> list[str] | None:
     return stuck
 
 
+DRAFT_TOKENS, REVISION_TOKENS, MAX_DRAFT_TOKENS = 12000, 4000, 64000
+
+
+def draft_answer_tokens(context, explicit_revision=False) -> int:
+    """Room for the answer: a draft holds whole files, so a large file shown whole needs room to come back whole
+    (journey J11: a 40,179-byte file came back truncated at 12,000 tokens on every route). About 0.4 tokens per
+    character (code plus JSON escaping) of the largest file shown whole, plus a margin; never below the old budgets,
+    never above what large models answer in one call."""
+    base = REVISION_TOKENS if explicit_revision else DRAFT_TOKENS
+    files = context.get('files') if isinstance(context, dict) else None
+    largest = max((len(text) for text in files.values() if isinstance(text, str)), default=0) if isinstance(files, dict) else 0
+    return min(MAX_DRAFT_TOKENS, max(base, int(largest * 0.4) + 3000))
+
+
 def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_tokens: int, receipt_out: dict | None = None):
     try:
         outcome = router.call("plan", prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
@@ -1358,8 +1372,8 @@ def draft_files(ws, router, milestone_id: str | None = None, *, revision=None, a
     if not explicit_revision:
         _rotate_repeating_author(ws, router, contract)
     answered: dict[str, Any] = {}
-    data, by = _call(ws, router, prompt, DRAFT_SYSTEM, DRAFT_SCHEMA, request_key, 4000 if explicit_revision else 12000,
-                     receipt_out=answered)
+    data, by = _call(ws, router, prompt, DRAFT_SYSTEM, DRAFT_SCHEMA, request_key,
+                     draft_answer_tokens(context, explicit_revision), receipt_out=answered)
     _write_json(exposure_path, dict(exposure, state='answer_received', author=by))
     try:
         return admit_packet(ws,packet,data,by,receipt=answered or None,admission_guard=admission_guard)

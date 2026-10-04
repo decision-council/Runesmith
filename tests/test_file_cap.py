@@ -199,3 +199,14 @@ def test_a_model_whose_window_is_too_small_is_turned_away_before_the_call_and_th
     assert draft['files'][0]['content'] == text.replace(EDIT['old_text'], EDIT['new_text'])
     assert len(large.requests) == 1 and len(large.requests[0]['prompt']) > 90_000          # it was shown the whole file
     assert tries_used(ws) == 1                                                             # the one answer, none for the refusal
+
+
+def test_a_large_file_shown_whole_gets_room_to_come_back_whole():
+    # Journey J11: a 40,179-byte file came back truncated at 12,000 tokens on every route.
+    from runesmith.app.planner import draft_answer_tokens, DRAFT_TOKENS, REVISION_TOKENS, MAX_DRAFT_TOKENS
+    small = {"files": {"a.py": "x = 1\n"}}
+    large = {"files": {"motion.mjs": "y" * 40179, "a.py": "x = 1\n"}}
+    huge = {"files": {"big.js": "z" * 400000}}
+    assert draft_answer_tokens(small) == DRAFT_TOKENS and draft_answer_tokens(small, True) == REVISION_TOKENS
+    assert draft_answer_tokens(large) >= 16000 and draft_answer_tokens(large, True) >= 16000
+    assert draft_answer_tokens(huge) == MAX_DRAFT_TOKENS and draft_answer_tokens(None) == DRAFT_TOKENS
