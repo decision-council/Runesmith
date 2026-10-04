@@ -1,7 +1,7 @@
 // Genesis: the opening sequence. It explains Runesmith in seven short scenes, then asks what you will create.
 // First boot: it uses the real folder and ends with naming it. Cinema mode (/cinema): demo data, loops, shareable.
 import { h, icon, get, post } from './core.js';
-import { iconSvg, LOGO } from './icons.js';
+import { iconSvg, logoMark, wordmark } from './icons.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const CX = 800, CY = 360;
@@ -17,7 +17,7 @@ function S(tag, attrs = {}, parent) {
 function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const EMBER = '#ff8a3d', GOLD = '#ffb547', RUNE = '#22d3c5', STEEL = '#8ea0c4';
+const EMBER = '#ff8a3d', GOLD = '#e8b04a', RUNE = '#f8dc94', STEEL = '#8ea0c4';
 
 const KERNEL_DEMO = ['canon', 'ledger', 'instruments', 'sandbox', 'organ_child', 'oslimits', 'generations', 'loop', 'opportunity', 'objects/code', 'discover',
   'envmap', 'selfmap', 'kaizen/improve', 'kaizen/trial', 'kaizen/attention', 'kaizen/diagnose', 'kaizen/affordances', 'share', 'proposals', 'memory', 'notes',
@@ -78,7 +78,7 @@ class Genesis {
     this.caption = h('div.g-caption', h('div.t'), h('div.s'), h('div.fine'));
     this.dots = h('div.g-dots');
     this.top = h('div.g-top');
-    this.el.append(...[this.starSvg, this.svg, h('div.g-brand', h('span', { html: LOGO }), 'RUNESMITH'), this.top, this.caption, this.dots,
+    this.el.append(...[this.starSvg, this.svg, h('div.g-brand', h('span.mk', { html: logoMark() }), h('span.wm', { html: wordmark() })), this.top, this.caption, this.dots,
       embedded ? null : h('div.hint', cinema ? 'Space: next · F: full screen' : 'Space or → to skip ahead')].filter(Boolean));   // DOM append would print "null"
     if (embedded) this.el.classList.add('embedded');
     this.root = root;
@@ -129,7 +129,7 @@ class Genesis {
   defs() {
     const d = S('defs', {}, this.svg);
     const rg = S('radialGradient', { id: 'g-ember', r: '60%' }, d);
-    S('stop', { offset: '0', 'stop-color': '#fff3d6' }, rg); S('stop', { offset: '.35', 'stop-color': GOLD }, rg); S('stop', { offset: '.75', 'stop-color': EMBER }, rg); S('stop', { offset: '1', 'stop-color': '#ff4d5e' }, rg);
+    S('stop', { offset: '0', 'stop-color': '#fff3d6' }, rg); S('stop', { offset: '.35', 'stop-color': GOLD }, rg); S('stop', { offset: '.75', 'stop-color': EMBER }, rg); S('stop', { offset: '1', 'stop-color': '#c58a34' }, rg);
     const halo = S('radialGradient', { id: 'g-halo', r: '50%' }, d);
     S('stop', { offset: '0', 'stop-color': EMBER, 'stop-opacity': '.55' }, halo); S('stop', { offset: '1', 'stop-color': EMBER, 'stop-opacity': '0' }, halo);
     const rh = S('radialGradient', { id: 'g-rune-halo', r: '50%' }, d);
@@ -194,7 +194,7 @@ class Genesis {
     const holder = S('g', { transform: `translate(${x - size / 2},${y - size / 2})` }, parent);
     const inner = S('g', { class: cls }, holder);
     const t = document.createElement('template');
-    t.innerHTML = LOGO.replace('<svg ', `<svg width="${size}" height="${size}" `);
+    t.innerHTML = logoMark({ forge: true }).replace('<svg ', `<svg width="${size}" height="${size}" `);
     inner.appendChild(document.importNode(t.content.firstChild, true));
     return holder;
   }
@@ -315,7 +315,7 @@ class Genesis {
     });
     S('circle', { cx: CX, cy: CY, r: 118, fill: '#0b0f19', stroke: 'rgba(255,255,255,.08)' }, l);
     S('circle', { cx: CX, cy: CY, r: 70, fill: 'url(#g-ember)', class: 'breathe', style: 'animation-delay:1.2s' }, l);
-    S('text', { x: CX, y: CY + 6, 'text-anchor': 'middle', fill: '#1b0c03', 'font-size': 17, 'font-weight': 800, text: 'organs' }, l);
+    S('text', { x: CX, y: CY + 6, 'text-anchor': 'middle', fill: '#0b0e14', 'font-size': 17, 'font-weight': 800, text: 'organs' }, l);
     S('text', { x: CX, y: CY - 262, 'text-anchor': 'middle', fill: RUNE, 'font-size': 13, 'letter-spacing': 4, text: `KERNEL · ${N} MODULES · FIXED`, class: 'fade-in' }, l);
     this.fit(l, [CX - 330, CY - 280, CX + 330, CY + 270], 1.4);
     this.say('…and it maps itself.', 'A fixed kernel keeps the rules: budgets, judges, a tamper-evident ledger. Living organs do the work, and only they may change. Every capability is measured, or marked unknown.');
@@ -358,10 +358,10 @@ class Genesis {
       S('path', { d: `M${root[0] + 30} ${root[1]} C ${root[0] + 150} ${root[1]}, ${x - 150} ${y}, ${x - 26} ${y}`, stroke: win ? EMBER : 'rgba(255,255,255,.25)', 'stroke-width': win ? 2.4 : 1.4, fill: 'none', class: 'draw', style: `--len:420;animation-delay:${d}ms` }, l);
       const g = S('g', { class: 'pop', style: `animation-delay:${d + 700}ms` }, l);
       S('circle', { cx: x, cy: y, r: 24, fill: win ? 'url(#g-ember)' : '#101626', stroke: win ? GOLD : 'rgba(255,255,255,.3)', 'stroke-width': 1.6 }, g);
-      S('text', { x, y: y + 5, 'text-anchor': 'middle', fill: win ? '#1b0c03' : '#8a95b0', 'font-size': 13, 'font-weight': 800, text: win ? 'C7' : `c${i + 1}` }, g);
+      S('text', { x, y: y + 5, 'text-anchor': 'middle', fill: win ? '#0b0e14' : '#8a95b0', 'font-size': 13, 'font-weight': 800, text: win ? 'C7' : `c${i + 1}` }, g);
       if (!win) {
         const x2 = S('g', { class: 'pop', style: `animation-delay:${d + 1500}ms` }, l);
-        S('path', { d: `M${x + 30} ${y - 8} l16 16 M${x + 46} ${y - 8} l-16 16`, stroke: '#ef4444', 'stroke-width': 2.4, 'stroke-linecap': 'round' }, x2);
+        S('path', { d: `M${x + 30} ${y - 8} l16 16 M${x + 46} ${y - 8} l-16 16`, stroke: '#ff5a4f', 'stroke-width': 2.4, 'stroke-linecap': 'round' }, x2);
       }
     });
     // the sealed test: two bars
@@ -426,7 +426,7 @@ class Genesis {
     // Space skips ahead in the intro; pressed once too often it must not type leading spaces into the name (J3-F3).
     name.addEventListener('keydown', (e) => { if (e.key === ' ' && !name.value.trim()) { e.preventDefault(); name.value = ''; } });
     const go = h('button.go', { type: 'submit' }, icon('flame'), 'Forge it');
-    const form = h('form', h('div.sigil', { html: LOGO }), h('h2', 'What will you create?'), h('p.lead', 'Give it a name. Describe it if you like, or leave that for later.'), name, desc, types, go,
+    const form = h('form', h('div.sigil', { html: logoMark({ forge: true }) }), h('h2', 'What will you create?'), h('p.lead', 'Give it a name. Describe it if you like, or leave that for later.'), name, desc, types, go,
       this.cinema ? null : h('button.skip', { type: 'button', onclick: () => this.complete('', '', type, true) }, 'Skip for now'),
       h('div.where', this.cinema ? 'runesmith · open source · any model · evidence first' : `in ${info.path}`));
     const pane = h('div.g-name', form);

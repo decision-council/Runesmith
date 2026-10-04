@@ -84,9 +84,37 @@ export function iconSvg(name, cls = '') {
   return `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 }
 
-export const LOGO = `<svg viewBox="0 0 64 64" aria-hidden="true"><defs>
-<linearGradient id="lg-ember" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb547"/><stop offset=".55" stop-color="#ff7a30"/><stop offset="1" stop-color="#ff4d5e"/></linearGradient></defs>
-<path d="M32 3l25 14.5v29L32 61 7 46.5v-29z" fill="url(#lg-ember)"/>
-<path d="M32 9.5l19.5 11.3v22.4L32 54.5 12.5 43.2V20.8z" fill="#0b0f17" opacity=".9"/>
-<path d="M27 19v26M27 19h8.5a6.5 6.5 0 0 1 0 13H27l11.5 13" fill="none" stroke="url(#lg-ember)" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
-<circle cx="45.5" cy="18.5" r="2.4" fill="#22d3c5"/></svg>`;
+// The Runesmith mark: a gold stone block with the rune carved through it, its leg breaking out of the bottom edge.
+// Every call returns a self-contained SVG with its own gradient ids, so many copies can share a page whether or
+// not the first one is visible. { forge: true } fills the carved rune with the dark slate and the heat of the forge.
+const MARK_STONE = 'M38 6L82 6C107.6 6 114 12.4 114 38L114 82C114 107.6 107.6 114 82 114L80.9 114L51.9 85L84.9 52L51.9 19L35 19L35 101.9L49 101.9L61.1 114L38 114C12.4 114 6 107.6 6 82L6 38C6 12.4 12.4 6 38 6ZM49 35.9L65.1 52 49 68.1Z';
+const MARK_RUNE = 'M80.9 114 51.9 85 84.9 52 51.9 19 35 19 35 101.9 49 101.9 61.1 114Z';
+let markCount = 0;
+export function logoMark({ forge = false } = {}) {
+  const k = `rsm${++markCount}`;
+  return `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><defs>` +
+    `<linearGradient id="${k}g" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#f8dc94"/><stop offset="0.45" stop-color="#e8b04a"/><stop offset="1" stop-color="#c58a34"/></linearGradient>` +
+    (forge ? `<linearGradient id="${k}d" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d2230"/><stop offset="1" stop-color="#0b0e14"/></linearGradient>` +
+      `<radialGradient id="${k}h" cx="0.55" cy="1" r="0.75"><stop offset="0" stop-color="#ff8a3d" stop-opacity="0.85"/><stop offset="0.45" stop-color="#ff6a1f" stop-opacity="0.25"/><stop offset="1" stop-color="#ff6a1f" stop-opacity="0"/></radialGradient>` : '') +
+    `</defs>` +
+    (forge ? `<path fill="url(#${k}d)" d="${MARK_RUNE}"/><path fill="url(#${k}h)" d="${MARK_RUNE}"/>` : '') +
+    `<path fill="url(#${k}g)" d="${MARK_STONE}"/></svg>`;
+}
+
+// The static mark: the public site's bundle (scripts/build_site.py) reads this one.
+export const LOGO = logoMark({ forge: true });
+
+// The wordmark, cut without curves ("runes were cut"); it takes the text colour of its parent.
+let wordCount = 0;
+export function wordmark() {
+  const k = `rsw${++wordCount}`;
+  return `<svg viewBox="0 0 746 100" role="img" aria-label="Runesmith" focusable="false"><g fill="currentColor"><clipPath id="${k}"><rect x="-1" y="0" width="748" height="100"/></clipPath><g clip-path="url(#${k})">` +
+    '<path fill-rule="evenodd" d="M0 0L27 0 57 30 27 60 67 100 45.79 100 15 69.21 15 100 0 100ZM15 15L20.79 15 35.79 30 15 50.79Z"/>' +
+    '<path d="M91 0L91 83.61 107.39 100 140.61 100 157 83.61 157 0 142 0 142 77.39 134.39 85 113.61 85 106 77.39 106 0Z"/>' +
+    '<path d="M181 0L196 0 196 100 181 100Z"/><path d="M232 0L247 0 247 100 232 100Z"/><path d="M181 0L197.72 0 247 100 230.28 100Z"/>' +
+    '<path d="M331 0L271 0 271 100 331 100 331 85 286 85 286 15 331 15Z"/><path d="M278.5 42.5L325 42.5 325 57.5 278.5 57.5Z"/>' +
+    '<path d="M417 0L369.39 0 355 14.39 355 43.11 369.39 57.5 396.39 57.5 402 63.11 402 79.39 396.39 85 355 85 355 100 402.61 100 417 85.61 417 56.89 402.61 42.5 375.61 42.5 370 36.89 370 20.61 375.61 15 417 15Z"/>' +
+    '<path d="M441 0L456 0 456 100 441 100Z"/><path d="M510 0L525 0 525 100 510 100Z"/><path d="M441.59 -9.09L483 89.34 524.41 -9.09 510.59 -14.91 483 50.66 455.41 -14.91Z"/>' +
+    '<path d="M549 0L564 0 564 100 549 100Z"/><path d="M588 0L656 0 656 15 588 15Z"/><path d="M614.5 0L629.5 0 629.5 100 614.5 100Z"/>' +
+    '<path d="M680 0L695 0 695 100 680 100Z"/><path d="M731 0L746 0 746 100 731 100Z"/><path d="M695 42.5L731 42.5 731 57.5 695 57.5Z"/></g></g></svg>';
+}

@@ -133,7 +133,7 @@ export function worstBand(bands) {
   if (!known.length) return 'unknown';
   return known.sort((a, b) => order.indexOf(a) - order.indexOf(b))[0];
 }
-export const BAND_COLOR = { bad: '#ef4444', minimal: '#f5a524', optimal: '#22c55e', world_class: '#8b6cff', unknown: '#8a94ab' };
+export const BAND_COLOR = { bad: '#ff5a4f', minimal: '#e8b04a', optimal: '#5fd3a0', world_class: '#8b6cff', unknown: '#8f8a82' };
 
 // ------------------------------------------------------------ toast/modal --
 export function toast(text, kind = 'info', ms = 4200) {

@@ -171,8 +171,8 @@ async function environmentLens(body, ctx) {
     const wsName = ctx.app.state?.workspace?.name || 'Workspace';
     let s = `<svg class="map" viewBox="${-W / 2} ${top} ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" role="group"
       aria-label="${esc(`Map of ${wsName}: ${others.length} object${others.length === 1 ? '' : 's'} around the workspace. Tab to one and press Enter for its details.`)}">
-      <defs><radialGradient id="hubg" cx="50%" cy="40%" r="70%"><stop offset="0" stop-color="#ffb547"/><stop offset=".6" stop-color="#ff7a30"/><stop offset="1" stop-color="#ff4d5e"/></radialGradient>
-      <radialGradient id="halo" r="50%"><stop offset="0" stop-color="#ff7a30" stop-opacity=".35"/><stop offset="1" stop-color="#ff7a30" stop-opacity="0"/></radialGradient></defs><g class="pz">`;
+      <defs><radialGradient id="hubg" cx="50%" cy="40%" r="70%"><stop offset="0" stop-color="#f8dc94"/><stop offset=".6" stop-color="#e8b04a"/><stop offset="1" stop-color="#c58a34"/></radialGradient>
+      <radialGradient id="halo" r="50%"><stop offset="0" stop-color="#e8b04a" stop-opacity=".35"/><stop offset="1" stop-color="#e8b04a" stop-opacity="0"/></radialGradient></defs><g class="pz">`;
     for (const k of scales) s += `<ellipse cx="0" cy="0" rx="${RING_X * k}" ry="${RING_Y * k}" fill="none" stroke="var(--line)" stroke-dasharray="3 7"/>`;
     if (!others.length) s += `<ellipse cx="0" cy="0" rx="270" ry="165" fill="none" stroke="var(--line-2)" stroke-dasharray="4 9"/>`;
     if (narrow && placed.length) s += `<path class="edge" d="M0 70 L0 ${placed[placed.length - 1].y}" stroke="var(--line-2)"/>`;   // one spine
@@ -185,9 +185,9 @@ async function environmentLens(body, ctx) {
     }
     s += `<circle r="120" fill="url(#halo)"/>`;
     s += `<g class="node${selected === '__hub' ? ' sel' : ''}" data-name="__hub" data-note="workspace|root" data-note-label="the whole workspace" tabindex="0" role="button"
-      aria-label="${esc(`${wsName}, the whole workspace: ${facts.empty ? 'an empty folder' : `${facts.files ?? 0} files`}`)}"><circle class="halo" r="84" fill="none" stroke="#ff7a30" stroke-opacity=".35" stroke-width="8"/>
-      <path d="M0 -70 L60.6 -35 L60.6 35 L0 70 L-60.6 35 L-60.6 -35 Z" fill="url(#hubg)"/>
-      <path d="M0 -58 L50.2 -29 L50.2 29 L0 58 L-50.2 29 L-50.2 -29 Z" fill="var(--bg-1)"/>
+      aria-label="${esc(`${wsName}, the whole workspace: ${facts.empty ? 'an empty folder' : `${facts.files ?? 0} files`}`)}"><path class="halo" d="M-56 -86 L56 -86 L86 -56 L86 56 L56 86 L-56 86 L-86 56 L-86 -56 Z" fill="none" stroke="#e8b04a" stroke-opacity=".35" stroke-width="8"/>
+      <path d="M-42 -66 L42 -66 L66 -42 L66 42 L42 66 L-42 66 L-66 42 L-66 -42 Z" fill="url(#hubg)"/>
+      <path d="M-37.9 -56 L37.9 -56 L56 -37.9 L56 37.9 L37.9 56 L-37.9 56 L-56 37.9 L-56 -37.9 Z" fill="var(--bg-1)"/>
       ${hubMarkup(hubLines(ctx.app.state?.workspace?.name), facts)}</g>`;
     for (const p of placed) s += nodeMarkup(p, statuses[p.o.name], selected === p.o.name);
     s += `</g></svg>`;
@@ -240,14 +240,14 @@ export function nodeMarkup(p, status, sel) {
   const where = cut >= 0 ? `${o.name.slice(0, cut)} · ` : '';
   const sub = where + (o.kind === 'excluded' ? (o.reason === 'link' ? 'a link: not followed' : 'never touched')
     : o.next_rung ? `next: ${humanize(o.next_rung)}` : ladder.length ? 'every rung achieved' : k.label);
-  const stat = { green: ['#22c55e', 'tests pass'], failing: ['#ef4444', 'tests failing'], timed_out: ['#f5a524', 'tests timed out'],
-    unittest_passed: ['#f5a524', 'unittest subset passes'], probe_unavailable: ['#f5a524', 'test probe unavailable'],
-    error_without_failures: ['#f5a524', 'tests could not run'],
-    fix_applied: ['#22d3c5', 'a fix was applied: measure the tests to confirm'] }[status];
+  const stat = { green: ['#5fd3a0', 'tests pass'], failing: ['#ff5a4f', 'tests failing'], timed_out: ['#e8b04a', 'tests timed out'],
+    unittest_passed: ['#e8b04a', 'unittest subset passes'], probe_unavailable: ['#e8b04a', 'test probe unavailable'],
+    error_without_failures: ['#e8b04a', 'tests could not run'],
+    fix_applied: ['#f8dc94', 'a fix was applied: measure the tests to confirm'] }[status];
   let seg = '';
   const segW = ladder.length ? (w - 64) / ladder.length : 0;
   ladder.forEach((r, i) => {
-    const fill = r.status === 'achieved' ? '#22c55e' : r.status === 'not_achieved' ? '#f5a524' : 'var(--bg-4)';
+    const fill = r.status === 'achieved' ? '#5fd3a0' : r.status === 'not_achieved' ? '#e8b04a' : 'var(--bg-4)';
     seg += `<rect x="${-w / 2 + 54 + i * segW}" y="${hgt / 2 - 12}" width="${Math.max(2, segW - 3)}" height="4" rx="2" fill="${fill}" fill-opacity="${r.status === 'unknown' ? 1 : 0.9}"/>`;
   });
   const spoken = [`${o.name}: ${k.label}`, band !== 'unknown' && o.kind !== 'excluded' ? `${BAND_LABEL[band]} health` : '',
@@ -399,8 +399,8 @@ async function selfLens(body, ctx) {
     clear(wrap);
     const R1 = 190, R2 = 262, N = kernel.length;
     let s = `<svg class="map" viewBox="-560 -330 1120 660" xmlns="http://www.w3.org/2000/svg"><defs>
-      <radialGradient id="core" r="60%"><stop offset="0" stop-color="#ffb547"/><stop offset=".55" stop-color="#ff7a30"/><stop offset="1" stop-color="#ff4d5e"/></radialGradient>
-      <radialGradient id="coreHalo" r="50%"><stop offset="0" stop-color="#ff7a30" stop-opacity=".4"/><stop offset="1" stop-color="#ff7a30" stop-opacity="0"/></radialGradient></defs><g class="pz">`;
+      <radialGradient id="core" r="60%"><stop offset="0" stop-color="#f8dc94"/><stop offset=".55" stop-color="#e8b04a"/><stop offset="1" stop-color="#c58a34"/></radialGradient>
+      <radialGradient id="coreHalo" r="50%"><stop offset="0" stop-color="#e8b04a" stop-opacity=".4"/><stop offset="1" stop-color="#e8b04a" stop-opacity="0"/></radialGradient></defs><g class="pz">`;
     s += `<circle r="${R2 + 34}" fill="none" stroke="var(--line)" stroke-dasharray="2 8"><animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="140s" repeatCount="indefinite"/></circle>`;
     kernel.forEach((c, i) => {
       const a0 = (i / N) * Math.PI * 2 - Math.PI / 2 + 0.012, a1 = ((i + 1) / N) * Math.PI * 2 - Math.PI / 2 - 0.012;
@@ -416,7 +416,7 @@ async function selfLens(body, ctx) {
     organs.forEach((o, i) => {
       const a = (i / m) * Math.PI * 2 - Math.PI / 2;
       const x = Math.cos(a) * 64, y = Math.sin(a) * 64;
-      s += `<g class="node" data-kind="organ" data-name="${esc(o.path)}" data-note="organ|${esc(o.path)}" data-note-label="organ ${esc(o.path)}" transform="translate(${m === 1 ? 0 : x},${m === 1 ? -20 : y})"><circle r="${m === 1 ? 46 : 30}" fill="url(#core)"/><text text-anchor="middle" y="4" font-size="12" font-weight="700" fill="#1b0c03">${esc(o.path.replace('.py', ''))}</text><title>organ ${esc(o.path)} · ${o.lines} lines</title></g>`;
+      s += `<g class="node" data-kind="organ" data-name="${esc(o.path)}" data-note="organ|${esc(o.path)}" data-note-label="organ ${esc(o.path)}" transform="translate(${m === 1 ? 0 : x},${m === 1 ? -20 : y})"><circle r="${m === 1 ? 46 : 30}" fill="url(#core)"/><text text-anchor="middle" y="4" font-size="12" font-weight="700" fill="#0b0e14">${esc(o.path.replace('.py', ''))}</text><title>organ ${esc(o.path)} · ${o.lines} lines</title></g>`;
     });
     const gen = data.identity.active_generation || '';
     s += `<text text-anchor="middle" y="${m === 1 ? 50 : 104}" class="svg-muted" font-size="11.5">active generation</text><text text-anchor="middle" y="${m === 1 ? 68 : 120}" class="svg-text" font-size="13" font-weight="700">${esc(gen)}</text>`;
@@ -428,7 +428,7 @@ async function selfLens(body, ctx) {
       const y = -150 + i * 64, x = -470;
       const active = g.id === gen;
       s += `${i ? `<path d="M${x} ${y - 46} L${x} ${y - 16}" stroke="var(--line-2)" stroke-width="2"/>` : ''}
-        <g class="node" data-kind="generation" data-name="${esc(g.id)}" data-note="generation|${esc(g.id)}" data-note-label="${esc(g.id)}" transform="translate(${x},${y})"><circle r="14" fill="${active ? '#ff7a30' : 'var(--bg-3)'}" stroke="${active ? '#ffb547' : 'var(--line-2)'}" stroke-width="2"/>
+        <g class="node" data-kind="generation" data-name="${esc(g.id)}" data-note="generation|${esc(g.id)}" data-note-label="${esc(g.id)}" transform="translate(${x},${y})"><circle r="14" fill="${active ? '#ff8a3d' : 'var(--bg-3)'}" stroke="${active ? '#f8dc94' : 'var(--line-2)'}" stroke-width="2"/>
         <text x="24" y="-2" class="svg-text" font-size="12" font-weight="650">${esc(g.id.replace('gen-', ''))}</text><text x="24" y="13" class="svg-faint" font-size="10.5">${esc(trunc(g.label || '', 28))}</text><title>${esc(g.label || '')}</title></g>`;
     });
     if (lin.length) s += `<text x="-484" y="-190" class="svg-faint" font-size="11" letter-spacing="2">LINEAGE</text>`;
@@ -526,8 +526,8 @@ async function developmentLens(body, ctx) {
     if (lastDone > 0) s += `<path d="M${x0} ${y} L${laneW + lastDone * stepW} ${y}" stroke="${color}" stroke-width="4" stroke-linecap="round"/>`;
     lane.stations.forEach((st, j) => {
       const x = laneW + j * stepW;
-      const fill = st.status === 'achieved' ? color : st.status === 'active' ? '#ff7a30' : st.status === 'doing' ? 'var(--bg-2)' : 'var(--bg-2)';
-      const stroke = st.status === 'unknown' ? 'var(--text-3)' : st.status === 'not_achieved' ? '#f5a524' : st.status === 'dropped' ? 'var(--line-2)' : color;
+      const fill = st.status === 'achieved' ? color : st.status === 'active' ? '#ff8a3d' : st.status === 'doing' ? 'var(--bg-2)' : 'var(--bg-2)';
+      const stroke = st.status === 'unknown' ? 'var(--text-3)' : st.status === 'not_achieved' ? '#e8b04a' : st.status === 'dropped' ? 'var(--line-2)' : color;
       s += `<g class="node" data-lane="${i}" data-st="${j}" transform="translate(${x},${y})">${st.next || st.status === 'doing' ? `<circle r="17" fill="none" stroke="${color}" stroke-opacity=".45" stroke-width="5"><animate attributeName="r" values="14;19;14" dur="2.2s" repeatCount="indefinite"/></circle>` : ''}
         <circle r="10" fill="${fill}" stroke="${stroke}" stroke-width="2.5" ${st.status === 'unknown' ? 'stroke-dasharray="3 3"' : ''}/>
         ${st.status === 'achieved' || st.status === 'active' ? '<path d="M-4 0 L-1 3 L4 -3" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>' : ''}

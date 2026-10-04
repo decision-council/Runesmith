@@ -1,7 +1,7 @@
 // Overview: where things stand, what needs you, and what comes next.
 import { h, icon, get, post, bus, toast, commentable, ago, plural, KIND, worstBand, BAND_COLOR, BAND_LABEL, humanize,
   withBusy, clock, confirmDialog } from '../core.js';
-import { LOGO } from '../icons.js';
+import { logoMark } from '../icons.js';
 
 function greeting() {
   const hr = new Date().getHours();
@@ -133,7 +133,7 @@ export default async function render(root, { app, navigate, refreshState }) {
     line = 'Review enabled modes and their prerequisites before starting. A configured route is not a capacity test, and a saved work outcome is not proof that the project is complete.';
     cta = h('button.btn.primary.lg', { onclick: () => navigate('mission') }, icon('sliders'), 'Choose the next work mode');
   }
-  const hero = h('section.hero', h('div', { class: 'runes', html: LOGO }),
+  const hero = h('section.hero', h('div', { class: 'runes', html: logoMark({ forge: true }) }),
     h('div.small.faint', `${greeting()} · ${s.workspace.path}`),
     h('h2', s.workspace.name),
     h('p', line),
