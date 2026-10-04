@@ -115,7 +115,7 @@ export default async function render(root, ctx) {
       if (p.kind === 'milliner') fields.push(h('div.field', h('label', 'Milliner fallback models'), fallbacks,
         h('span.hint', 'Milliner tries this explicit chain after the primary fails. Only add free models here if this is a free-only fallback. Their quotas still apply.')));
       if (p.key !== 'none') fields.push(h('div.field', h('label', p.kind === 'milliner' ? 'Agent token' : 'API key'), h('div.row', key, showKey),
-        h('span.hint', 'Saved in this folder’s .runesmith/secrets.json, never in your project, never shown again.', p.key_url ? [' ', h('a', { href: p.key_url, target: '_blank', rel: 'noopener' }, 'Get a key')] : null)));
+        h('span.hint', 'Saved only in this folder’s .runesmith/secrets.json (not encrypted: keep that folder private), never shown again.', p.key_url ? [' ', h('a', { href: p.key_url, target: '_blank', rel: 'noopener' }, 'Get a key')] : null)));
       fields.push(h('div.field', h('label', 'Roles'), h('div.pillbox', roleBoxes.map((x) => x.el)), h('span.hint', 'Worker repairs code · Improver improves Runesmith itself · Planner drafts plans and first files · Checker proposes acceptance checks (a few calls that decide what “done” means: your best model pays off here).')));
       if (p.kind === 'manual') fields.push(h('div.callout', icon('chat'), h('div', 'Requests appear here and in the top bar. Copy the whole packet into your chat, then paste its reply back. Useful for Planner/Improver work; every call requires a person to relay it. Keep Studio running while waiting. Saving this instrument does not make a model call.')));
       if (p.setup) fields.push(h('div.callout', icon('info'), h('div', 'First time? Install it, then run ', h('code', p.setup))));
@@ -162,7 +162,7 @@ function authorGuidance() {
   return h('div.card', h('h3', icon('info'), 'Choosing authors and workers'),
     h('p.small', 'There is no established minimum model size or price. Planner authors integrate requirements and draft plans/files; Improver authors change Runesmith itself. These roles usually need broader design and integration ability than a bounded Worker task.'),
     h('p.small', 'A cheaper or smaller worker can be useful with focused source, a narrow contract and real checks. Complex repairs may still need a stronger model. A free model can be a good author; qualify the task, not the price tag.'),
-    h('p.small', 'The Checker proposes each milestone’s acceptance checks: a few calls that decide what “done” means for automatic apply. In the out-of-box journey a small free model built well but wrote weak checks, so give the Checker your best model (a chat window works well), and let a free API model build.'),
+    h('p.small', 'The Checker proposes each milestone’s acceptance checks: a few calls that decide what “done” means for automatic apply. In our testing a small free model built well but wrote weak checks, so give the Checker your best model (a chat window works well), and let a free API model build.'),
     h('details', h('summary', 'What is strong enough?'),
       h('ul.small', h('li', 'Follows the actual packet and required format; does not invent unseen source or permission.'),
         h('li', 'Produces a complete, applicable change while preserving interfaces and unrelated behavior.'),
