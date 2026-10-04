@@ -812,7 +812,8 @@ def test_a_file_that_must_not_contain_a_text_is_checked(tmp_path):
     assert '"lacks"' in TASK and "lacks" in json.dumps(SCHEMA)
     ws = workspace(tmp_path, [LACKS])
     ws.update_milestone("m1", {"detail": MILESTONE + " The saved tally.json never holds a DRAFT mark."})
-    proposal = propose(ws, ws.router(), "m1")
+    # one scripted answer: the revise call that follows finds none, so no real backoff sleeps (they took 9 minutes)
+    proposal = propose(ws, ws.router(backoff_s=()), "m1")
     example = proposal["examples"][0]
     assert example["lacks"] == [{"name": "tally.json", "texts": ["DRAFT"]}]      # "banana split" is not stated
     assert "leaves out" in proposal["checks"][0]["exact"] and "DRAFT" in proposal["checks"][0]["exact"]
