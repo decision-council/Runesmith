@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from runesmith import atomic
-from runesmith.app import acceptance_examples
+from runesmith.app import acceptance_examples, runesmith_md
 from runesmith.app.acceptance_contracts import expectations, publish_expectations
 from runesmith.app.building import _run_checks
 from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, milestone_contract, source_context, why_no_answer
@@ -980,6 +980,7 @@ def _approve(ws, milestone_id, proposal_id, *, replace, reason, by, slow=lambda:
     ws.ledger.append('acceptance.approved', {'milestone': milestone_id, 'proposal': proposal_id, 'sha256': file_sha,
                                              'proposed_by': proposal.get('drafted_by'), 'replaced': bool(reason.strip()),
                                              'approved_by': by, **({'interface_links_removed': lost} if lost else {}), **slow()})
+    runesmith_md.checks_approved(ws, milestone_id, len(proposal.get('checks') or []), by, proposal.get('drafted_by'))
     # The owner's interface links to sentences these checks do not have are gone, and he is told which.
     return {'ok': True, 'sha256': file_sha, 'checks': proposal['checks'], **({'interface_links_removed': lost} if lost else {})}
 
@@ -1054,6 +1055,7 @@ def withdraw(ws, milestone_id, *, reason: str) -> dict[str, Any]:
         _write_json(path, record)
         ws.ledger.append('acceptance.withdrawn', {'milestone': milestone_id, 'proposal': proposal.get('id'), 'kept': keep.name,
                                                   **({'interface_links_removed': lost} if lost else {}), **_slow(started, waited)})
+    runesmith_md.checks_withdrawn(ws, milestone_id)
     return {'ok': True, 'kept': keep.name, **({'interface_links_removed': lost} if lost else {})}
 
 
@@ -1067,4 +1069,5 @@ def discard(ws, milestone_id, proposal_id, *, reason: str = '') -> dict[str, Any
         proposal.update(state='discarded', discarded_utc=_now(), reason=reason.strip()[:1000] or None)
         _write_json(path, record)
     ws.ledger.append('acceptance.discarded', {'milestone': milestone_id, 'proposal': proposal_id})
+    runesmith_md.checks_discarded(ws, milestone_id)
     return {'ok': True}

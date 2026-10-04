@@ -48,7 +48,8 @@ async function behaviour(body, ctx) {
       h('div.card', h('h3', icon('home'), 'This workspace'),
         h('div.setting', h('div.text', h('b', 'Name'), h('span', 'What you build here. Shown everywhere in the Studio.')), name),
         h('div.setting', h('div.text', h('b', 'How Runesmith may act'), h('span', 'Observe: just look. Runesmith maps and reports, and asks no model. Propose: it also plans, drafts and brings you changes to review. Your files change only when you approve a change, or when you allow automatic apply for checked builds.')),
-          seg('autonomy', [['observe', 'Observe', 'eye'], ['propose', 'Propose', 'hammer']]))),
+          seg('autonomy', [['observe', 'Observe', 'eye'], ['propose', 'Propose', 'hammer']])),
+        toggle('runesmith_md', 'Keep a RUNESMITH.md in this folder', 'Runesmith writes its own log there, one line for each thing it did: a milestone done, a build applied, checks you approved, a model that wrote code. It never holds prompts, answers, file contents or keys, and models never see it. Off, or in Observe, the file is never created or changed.')),
       h('div.card', h('h3', icon('clock'), 'Rhythm'),
         toggle('auto_work', 'Work on a schedule', 'Run rounds automatically while the Studio is open. Each round can spend model calls. Off until you choose.'),
         h('div.setting', h('div.text', h('b', 'How often'), h('span', 'A round maps, finds work, works on what is new, and reports. With full speed on, the longest wait.')), interval),
@@ -110,9 +111,11 @@ async function data(body, ctx) {
 }
 
 async function about(body) {
+  const session = await get('/api/session');
   const row = (claim, status, cls) => h('tr', h('td', claim), h('td', h('span', { class: `badge ${cls}` }, status)));
   body.append(h('div.grid.two',
     h('div.card', h('h3', icon('rune'), 'What Runesmith is'),
+      h('p.small.muted', `Runesmith ${session.version}`),
       h('p', 'A small, fixed kernel that keeps budgets, authority, judges and a hash-chained ledger, and wears any model as an instrument. Its repair organ is the only part that changes, and it changes only with evidence: experience is split, candidates are tested on held-out work, and a winner must still win a live trial before it is switched on.'),
       h('p.muted', 'It maps your folder and itself, proposes objectives in bands (bad · minimal · optimal · world-class), and says “unknown” wherever it has no evidence.'),
       h('div.divider'), h('div.small.faint', 'Open source. Standard-library Python, no build step, runs on modest computers.')),

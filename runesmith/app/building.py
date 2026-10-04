@@ -17,6 +17,7 @@ import tempfile
 import time
 import uuid
 
+from runesmith.app import runesmith_md
 from runesmith.app.planner import (draft_files, draft_plan, focus_missing, focus_problem, milestone_contract, milestone_view,
                                    source_context, next_milestone, milestone_ready, ready_milestones, revisable_candidates)
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
@@ -1050,13 +1051,18 @@ def _apply_if_current(ws, draft, milestone, contract, grant, verification, resul
         if not valid:
             result['summary'] = 'Verified snapshot changed before apply; no files written.'
         else:
-            applied = ws.apply_draft(draft['id'])
+            applied = ws.apply_draft(draft['id'], by='build')
             if applied['ok']:
-                ws.update_milestone(milestone['id'], {'status':'done'})
+                ws.update_milestone(milestone['id'], {'status':'done'}, log=False)
                 ws._save_draft_state(ws._draft(draft['id']), 'applied', applied_by='delegated_build',
                                      grant=grant['grant'])
                 ws.ledger.append('build.advanced', {'draft':draft['id'], 'milestone':milestone['id'],
                     'grant':grant['grant'], 'acceptance_sha256':verification['acceptance_sha256']})
+                oracle = verification.get('acceptance') or {}
+                ran = int(oracle.get('ran') or 0)
+                skipped = int(oracle.get('skipped') or 0)
+                passed = max(0, ran - skipped - int(oracle.get('failures') or 0) - int(oracle.get('errors') or 0))
+                runesmith_md.build_done(ws, milestone['id'], draft, applied['files'], passed, ran - skipped)
                 result.update(advanced=True, summary=f"Applied {draft['id']}; acceptance passed; {milestone['id']} complete.")
             else:
                 result['summary'] = applied['detail']

@@ -35,6 +35,13 @@ from runesmith.selfmap import band
 SKIP_DIRS = {".git", ".hg", ".svn", "__pycache__", ".venv", "venv", "env", "node_modules", ".tox", ".mypy_cache",
              ".pytest_cache", "build", "dist", ".idea", ".vscode"}
 MAX_FILES_SCANNED = 20_000
+# Runesmith's own log, RUNESMITH.md (runesmith.app.runesmith_md.FILE_NAME), is never part of the project it describes: a
+# new, empty folder with only that log would map as a document collection, and the log would read as an orphan page.
+OWN_LOG = "runesmith.md"
+
+
+def _own(name: str) -> bool:
+    return name.lower() == OWN_LOG
 
 # Objective templates per object kind, in the owner's band vocabulary. Proposed, not accepted.
 PYTHON_OBJECTIVES = [
@@ -87,7 +94,7 @@ def _scan(root: Path) -> list[tuple[Path, int, int]]:
                 if entry.is_dir(follow_symlinks=False):
                     if entry.name not in SKIP_DIRS and not entry.name.startswith("."):
                         dirs.append(entry.name)
-                elif entry.is_file(follow_symlinks=False):
+                elif entry.is_file(follow_symlinks=False) and not _own(entry.name):
                     files.append(entry)
             except OSError:
                 continue
@@ -134,7 +141,7 @@ def _reports_folder(path: Path, names: set[str]) -> bool:
 
 
 def classify_object(path: Path) -> str:
-    names = {p.name for p in path.iterdir()} if path.is_dir() else set()
+    names = {p.name for p in path.iterdir() if not _own(p.name)} if path.is_dir() else set()
     if names & PYTHON_MARKERS:
         return "python_repository"
     if "package.json" in names:
@@ -461,7 +468,8 @@ def document_object(path: Path, *, recursive: bool = True, scope: Path | None = 
     from urllib.parse import unquote
     scope = scope or path
     linked = _linked_pages(scope) if linked is None else linked
-    candidates = _walk(path) if recursive else sorted(p for p in path.iterdir() if p.is_file() and not is_link(p))
+    candidates = _walk(path) if recursive else sorted(p for p in path.iterdir()
+                                                       if p.is_file() and not is_link(p) and not _own(p.name))
     texts = [f for f in candidates if f.suffix.lower() in DOCUMENT_SUFFIXES]
     documents = [f for f in candidates if f.suffix.lower() in (".md", ".markdown")][:MAX_DOCUMENTS]
     checked, broken, todos = 0, [], []
@@ -533,7 +541,8 @@ def _visible_scan(path: Path, recursive: bool) -> list[tuple[Path, int, int]]:
     if recursive:
         return _scan(path)
     out = []
-    for p in sorted(p for p in path.iterdir() if p.is_file() and not p.name.startswith(".") and not is_link(p)):
+    for p in sorted(p for p in path.iterdir() if p.is_file() and not p.name.startswith(".") and not is_link(p)
+                    and not _own(p.name)):
         try:
             st = p.stat()
             out.append((p, st.st_size, st.st_mtime_ns))
@@ -594,7 +603,7 @@ def workspace_facts(workspace: Path, *, max_entries: int = 80) -> dict[str, Any]
     """The workspace as a whole: its top-level entries and what it holds, so even an empty folder has a map."""
     entries = []
     for p in sorted(workspace.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
-        if p.name.startswith("."):
+        if p.name.startswith(".") or _own(p.name):
             continue
         try:
             if is_link(p):
@@ -629,7 +638,8 @@ def website_object(path: Path, *, recursive: bool = True) -> dict[str, Any]:
     Nothing is executed or fetched; external references are not checked.
     """
     from urllib.parse import unquote
-    files = _walk(path) if recursive else sorted(p for p in path.iterdir() if p.is_file() and not is_link(p))
+    files = _walk(path) if recursive else sorted(p for p in path.iterdir()
+                                                  if p.is_file() and not is_link(p) and not _own(p.name))
     pages = [f for f in files if f.suffix.lower() in (".html", ".htm")][:MAX_DOCUMENTS]
     styles = [f for f in files if f.suffix.lower() == ".css"]
     scripts = [f for f in files if f.suffix.lower() in (".js", ".mjs")]
@@ -693,7 +703,8 @@ def build_environment_map(workspace: Path, *, probe: bool = False, max_objects: 
     earlier = {o.get("path"): o for o in (previous or {}).get("objects", [])}
     kept = 0
     root_kind = classify_object(workspace)
-    loose = any(p.is_file() and not p.name.startswith(".") and not is_link(p) for p in workspace.iterdir())
+    loose = any(p.is_file() and not p.name.startswith(".") and not is_link(p) and not _own(p.name)
+                for p in workspace.iterdir())
     links = sorted(p for p in workspace.iterdir() if not p.name.startswith(".") and p.is_dir() and is_link(p))
     if root_kind in ("python_repository", "node_repository", "website"):
         candidates = [workspace]                      # the workspace is itself one object

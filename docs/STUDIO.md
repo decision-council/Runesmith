@@ -106,6 +106,7 @@ Give each model one or more roles: **Worker**, **Improver**, **Planner**. The fi
 - **The rhythm:** scheduled rounds and how often.
 - **Mapping:** measuring by running tests on throwaway copies, the most objects to map, and folders never to touch.
 - **Notes:** whether models read them.
+- **RUNESMITH.md:** Runesmith's own log of what it did in the folder, one line for each event, names and counts only. On by default; off means the file is never created or changed.
 - **Self-improvement:** on or off, and how much experience it needs first.
 - **Theme.**
 - **Health checks.**
@@ -132,7 +133,7 @@ Resolve a note when it no longer applies. It is kept, marked resolved, and no lo
 
 ## Safety
 
-- **Your files are yours.** Runesmith runs your tests on throwaway copies. It writes to your folder only when you click Apply or Write, and every such write is conflict-checked, backed up and undoable.
+- **Your files are yours.** Runesmith runs your tests on throwaway copies. It writes to your folder only when you click Apply or Write, and every such write is conflict-checked, backed up and undoable. The one exception is Runesmith's own log, `RUNESMITH.md` at the top of the folder: one plain line for each thing it did, never a prompt, an answer, a file's contents or a key. Models never see it, and you can switch it off in Settings.
 - **Keys stay here.** Keys are saved in the folder's `.runesmith/secrets.json`, outside your project files. The home ignores itself for version control. Keys are sent only to the provider they belong to, and never shown again.
 - **The Studio is private.** It listens on `127.0.0.1` only.
   - It opens through a link with a one-time key, which becomes a browser cookie.
