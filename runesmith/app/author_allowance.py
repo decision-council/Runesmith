@@ -10,6 +10,8 @@ import hashlib
 import json
 import math
 import re
+import threading
+from contextlib import contextmanager
 
 from runesmith.app.workspace import WorkspaceError
 
@@ -42,7 +44,46 @@ def _float(value):
     return number
 
 
-def _records(ws, folder, contract=None):
+_SHARED = threading.local()
+
+
+@contextmanager
+def shared_reads():
+    """Everything evaluated inside reads each receipt folder once. A scheduling decision judges every ready milestone, and
+    each judgement re-read and re-parsed every receipt: 6,500 reads for 29 ready milestones and 223 attempts on J11's
+    home, 13 to 39 s of a worker that holds its lock meanwhile (review of batch EE). Only for a decision that writes
+    nothing; per thread."""
+    outer = getattr(_SHARED, 'folders', None)
+    if outer is None:
+        _SHARED.folders = {}
+    try:
+        yield
+    finally:
+        if outer is None:
+            _SHARED.folders = None
+
+
+def _load(ws, folder):
+    """Every receipt of a folder, parsed and checked for damage (the contract-independent part of `_records`)."""
+    shared = getattr(_SHARED, 'folders', None)
+    key = str(ws.home / folder)
+    if shared is not None and key in shared:
+        value = shared[key]
+        if isinstance(value, WorkspaceError):
+            raise WorkspaceError(str(value)) from None
+        return value
+    try:
+        value = _read_folder(ws, folder)
+    except WorkspaceError as error:
+        if shared is not None:
+            shared[key] = error
+        raise
+    if shared is not None:
+        shared[key] = value
+    return value
+
+
+def _read_folder(ws, folder):
     directory = ws.home / folder
     try:
         directory.lstat()
@@ -67,6 +108,13 @@ def _records(ws, folder, contract=None):
                 raise ValueError('Missing allocation identity')
         except (OSError, ValueError, RecursionError):
             raise WorkspaceError(f'Damaged author allowance receipt {folder}/{path.name}; reconcile it first.') from None
+        result.append((path.name, row))
+    return result
+
+
+def _records(ws, folder, contract=None):
+    result = []
+    for name, row in _load(ws, folder):
         if row.get('state') in ('transport_failed', 'context_gap'):
             # No model answered (J2-B9), or it answered for a file it was never shown (J11-B15): nothing used up.
             continue
@@ -75,8 +123,8 @@ def _records(ws, folder, contract=None):
             # An unresolved call blocks its own milestone's allowance, not every milestone's (journey J11-B6). It is
             # still listed, so the scope checks below see it; damaged receipts above still block everything.
             if contract is None or row.get('contract') == contract:
-                raise WorkspaceError(f'Unresolved author allowance receipt {folder}/{path.name}; reconcile it before another call.')
-        result.append((path.name, row))
+                raise WorkspaceError(f'Unresolved author allowance receipt {folder}/{name}; reconcile it before another call.')
+        result.append((name, row))
     return result
 
 

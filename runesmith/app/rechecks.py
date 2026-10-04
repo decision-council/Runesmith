@@ -38,6 +38,15 @@ def mark(ws, draft_id: str) -> str:
     return milestone.get('title') or draft.get('milestone') or draft_id
 
 
+def unmark(ws, draft_id: str) -> None:
+    """Take the mark back when the extension was given back (a clean stop, review of batch EE), so the setting may ask
+    again. A draft whose extension is spent stays marked."""
+    if resume_status(ws, ws._draft(draft_id))['used']:
+        return
+    with ws._lock:
+        _write_json(ws.home / MARKS, {k: v for k, v in _marks(ws).items() if k != draft_id})
+
+
 def next_draft(ws) -> dict[str, Any] | None:
     """The draft the setting rechecks now, or None. Only the newest draft of a ready milestone, still waiting, whose
     checks did not finish on today's contract, that the owner's own button could resume (the extension is unused and

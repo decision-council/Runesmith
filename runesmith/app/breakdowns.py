@@ -58,11 +58,45 @@ def can_break_down(plan, milestone_id):
     return not has_children and _breakdown_depth(plan,milestone_id)<2
 
 
+PLAN_BOUND = 400          # milestones a plan may hold once a breakdown is adopted (it was 30, the most a drafted plan holds)
+MAX_STEPS = 4             # a breakdown adds 2 to 4 steps
+OUTLINE_FROM = 30         # a plan with more milestones is sent to the model in outline
+
+
+def room_for_breakdown(plan):
+    """Whether the plan can take the longest breakdown. Checked before a model is asked, so a call is never paid for
+    whose answer could not be adopted (review of batch EE: J11's plan holds 124 milestones, an owner-built plan the
+    old bound of 30 refused every adoption of, by the owner as well as by his setting)."""
+    return len((plan or {}).get('milestones', [])) + MAX_STEPS <= PLAN_BOUND
+
+
+def _plan_outline(plan, parent):
+    """The plan as the model is shown it: whole for a small plan; for a big one (J11's is 206 KB of JSON) the parent, its
+    prerequisites, its ancestors, its steps and what depends on it in full, and every other milestone by id, title and
+    status. The digest the proposal is bound to is the whole plan's."""
+    milestones = plan.get('milestones', [])
+    if len(milestones) <= OUTLINE_FROM:
+        return plan
+    by_id = {m['id']: m for m in milestones}
+    near = {parent['id'], *(parent.get('depends_on') or [])}
+    above = parent.get('parent_id')
+    while above in by_id and above not in near:
+        near.add(above)
+        above = by_id[above].get('parent_id')
+    near |= {m['id'] for m in milestones if parent['id'] in (m.get('depends_on') or []) or m.get('parent_id') == parent['id']}
+    return dict(plan, milestones=[m if m['id'] in near else {k: m.get(k) for k in ('id', 'title', 'status')} for m in milestones],
+                outline='Milestones other than this one, its prerequisites, ancestors, steps and dependents are shown by id, '
+                        'title and status only.')
+
+
 def input_packet(ws, milestone_id):
     plan = ws.plan() or {}
     parent = next((m for m in plan.get('milestones',[]) if m['id']==milestone_id),None)
     if not parent or parent.get('status') not in ('open','doing'):
         raise WorkspaceError('Choose an unfinished milestone to break down.')
+    if not room_for_breakdown(plan):
+        raise WorkspaceError(f"This plan has {len(plan.get('milestones', []))} milestones and a breakdown adds up to {MAX_STEPS}; "
+                             f'a plan holds at most {PLAN_BOUND}. Drop or finish some first.')
     if any(m.get('parent_id')==milestone_id for m in plan.get('milestones',[])):
         raise WorkspaceError('This milestone already has prerequisite steps; review them before another breakdown.')
     if _breakdown_depth(plan,milestone_id)>=2:
@@ -107,7 +141,7 @@ def input_packet(ws, milestone_id):
         'public_acceptance':expectations(ws,milestone_id),
         'ancestor_done_when':[m.get('done_when') for m in plan.get('milestones',[])
                               if m.get('id') in {parent.get('parent_id')} and m.get('done_when')],
-        'plan':plan, 'plan_digest':digest(plan),
+        'plan':_plan_outline(plan,parent), 'plan_digest':digest(plan),
         'snapshot_digest':snapshot['digest'], 'brief':ws.brief().get('text',''),
         'allowed_build_paths':ws.settings()['build_paths'],
         'source_context':source_context(ws,limit=20000,snapshot=snapshot),
@@ -174,7 +208,7 @@ def propose_breakdown(ws,router,milestone_id,*,checkpoint=lambda:None):
     for record in proposals(ws):
         if record.get('input_sha256')==packet_digest and record.get('state')=='proposed':
             return record
-    if sum(a.get('input_sha256')==packet_digest for a in old)>=2:
+    if sum(a.get('input_sha256')==packet_digest and a.get('state')!='transport_failed' for a in old)>=2:
         raise PlannerUnavailable('Two breakdown attempts on unchanged evidence; inspect the saved answers.')
     checkpoint()
     key='b'+uuid.uuid4().hex[:12]
@@ -187,6 +221,19 @@ def propose_breakdown(ws,router,milestone_id,*,checkpoint=lambda:None):
         out=router.call('plan',prompt=text,system='You are Runesmith\'s planning instrument. Propose smaller steps from evidence; return JSON only.',
                         schema=schema,max_tokens=4500,key='breakdown-'+key)
     except Exception as error:
+        # Turned away by every route, or failed at capacity before generating: nothing ran, so nothing is uncertain and
+        # nothing blocks the next breakdown (review of batch EE: one busy moment on a free model left an 'uncertain'
+        # receipt that stopped every breakdown in the project until the owner abandoned it). The gateway's receipt is
+        # `receipt` on a transport error, `remote_receipt` elsewhere.
+        from types import SimpleNamespace
+        from runesmith.app.planner import nothing_ran
+        remote=getattr(error,'receipt',None) or getattr(error,'remote_receipt',None)
+        if nothing_ran(SimpleNamespace(remote_receipt=remote)):
+            _write_json(path,{k:v for k,v in dict(receipt,state='transport_failed',finished=_now(),remote_receipt=remote,
+                                                  error=type(error).__name__+': '+str(error)[:300]).items() if k!='packet'})
+            failure=PlannerUnavailable('Breakdown call did not reach a model; nothing was used up, ask again later.')
+            failure.nothing_ran=True
+            raise failure from error
         _write_json(path,dict(receipt,state='uncertain',error=type(error).__name__+': '+str(error)[:300]))
         raise PlannerUnavailable('Breakdown call uncertain; inspect its receipt before retrying.') from error
     receipt.update(state='answered',answer=out.data,finished=_now(),instrument={k:out.receipt.get(k) for k in
@@ -259,8 +306,8 @@ def adopt_breakdown(ws,key,*,by='owner'):
             raise WorkspaceError('Public acceptance changed since the proposal; reassess first.')
         if collect_snapshot(ws)['digest']!=record.get('snapshot_digest'):
             raise WorkspaceError('Source changed since the proposal; reassess first.')
-        if len(plan['milestones'])+len(record['steps'])>30:
-            raise WorkspaceError('This breakdown exceeds the current 30-milestone plan bound.')
+        if len(plan['milestones'])+len(record['steps'])>PLAN_BOUND:
+            raise WorkspaceError(f'This breakdown exceeds the current {PLAN_BOUND}-milestone plan bound.')
         parent=next(m for m in plan['milestones'] if m['id']==record['milestone'])
         before=copy.deepcopy(plan);steps=[]
         for i,row in enumerate(record['steps']):

@@ -633,16 +633,25 @@ def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only)
         return result, 'a draft waits for you'
     return result, None
 
-def build_escalation_status(ws):
+def build_escalation_status(ws,milestone_id=None):
     """Describe the one-shot alternate-author escape after a bounded miss.
 
     This does not increase the ordinary three-attempt budget.  It exposes one
     separately receipted call after that budget is exhausted, under the same
     source snapshot, milestone contract, paths and acceptance gates.
+
+    Of the milestones whose tries are used up it describes the first the one more try can be given to now, not simply
+    the first: one that waits on a draft, an inconclusive check or a saved author answer held every other one back
+    (review of batch EE: an unattended project's one more try never reached the milestones behind it). With
+    `milestone_id` it describes that milestone, as the owner's setting asks for a particular one.
     """
     plan=ws.plan() or {};ready=ready_milestones(plan)
     if not ready:return None
     context=source_context(ws)
+    held={}                                       # the drafts and receipts are read once for every milestone judged here
+    def every_draft():
+        if 'drafts' not in held:held['drafts']=ws.drafts()
+        return held['drafts']
 
     def used_up(candidate):
         try:return not ordinary_allowance(ws,milestone_contract(ws,candidate),context['snapshot_digest'])['remaining']
@@ -652,71 +661,91 @@ def build_escalation_status(ws):
         except WorkspaceError:return False
     # The one more try belongs to the ready milestone whose tries are used up, not simply the first (J11-B6), and
     # to one that has not used its own yet (journey J2-F34: m8 had, and m9's was never offered).
-    spent=[m for m in ready if used_up(m)]
-    milestone=next((m for m in spent if unescalated(m)),spent[0] if spent else ready[0])
-    contract=milestone_contract(ws,milestone)
-    try:
-        allowance=ordinary_allowance(ws,contract,context['snapshot_digest'])
-    except WorkspaceError as error:
-        return {'eligible':False,'milestone':milestone['id'],'attempts':None,'used':None,
-                'reason':str(error),'allowance':{'known':False,'can_draft':False,'blockers':[str(error)]}}
-    scope=allowance['scope'];escalations=allowance['escalations']
-    drafts=[d for d in ws.drafts() if d.get('contract')==contract]
-    eligible=(ws.settings()['autonomy']!='observe' and not allowance['remaining']
-              and not escalations and not any(d.get('state') in ('waiting','applied') for d in drafts))
-    matching=[d for d in drafts if d.get('snapshot_digest')==context['snapshot_digest']
-              and d.get('public_acceptance_digest')==expectation_digest(ws,milestone['id'])]
-    waiting=[d for d in matching if d.get('state')=='waiting']
-    own_digest=source_context(ws,milestone=milestone)['digest'] if waiting else None      # the view its own words give (J11-B15)
-    reuse=next((d['id'] for d in waiting if d.get('context_digest')==own_digest),None)
-    blockers=[]
-    from runesmith.app.work_modes import guard_job
-    try:guard_job(ws,'build')
-    except WorkspaceError as error:blockers.append(str(error))
-    if ws.settings()['autonomy']=='observe':blockers.append('Observe mode does not permit authoring.')
-    if any(d.get('state')=='applied' for d in drafts):blockers.append('Applied files await acceptance or owner review.')
-    if any(d.get('state') in ('waiting','needs_revision') and verification_inconclusive(d.get('verification')) for d in matching):
-        blockers.append('A saved candidate has an inconclusive check. Recheck it explicitly without inference.')
-    from runesmith.app.author_recovery import pending_authors
-    if pending_authors(ws,milestone=milestone['id']):blockers.append('Recover or reconcile the saved author request before another call.')
-    lineage_error=None
-    if not reuse:
-        try:_ordinary_revision_lineage(ws,drafts,context['snapshot_digest'],milestone)
-        except (WorkspaceError,ValueError,KeyError,TypeError,OSError) as error:
-            lineage_error=str(error);blockers.append(lineage_error)
-    eligible=bool(eligible) and not blockers
+    def spent():
+        if 'spent' not in held:held['spent']=[m for m in ready if used_up(m)]
+        return held['spent']
+    escalations_of={}
+
+    def describe(milestone):
+        contract=milestone_contract(ws,milestone)
+        try:
+            allowance=ordinary_allowance(ws,contract,context['snapshot_digest'])
+        except WorkspaceError as error:
+            return {'eligible':False,'milestone':milestone['id'],'attempts':None,'used':None,
+                    'reason':str(error),'allowance':{'known':False,'can_draft':False,'blockers':[str(error)]}}
+        scope=allowance['scope'];escalations=allowance['escalations']
+        escalations_of[milestone['id']]=escalations
+        drafts=[d for d in every_draft() if d.get('contract')==contract]
+        eligible=(ws.settings()['autonomy']!='observe' and not allowance['remaining']
+                  and not escalations and not any(d.get('state') in ('waiting','applied') for d in drafts))
+        matching=[d for d in drafts if d.get('snapshot_digest')==context['snapshot_digest']
+                  and d.get('public_acceptance_digest')==expectation_digest(ws,milestone['id'])]
+        waiting=[d for d in matching if d.get('state')=='waiting']
+        own_digest=source_context(ws,milestone=milestone)['digest'] if waiting else None      # the view its own words give (J11-B15)
+        reuse=next((d['id'] for d in waiting if d.get('context_digest')==own_digest),None)
+        blockers=[]
+        from runesmith.app.work_modes import guard_job
+        try:guard_job(ws,'build')
+        except WorkspaceError as error:blockers.append(str(error))
+        if ws.settings()['autonomy']=='observe':blockers.append('Observe mode does not permit authoring.')
+        if any(d.get('state')=='applied' for d in drafts):blockers.append('Applied files await acceptance or owner review.')
+        if any(d.get('state') in ('waiting','needs_revision') and verification_inconclusive(d.get('verification')) for d in matching):
+            blockers.append('A saved candidate has an inconclusive check. Recheck it explicitly without inference.')
+        from runesmith.app.author_recovery import pending_authors
+        if pending_authors(ws,milestone=milestone['id']):blockers.append('Recover or reconcile the saved author request before another call.')
+        lineage_error=None
+        if not reuse:
+            try:_ordinary_revision_lineage(ws,drafts,context['snapshot_digest'],milestone)
+            except (WorkspaceError,ValueError,KeyError,TypeError,OSError) as error:
+                lineage_error=str(error);blockers.append(lineage_error)
+        eligible=bool(eligible) and not blockers
+        if not allowance['remaining'] and not reuse:blockers.append('Ordinary author allowance exhausted. Review saved candidates or an explicitly available continuation.')
+        view=dict(allowance,known=True,reuse_draft=reuse,blockers=blockers,can_draft=not blockers)
+        if lineage_error:
+            view.update(known=False,remaining=None,recorded_attempts=allowance['used'])
+        return {'eligible':eligible,'milestone':milestone['id'],'attempts':allowance['used'],
+                'scope':scope,'used':bool(escalations),'receipt':escalations[-1].get('id') if escalations else None,
+                'snapshot_digest':context['snapshot_digest'],'allowance':view,'kept_answer':None,
+                'reason':('The three tries for this step did not produce a build that passed.'   # plain words (J2-F22)
+                          if eligible else None)}
+
+    if milestone_id is not None:
+        milestone=next((m for m in ready if m['id']==milestone_id),None)
+        if milestone is None:return None
+        state=describe(milestone)
+    else:
+        state=None
+        for candidate in [m for m in spent() if unescalated(m)] or spent()[:1] or ready[:1]:
+            view=describe(candidate)
+            state=state or view
+            if view['eligible']:
+                state=view;break
+        milestone=next(m for m in ready if m['id']==state['milestone'])
     # The one more try's answer, refused by the host, is kept. A newer Runesmith may accept it: the owner can check
     # it again with no model call (journey J2-G1). Readmitting revises a checked candidate on this source.
     kept=None
     # Of every milestone whose tries are used up, not only the one the one more try belongs to now (review of
     # J2-F34: when it moved to the next milestone, the first one's kept answer disappeared).
-    for candidate in [milestone]+[m for m in spent if m is not milestone]:
+    for candidate in [milestone]+([] if milestone_id is not None else [m for m in spent() if m is not milestone]):
         own=milestone_contract(ws,candidate)
-        try:own_escalations=escalations if candidate is milestone else ordinary_allowance(ws,own,context['snapshot_digest'])['escalations']
+        try:own_escalations=escalations_of[candidate['id']] if candidate['id'] in escalations_of else ordinary_allowance(ws,own,context['snapshot_digest'])['escalations']
         except WorkspaceError:continue
-        revisable=bool(revisable_candidates(ws,ws.drafts(),candidate,context['snapshot_digest']))
+        revisable=bool(revisable_candidates(ws,every_draft(),candidate,context['snapshot_digest']))
         for row in own_escalations if revisable and ws.settings()['autonomy']!='observe' else []:
             receipt=_read_json(ws.home/'build-escalations'/(row['id']+'.json'),{})
             if row['state']=='failed' and (receipt.get('feedback') or {}).get('answer_receipt'):
                 if not kept or str(receipt.get('utc') or '')>kept['utc']:
                     kept={'id':row['id'],'utc':str(receipt.get('utc') or ''),'error':str(receipt.get('error') or '')[:300],
                           'last_recheck':receipt.get('last_recheck'),'milestone':candidate['id']}
-    if not allowance['remaining'] and not reuse:blockers.append('Ordinary author allowance exhausted. Review saved candidates or an explicitly available continuation.')
-    view=dict(allowance,known=True,reuse_draft=reuse,blockers=blockers,can_draft=not blockers)
-    if lineage_error:
-        view.update(known=False,remaining=None,recorded_attempts=allowance['used'])
-    return {'eligible':eligible,'milestone':milestone['id'],'attempts':allowance['used'],
-            'scope':scope,'used':bool(escalations),'receipt':escalations[-1].get('id') if escalations else None,
-            'snapshot_digest':context['snapshot_digest'],'allowance':view,'kept_answer':kept,
-            'reason':('The three tries for this step did not produce a build that passed.'   # plain words (J2-F22)
-                      if eligible else None)}
+    return dict(state,kept_answer=kept) if 'kept_answer' in state else state
 
 
-def escalate_build(ws,router,*,checkpoint=lambda:None):
-    """Run one alternate-author continuation after the ordinary cap."""
+def escalate_build(ws,router,*,checkpoint=lambda:None,milestone_id=None):
+    """Run one alternate-author continuation after the ordinary cap (for `milestone_id` when the owner's setting names
+    one, else for the first milestone it can be given to)."""
     if ws.settings()['autonomy'] == 'observe':
         return {'summary':'Observe mode: no escalation call or executable checks.'}
-    state=build_escalation_status(ws)
+    state=build_escalation_status(ws,milestone_id)
     if not state or not state['eligible']:
         raise WorkspaceError('No one-shot build escalation is eligible on the current source and contract.')
     milestone=next(m for m in ws.plan()['milestones'] if m['id']==state['milestone'])

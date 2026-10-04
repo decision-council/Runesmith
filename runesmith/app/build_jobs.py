@@ -24,7 +24,7 @@ PARAMETERS = {
     'correct': {'attempt': str},
     'readmit': {'escalation': str},
     'readmit_answer': {'attempt': str},
-    'escalate': {},
+    'escalate': {'milestone_id': None},
     'review_current': {'milestone': str},
     'resume_check': {'draft_id': str, 'reason': str},
     'allocate_check': {'draft_id': str, 'quote_id': str, 'reason': str},
@@ -138,7 +138,8 @@ def execute_build_job(ws, job: BuildJob, *, checkpoint=lambda: None, on_call=Non
     if job.kind == 'readmit':
         return building.readmit_escalation_answer(ws, p['escalation'], checkpoint=guarded)
     if job.kind == 'escalate':
-        return building.escalate_build(ws, ws.router(on_call=call_recorder, backoff_s=(5, 20)), checkpoint=guarded)
+        return building.escalate_build(ws, ws.router(on_call=call_recorder, backoff_s=(5, 20)), checkpoint=guarded,
+                                       milestone_id=p['milestone_id'])
     if job.kind == 'review_current':
         return building.review_current_files(ws, p['milestone'], checkpoint=guarded)
     if job.kind == 'resume_check':

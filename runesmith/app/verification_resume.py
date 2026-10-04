@@ -5,6 +5,7 @@ per-home instance lock, as for other Studio Workspace mutations.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
@@ -47,6 +48,24 @@ def resume_status(ws, draft):
                             and building.verification_inconclusive(prior) and shorter),
             'used':used,'receipt':receipt,'timeout_s':RESUME_TIMEOUT_S,'owner_timeout_s':owner_limit(ws,draft.get('milestone')),
             'max_phases':2,'inference_calls':0}
+
+
+def _given_back(ws,draft_id,before,receipt,path):
+    """A stop, pause or Studio close during the extension is no verdict: when no phase reached one, the draft's earlier
+    verification is put back and the extension is not spent, so it can be asked for again (review of batch EE: a stop
+    during a recheck, which can run 18 minutes, used up the draft's only extension and left it inconclusive for good).
+    A stop after the checks reached a verdict leaves that verdict and the spent receipt."""
+    with ws._lock:
+        current=ws._draft(draft_id)
+        now=current.get('verification') or {}
+        if not (now.get('interrupted_before') or now==before['verification']):
+            return False
+        if now!=before['verification']:             # the partial record the stop wrote (no phase ran to its end)
+            ws._save_draft_state(current,current['state'],**before)
+        path.unlink(missing_ok=True)
+        ws.ledger.append('build.check_resume_stopped',{'id':receipt['id'],'draft':draft_id,
+                         'note':'Stopped before any phase reached a verdict: the extension is not spent.'})
+    return True
 
 
 def resume_verification(ws, draft_id, reason, *, checkpoint=lambda:None):
@@ -102,10 +121,13 @@ def resume_verification(ws, draft_id, reason, *, checkpoint=lambda:None):
                  'inference_calls':0,'author_budget_reset':False}
         _write_json(path,receipt)
         ws.ledger.append('build.check_resume_started',receipt)
+    before=copy.deepcopy({key:draft.get(key) for key in ('verification','verification_history','check_memory_id','verified')})
     try:
         result=building._check_and_record(ws,draft,milestone,contract,checkpoint=checkpoint,
                                          check_timeout_s=RESUME_TIMEOUT_S,owner_timeout_s=receipt['owner_timeout_s'])
     except BaseException as error:
+        if type(error).__name__=='StopRequested' and _given_back(ws,draft['id'],before,receipt,path):
+            raise
         receipt.update(state='interrupted',finished=_now(),error=type(error).__name__)
         _write_json(path,receipt)
         ws.ledger.append('build.check_resume_interrupted',{'id':receipt['id'],'error':type(error).__name__})

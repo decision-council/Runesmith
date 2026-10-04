@@ -570,8 +570,37 @@ class Worker:
                     return turn
         return ('build' if settings['build_steps'] else 'round'), {}
 
+    def _choose_scheduled(self) -> dict[str, Any] | None:
+        """The step the schedule runs now as a job, or None when it chose nothing (and waited). Not under the worker's
+        lock: judging every ready milestone took 13 to 39 s on J11's home, and the page's state, a pause and every enqueue
+        wait on that lock (review of batch EE)."""
+        try:
+            choice = self.scheduled_job()
+        except WorkspaceError as error:
+            self._set('blocked', str(error))
+            choice = None
+        except Exception as error:          # never end the worker thread (review of J11-G16)
+            try:
+                (self.ws.home / 'logs').mkdir(parents=True, exist_ok=True)
+                with open(self.ws.home / 'logs' / 'worker-errors.log', 'a', encoding='utf-8', newline='\n') as stream:
+                    stream.write(f"{_now()} choosing scheduled work\n{traceback.format_exc()}\n")
+            except OSError:                 # the log is best effort (review of batch H)
+                pass
+            self._set('blocked', f'The schedule could not choose the next step ({type(error).__name__}: '
+                                 f'{str(error)[:200]}). Activity has the details.')
+            choice = None
+        with self._cv:
+            if choice is None:
+                self._cv.wait(timeout=30.0)
+                return None
+            if self._closing or self.paused or self._jobs:
+                return None                 # the owner paused, closed or queued something while it chose: look again
+        kind, params = choice
+        return {"id": uuid.uuid4().hex, "kind": kind, "params": params, "queued": _now(), "by": "schedule"}
+
     def _run(self) -> None:
         while True:
+            choosing = False
             with self._cv:
                 while not self._closing:
                     if self._jobs and not self.paused:
@@ -579,32 +608,15 @@ class Worker:
                         break
                     due = None if self.paused else self._due()
                     if due is not None and due <= 0 and not self._jobs:
-                        try:
-                            choice = self.scheduled_job()
-                            if choice is None:
-                                self._cv.wait(timeout=30.0)
-                                continue
-                            kind, params = choice
-                        except WorkspaceError as error:
-                            self._set('blocked', str(error))
-                            self._cv.wait(timeout=30.0)
-                            continue
-                        except Exception as error:          # never end the worker thread (review of J11-G16)
-                            try:
-                                (self.ws.home / 'logs').mkdir(parents=True, exist_ok=True)
-                                with open(self.ws.home / 'logs' / 'worker-errors.log', 'a', encoding='utf-8', newline='\n') as stream:
-                                    stream.write(f"{_now()} choosing scheduled work\n{traceback.format_exc()}\n")
-                            except OSError:                 # the log is best effort (review of batch H)
-                                pass
-                            self._set('blocked', f'The schedule could not choose the next step ({type(error).__name__}: '
-                                                 f'{str(error)[:200]}). Activity has the details.')
-                            self._cv.wait(timeout=30.0)
-                            continue
-                        job = {"id": uuid.uuid4().hex, "kind": kind, "params": params, "queued": _now(), "by": "schedule"}
+                        choosing = True
                         break
                     self._cv.wait(timeout=min(30.0, due) if due is not None else 30.0)
                 else:
                     return
+            if choosing:
+                job = self._choose_scheduled()
+                if job is None:
+                    continue
             try:
                 self._execute(job)
             except StopRequested:
@@ -839,9 +851,17 @@ class Worker:
         self.bus.publish('plan',{'breakdown':proposal['id']})
         return {'summary':f"Proposed {len(proposal['steps'])} prerequisites for {milestone}; original goal unchanged. Review under Goals & plan."}
 
+    def _setting_allows(self, setting: str, allowed: tuple, what: str) -> None:
+        """A step the schedule queued runs only while the owner's setting still allows it: after he paused, set it back to
+        "wait for me" and resumed (or after a restart that kept the queue) the paid call and the decision still happened,
+        said as "by your setting" (review of batch EE). The owner's own button is not asked."""
+        if (self.current or {}).get('by') == 'schedule' and self.ws.settings().get(setting) not in allowed:
+            raise SkippedByOwner(f'your setting for {what} no longer allows it, so nothing was done')
+
     def _job_split(self, milestone: str) -> dict[str, Any]:
         """A stuck milestone broken down by the owner's setting (journey J11-G43), once."""
         from runesmith.app import stuck
+        self._setting_allows('stuck_policy', ('retry_split',), 'a milestone whose tries are used up')
 
         def checkpoint():
             self._work_checkpoint()
@@ -937,9 +957,15 @@ class Worker:
         if not by_setting:
             return self._run_build_job('resume_check', 'One retained-candidate check extension; no inference', draft_id=draft_id, reason=reason)
         from runesmith.app import automatic, rechecks
+        self._setting_allows('recheck_policy', (rechecks.POLICY,), 'a draft whose checks did not finish')
         title = rechecks.mark(self.ws, draft_id)
         try:
             result = self._run_build_job('resume_check', 'One retained-candidate check extension; no inference', draft_id=draft_id, reason=reason)
+        except StopRequested:
+            # A stop, pause or close is no verdict: the extension was given back (verification_resume), so the setting
+            # may ask again (review of batch EE; before, the draft's only extension was spent for good).
+            rechecks.unmark(self.ws, draft_id)
+            raise
         except WorkspaceError as error:
             said = f'“{title}”: a draft’s checks did not finish. By your setting, Runesmith tried to run them once more, but could not: {error} It waits for you.'
             automatic.record(self.ws, said, kind='recheck', draft=draft_id)
@@ -967,12 +993,18 @@ class Worker:
         return self._run_build_job('supplement', 'One authorized revision after a clarified requirement; spent attempts retained',
                                    draft_id=draft_id, reason=reason, instrument=instrument, author_only=author_only)
 
-    def _job_escalate(self) -> dict[str, Any]:
-        # The schedule gives the one more try when the owner's setting says so (journey J11-G43): said as such.
+    def _job_escalate(self, milestone_id: str | None = None) -> dict[str, Any]:
+        # The schedule gives the one more try when the owner's setting says so (journey J11-G43): said as such, for the
+        # milestone it chose (the first one the try can be given to, review of batch EE).
         by_setting = (self.current or {}).get('by') == 'schedule'
         from runesmith.app import stuck
-        milestone = stuck.next_escalation(self.ws) if by_setting else None
-        result = self._run_build_job('escalate', 'Using one alternate author after the bounded ordinary attempts')
+        self._setting_allows('stuck_policy', stuck.POLICIES, 'a milestone whose tries are used up')
+        milestone = None
+        if by_setting:
+            milestone = (next((m for m in (self.ws.plan() or {}).get('milestones', []) if m['id'] == milestone_id), None)
+                         if milestone_id else stuck.next_escalation(self.ws))
+        result = self._run_build_job('escalate', 'Using one alternate author after the bounded ordinary attempts',
+                                     **({'milestone_id': milestone_id} if milestone_id else {}))
         if by_setting and milestone:
             from runesmith.app import automatic
             said = (f'“{milestone["title"]}” had used up its tries. By your setting, Runesmith gave it one more try with '

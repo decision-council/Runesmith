@@ -163,11 +163,11 @@ def used_up(ws, milestone_id, *, escalation=None):
         one_more_try(ws, milestone_id, escalation)
 
 
-def one_more_try(ws, milestone_id, state="failed"):
+def one_more_try(ws, milestone_id, state="failed", key="e1"):
     milestone = next(m for m in ws.plan()["milestones"] if m["id"] == milestone_id)
     contract, snapshot = milestone_contract(ws, milestone), source_context(ws)["snapshot_digest"]
-    _write_json(ws.home / "build-escalations" / "e1.json", {
-        "id": "e1", "state": state, "contract": contract, "scope": ordinary_allowance(ws, contract, snapshot)["scope"],
+    _write_json(ws.home / "build-escalations" / (key + ".json"), {
+        "id": key, "state": state, "contract": contract, "scope": ordinary_allowance(ws, contract, snapshot)["scope"],
         "snapshot_digest": snapshot, "milestone": milestone_id, "utc": "2026-10-02T03:10:00Z"})
 
 
@@ -183,7 +183,7 @@ def test_one_more_try_is_scheduled_once_per_milestone_and_source(tmp_path):
     worker = Worker(ws, EventBus())
     used_up(ws, "m2")
     assert [r["milestone"]["id"] for r in stuck.stuck_milestones(ws)] == ["m2"]
-    assert worker.scheduled_job() == ("escalate", {})                  # what the owner's button would run
+    assert worker.scheduled_job() == ("escalate", {"milestone_id": "m2"})                  # what the owner's button would run
     one_more_try(ws, "m2", "failed")
     assert worker.scheduled_job() == ("build", {})                      # used: with "retry" nothing more by itself
     assert stuck.stuck_work(ws, "retry") is None
@@ -193,11 +193,11 @@ def test_the_one_more_try_takes_a_turn_and_the_others_build_in_between(tmp_path)
     ws = stuck_project(tmp_path, stuck_policy="retry")
     used_up(ws, "m2")
     worker = Worker(ws, EventBus())
-    assert worker.scheduled_job() == ("escalate", {})
+    assert worker.scheduled_job() == ("escalate", {"milestone_id": "m2"})
     _write_json(ws.home / "WORK.json", {"utc": "2026-10-02T04:00:00Z", "kind": "escalate", "result": "failed"})
     assert worker.scheduled_job() == ("build", {})                      # while it waits on a model, the plan goes on
     _write_json(ws.home / "WORK.json", {"utc": "2026-10-02T04:05:00Z", "kind": "build", "result": "done"})
-    assert worker.scheduled_job() == ("escalate", {})                   # then its turn again (nothing answered: unused)
+    assert worker.scheduled_job() == ("escalate", {"milestone_id": "m2"})                   # then its turn again (nothing answered: unused)
 
 
 def test_then_break_it_down_asks_once_and_never_for_a_smaller_step_or_over_the_owner(tmp_path):
@@ -744,3 +744,388 @@ def test_a_draft_made_for_an_earlier_contract_is_not_rechecked(tmp_path, monkeyp
     assert rechecks.next_draft(ws)["id"] == did
     ws.update_milestone("m1", {"done_when": "answer() returns 42, always"})
     assert rechecks.next_draft(ws) is None
+
+
+# ---- Review of batch EE (findings 6, 7, 8, 9, 10, 11, 12, 20, 21, 22) -------------------------------------------------
+
+def two_stuck(tmp_path, **settings):
+    """m2 and m3 have both used up their tries."""
+    ws = stuck_project(tmp_path, **settings)
+    third = ws.add_milestone("Second large feature", "does c", "", "c works")
+    used_up(ws, "m2")
+    used_up(ws, third["id"])
+    return ws, third["id"]
+
+
+def waiting_draft(ws, milestone_id, state="waiting", **extra):
+    milestone = next(m for m in ws.plan()["milestones"] if m["id"] == milestone_id)
+    draft = {"id": "dw-" + milestone_id, "state": state, "utc": "2026-10-02T04:00:00Z", "milestone": milestone_id,
+             "contract": milestone_contract(ws, milestone), "files": [], **extra}
+    _write_json(ws.home / "drafts" / draft["id"] / "DRAFT.json", draft)
+
+
+# -- #6, #21: a breakdown no plan can adopt is never paid for ----------------------------------------------------------
+
+def test_a_plan_without_room_for_the_steps_is_not_asked_and_the_old_proposal_is_not_held_back(tmp_path, monkeypatch):
+    # Review of batch EE: J11's plan holds 124 milestones and the bound was 30, so every scheduled split paid for an
+    # answer that could not be adopted, spent the milestone's only split, and kept the owner's proposal from coming.
+    from runesmith.app import breakdowns
+    ws = stuck_project(tmp_path, stuck_policy="retry_split")
+    used_up(ws, "m2", escalation="failed")
+    monkeypatch.setattr(breakdowns, "PLAN_BOUND", 5)                         # 2 milestones + up to 4 steps do not fit
+    m2 = ws.plan()["milestones"][1]
+    assert not stuck.may_split(ws, m2) and stuck.stuck_work(ws, "retry_split") is None
+    worker = Worker(ws, EventBus())
+    assert worker.scheduled_job() == ("build", {})
+    assert stuck.defers_breakdown(ws, "m2", "retry_split") is False          # the setting cannot act: the proposal comes
+    calls = []
+
+    class Asked:
+        def call(self, *args, **kwargs):
+            calls.append(1)
+    with pytest.raises(WorkspaceError, match="nothing was asked"):
+        stuck.split(ws, Asked(), "m2")
+    assert not calls and not (ws.home / stuck.SPLITS).exists()                # and the once-only mark is not spent
+    with pytest.raises(WorkspaceError, match="a plan holds at most 5"):
+        breakdowns.input_packet(ws, "m2")
+
+
+def test_a_plan_of_more_than_thirty_milestones_takes_a_breakdown_and_the_model_is_shown_it_in_outline(tmp_path):
+    # Review of batch EE: the old bound of 30 refused every adoption on a plan an owner built; the request carried the
+    # whole plan (206 KB of JSON on J11).
+    from test_breakdowns import answer, setup
+    from test_studio import scripted
+    from runesmith.app.breakdowns import adopt_breakdown, propose_breakdown
+    ws = setup(tmp_path)
+    for n in range(40):
+        ws.add_milestone(f"Extra {n}", "x" * 300, "", "done")
+    ws.update_milestone("m2", {"depends_on": [ws.plan()["milestones"][2]["id"]]})
+    scripted(ws, [answer()], roles=("plan",))
+    record = propose_breakdown(ws, ws.router(), "m2")
+    packet = json.loads((ws.home / record["packet_receipt"]).read_text())["packet"]
+    shown = {m["id"]: m for m in packet["plan"]["milestones"]}
+    parent = shown["m2"]
+    assert parent["detail"] == "Add two functions" and set(shown[ws.plan()["milestones"][2]["id"]]) >= {"detail"}   # in full
+    far = shown[ws.plan()["milestones"][-1]["id"]]
+    assert set(far) == {"id", "title", "status"} and len(json.dumps(packet["plan"])) < 12000                  # in outline
+    assert record["plan_digest"] == packet["plan_digest"] and "outline" in packet["plan"]
+    assert len(adopt_breakdown(ws, record["id"])["children"]) == 2
+
+
+def test_a_small_plan_is_sent_whole(tmp_path):
+    from test_breakdowns import setup
+    from runesmith.app.breakdowns import input_packet
+    ws = setup(tmp_path)
+    assert input_packet(ws, "m2")["plan"] == ws.plan()
+
+
+@pytest.mark.parametrize("case", ["a smaller step", "split already", "not stuck any more"])
+def test_the_old_proposal_waits_only_when_the_setting_will_act_on_that_milestone(tmp_path, case):
+    # Review of batch EE: with "then break it down" the proposal of smaller steps was held back for every milestone,
+    # also those the setting can never split.
+    ws = stuck_project(tmp_path, stuck_policy="retry_split")
+    used_up(ws, "m2", escalation="failed")
+    assert stuck.defers_breakdown(ws, "m2", "retry_split") is True           # it will break it down itself
+    if case == "a smaller step":
+        plan = ws.plan()
+        plan["milestones"][1]["parent_id"] = "m1"
+        _write_json(ws.home / "PLAN.json", plan)
+    elif case == "split already":
+        _write_json(ws.home / stuck.SPLITS, {"m2": "2026-10-02T04:00:00Z"})
+    else:
+        ws.update_milestone("m2", {"status": "dropped"})
+    assert stuck.defers_breakdown(ws, "m2", "retry_split") is False
+
+
+# -- #7, #20: one blocked milestone does not hold the others back ------------------------------------------------------
+
+def test_a_milestone_that_waits_on_a_draft_does_not_starve_the_one_more_try_of_the_others(tmp_path):
+    # Review of batch EE: the one more try was offered only to the first milestone whose tries were used up, so one
+    # that waited on a draft (an inconclusive check, an approval) stopped it for every milestone behind it.
+    from runesmith.app.building import build_escalation_status
+    ws, third = two_stuck(tmp_path, stuck_policy="retry")
+    waiting_draft(ws, "m2")
+    assert [r["milestone"]["id"] for r in stuck.stuck_milestones(ws)] == [third]
+    state = build_escalation_status(ws)
+    assert state["milestone"] == third and state["eligible"]
+    worker = Worker(ws, EventBus())
+    assert worker.scheduled_job() == ("escalate", {"milestone_id": third})
+    assert stuck.defers_breakdown(ws, third, "retry") is True               # its try is still to come
+    assert build_escalation_status(ws, "m2")["eligible"] is False           # m2 itself is still held by its draft
+
+
+def test_the_owners_button_and_the_setting_give_the_one_more_try_to_the_same_milestone(tmp_path, monkeypatch):
+    from runesmith.app.building import build_escalation_status
+    ws, third = two_stuck(tmp_path, stuck_policy="retry")
+    waiting_draft(ws, "m2")
+    assert build_escalation_status(ws)["milestone"] == third                # the button's choice
+    worker = Worker(ws, EventBus())
+    seen = []
+    monkeypatch.setattr(worker, "_run_build_job", lambda kind, detail, **p: (seen.append((kind, p)), {"summary": "ok"})[1])
+    worker._execute({"id": "j1", "kind": "escalate", "params": {"milestone_id": third}, "by": "schedule"}, schedule_next=False)
+    assert seen == [("escalate", {"milestone_id": third})]
+    [row] = automatic.recent(ws)
+    assert row["milestone"] == third and "Second large feature" in row["what"]
+
+
+# -- #8: a refusal for a file no model is shown is not paid for again ---------------------------------------------------
+
+def test_the_setting_does_not_pay_again_for_a_one_more_try_refused_for_an_unshown_file(tmp_path):
+    # Review of batch EE: such a refusal is not counted as used, so the schedule asked again every other step, a fresh
+    # paid call each time, and never reached the split.
+    from test_build_context import EDIT_HUGE, counting, gap_project
+    from runesmith.app.building import escalate_build
+    from runesmith.app.planner import PlannerUnavailable
+    from runesmith.app.snapshots import collect_snapshot
+    from runesmith.app.source_focus import save_focus
+    ws = gap_project(tmp_path, [EDIT_HUGE] * 4)
+    ws.update_settings({"stuck_policy": "retry_split", "autonomy": "propose"})
+    used_up(ws, "m1")
+    m1 = ws.plan()["milestones"][0]
+    worker = Worker(ws, EventBus())
+    assert worker.scheduled_job() == ("escalate", {"milestone_id": "m1"})
+    router = ws.router()
+    calls = counting(router)
+    with pytest.raises(PlannerUnavailable, match="huge.js was not shown"):
+        escalate_build(ws, router, milestone_id="m1")
+    assert len(calls) == 1 and stuck.gap_waits(ws, m1) == "huge.js"
+    _write_json(ws.home / "WORK.json", {"utc": "2026-10-02T04:00:00Z", "kind": "build", "result": "done"})
+    for _ in range(3):
+        assert worker.scheduled_job() == ("build", {})                      # no second paid call while it is not shown
+    save_focus(ws, ["huge.js"], collect_snapshot(ws)["digest"], "Builds of this milestone edit it")
+    assert stuck.gap_waits(ws, m1) is None                                  # shown now: the setting resumes
+    assert worker.scheduled_job() == ("escalate", {"milestone_id": "m1"})
+
+
+def test_a_milestone_whose_try_waits_for_a_file_does_not_hold_back_the_next_one(tmp_path, monkeypatch):
+    from test_build_context import EDIT_HUGE, gap_project
+    from runesmith.app.building import escalate_build
+    from runesmith.app.planner import PlannerUnavailable
+    ws = gap_project(tmp_path, [EDIT_HUGE] * 2)
+    ws.update_settings({"stuck_policy": "retry", "autonomy": "propose"})
+    second = ws.add_milestone("Second step", "does b", "", "b works")
+    used_up(ws, "m1")
+    used_up(ws, second["id"])
+    with pytest.raises(PlannerUnavailable, match="huge.js was not shown"):
+        escalate_build(ws, ws.router(), milestone_id="m1")
+    asked, real = [], stuck.build_escalation_status
+    monkeypatch.setattr(stuck, "build_escalation_status", lambda ws, milestone_id=None: (asked.append(milestone_id), real(ws, milestone_id))[1])
+    assert Worker(ws, EventBus()).scheduled_job() == ("escalate", {"milestone_id": second["id"]})
+    assert asked == [second["id"]]                    # judged for the milestone it is given to, not for the first one
+
+
+# -- #9: a decision reads the receipts once, outside the worker's lock --------------------------------------------------
+
+def test_a_scheduling_decision_reads_each_receipt_once_not_once_per_ready_milestone(tmp_path, monkeypatch):
+    # Review of batch EE: 29 ready milestones x 223 receipts = 6,500 reads per decision on J11's home (13 to 39 s).
+    from pathlib import Path
+    ws = stuck_project(tmp_path, stuck_policy="retry_split")
+    for n in range(7):
+        ws.add_milestone(f"Feature {n}", "does it", "", "it works")
+    for milestone in ws.plan()["milestones"][1:]:
+        used_up(ws, milestone["id"])
+    receipts = list((ws.home / "build-attempts").glob("*.json"))
+    assert len(receipts) == 24
+    reads = []
+    real = Path.read_text
+
+    def counting_read(self, *args, **kwargs):
+        if self.parent.name in ("build-attempts", "build-escalations"):
+            reads.append(self.name)
+        return real(self, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", counting_read)
+    assert Worker(ws, EventBus()).scheduled_job()[0] == "escalate"
+    assert len(reads) <= len(receipts) + 4, len(reads)                       # once each (before: several hundred)
+    reads.clear()
+    stuck.defers_breakdown(ws, "m2", "retry")
+    assert len(reads) <= len(receipts) + 4, len(reads)
+
+
+def test_the_schedule_chooses_its_next_step_without_holding_the_workers_lock(tmp_path, monkeypatch):
+    ws = stuck_project(tmp_path)
+    worker = Worker(ws, EventBus())
+    held = []
+    monkeypatch.setattr(worker, "scheduled_job", lambda: (held.append(worker._cv._is_owned()), ("build", {}))[1])
+    monkeypatch.setattr(worker, "_due", lambda: 0)
+    monkeypatch.setattr(worker, "_execute", lambda job: setattr(worker, "_closing", True))
+    worker._run()
+    assert held == [False]
+
+
+def test_a_step_chosen_while_the_owner_paused_is_not_run(tmp_path, monkeypatch):
+    ws = stuck_project(tmp_path)
+    worker = Worker(ws, EventBus())
+
+    def choose():
+        worker.paused = True                                              # he pauses while the schedule is choosing
+        return ("build", {})
+    monkeypatch.setattr(worker, "scheduled_job", choose)
+    monkeypatch.setattr(worker, "_due", lambda: 0)
+    monkeypatch.setattr(worker._cv, "wait", lambda **kwargs: setattr(worker, "_closing", True))
+    monkeypatch.setattr(worker, "_execute", lambda job: pytest.fail("ran a step chosen before the pause"))
+    worker._run()
+
+
+# -- #10, #22: one busy moment does not wedge every breakdown ------------------------------------------------------------
+
+def test_a_split_turned_away_by_every_route_is_not_spent_and_blocks_nothing(tmp_path):
+    # Review of batch EE: a call every route turned away was recorded as an uncertain one, which stops every breakdown
+    # in the project until the owner abandons it, and the once-only mark stayed.
+    from runesmith.app.breakdowns import propose_breakdown
+    from runesmith.app.planner import PlannerUnavailable
+    from runesmith.instruments import TransportCensored
+    ws, third = two_stuck(tmp_path, stuck_policy="retry_split")
+    one_more_try(ws, "m2", "failed")
+    one_more_try(ws, third, "failed", key="e2")
+
+    class Busy:
+        def call(self, *args, **kwargs):
+            raise TransportCensored("every route failed: overloaded", receipt={"no_route_accepted": True, "tokens_in": 0})
+    with pytest.raises(PlannerUnavailable, match="did not reach a model") as refused:
+        stuck.split(ws, Busy(), "m2")
+    assert refused.value.nothing_ran
+    [attempt] = [json.loads(p.read_text()) for p in (ws.home / "breakdown-attempts").glob("*.json")]
+    assert attempt["state"] == "transport_failed" and "packet" not in attempt
+    assert "m2" not in _read_json(ws.home / stuck.SPLITS, {})              # not spent
+    milestones = {m["id"]: m for m in ws.plan()["milestones"]}
+    assert stuck.may_split(ws, milestones["m2"]) and stuck.may_split(ws, milestones[third])
+    assert Worker(ws, EventBus()).scheduled_job() == ("split", {"milestone": "m2"})
+    from test_breakdowns import answer
+    from test_studio import scripted
+    scripted(ws, [answer()], roles=("plan",))
+    assert propose_breakdown(ws, ws.router(), third)["state"] == "proposed"      # nothing waits for the owner to abandon
+
+
+def test_three_turned_away_calls_do_not_count_as_attempts_on_unchanged_evidence(tmp_path):
+    from runesmith.app.breakdowns import propose_breakdown
+    from runesmith.app.planner import PlannerUnavailable
+    from runesmith.instruments import TransportCensored
+    from test_breakdowns import answer, setup
+    from test_studio import scripted
+    ws = setup(tmp_path)
+
+    class Busy:
+        def call(self, *args, **kwargs):
+            raise TransportCensored("overloaded", receipt={"not_admitted": True})
+    for _ in range(3):
+        with pytest.raises(PlannerUnavailable, match="did not reach a model"):
+            propose_breakdown(ws, Busy(), "m2")
+    scripted(ws, [answer()], roles=("plan",))
+    assert propose_breakdown(ws, ws.router(), "m2")["state"] == "proposed"
+
+
+def test_a_call_that_may_have_been_processed_still_blocks_until_the_owner_reviews_it(tmp_path):
+    from runesmith.app.breakdowns import propose_breakdown
+    from runesmith.app.planner import PlannerUnavailable
+    from runesmith.instruments import TransportCensored
+    from test_breakdowns import setup
+    ws = setup(tmp_path)
+
+    class Lost:
+        def call(self, *args, **kwargs):
+            raise TransportCensored("no response after 3 attempts")             # no receipt: it may have run
+    with pytest.raises(PlannerUnavailable, match="uncertain"):
+        propose_breakdown(ws, Lost(), "m2")
+    with pytest.raises(PlannerUnavailable, match="reconciliation"):
+        propose_breakdown(ws, Lost(), "m2")
+
+
+# -- #11: a queued step runs only while the setting still allows it ------------------------------------------------------
+
+@pytest.mark.parametrize("kind", ["split", "escalate", "resume_check"])
+def test_a_scheduled_step_queued_before_the_owner_set_the_policy_back_to_wait_does_nothing(tmp_path, monkeypatch, kind):
+    # Review of batch EE: after a pause (or a restart that kept the queue) and "wait for me", the paid call and the
+    # adoption still happened, said as "by your setting".
+    from runesmith.app import rechecks
+    if kind == "resume_check":
+        ws, did = ran_out(tmp_path, monkeypatch)
+        job = scheduled_recheck(ws, did)
+        ws.update_settings({"recheck_policy": "wait"})
+    else:
+        ws = stuck_project(tmp_path, stuck_policy="retry_split")
+        used_up(ws, "m2", escalation="failed" if kind == "split" else None)
+        job = {"id": "j1", "kind": kind, "params": {"milestone": "m2"} if kind == "split" else {}, "by": "schedule"}
+        ws.update_settings({"stuck_policy": "wait"})
+    plan_before = ws.plan()
+    worker = Worker(ws, EventBus())
+    monkeypatch.setattr(worker, "_run_build_job", lambda *a, **k: pytest.fail("a step ran after the setting was turned off"))
+    monkeypatch.setattr(ws, "router", lambda *a, **k: pytest.fail("a model was asked after the setting was turned off"))
+    worker._execute(job, schedule_next=False)
+    assert worker.history[-1]["result"] == "skipped" and "no longer allows it" in worker.history[-1]["outcome"]["summary"]
+    assert ws.plan() == plan_before and not automatic.recent(ws)
+    assert not (ws.home / stuck.SPLITS).exists() and not (ws.home / rechecks.MARKS).exists()
+
+
+def test_the_owners_own_button_is_not_asked_about_the_setting(tmp_path, monkeypatch):
+    ws = stuck_project(tmp_path, stuck_policy="wait")
+    used_up(ws, "m2")
+    worker = Worker(ws, EventBus())
+    monkeypatch.setattr(worker, "_run_build_job", lambda kind, detail, **p: {"summary": "ran"})
+    worker._execute({"id": "j1", "kind": "escalate", "params": {}, "by": "owner"}, schedule_next=False)
+    assert worker.history[-1]["result"] == "done"
+
+
+# -- #12: a stop is no verdict ----------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("stop_at", [2, 3, 4])
+def test_a_stop_during_a_recheck_gives_the_extension_back(tmp_path, monkeypatch, stop_at):
+    # Review of batch EE: a stop, pause or close during the (up to 18 minute) extension used up the draft's only one and,
+    # when it landed between phases, replaced the draft's verification with a record that nothing could resume.
+    from runesmith.app.verification_resume import resume_status, resume_verification
+    from runesmith.app.worker import StopRequested
+    ws, did = ran_out(tmp_path, monkeypatch)
+    before = ws._draft(did)["verification"]
+    history = ws._draft(did).get("verification_history")
+    finishing(monkeypatch)
+    count = []
+
+    def checkpoint():
+        count.append(1)
+        if len(count) >= stop_at:
+            raise StopRequested()
+    with pytest.raises(StopRequested):
+        resume_verification(ws, did, "The owner's button", checkpoint=checkpoint)
+    draft = ws._draft(did)
+    status = resume_status(ws, draft)
+    assert not status["used"] and status["eligible"], status
+    assert draft["verification"] == before and draft.get("verification_history") == history
+    assert [e["data"]["draft"] for e in ws.ledger.events("build.check_resume_stopped")] == [did]
+    finishing(monkeypatch)                                                  # and it can be asked for again
+    assert resume_verification(ws, did, "Again")["verification"]["status"] == "acceptance_passed"
+
+
+def test_a_stop_after_the_checks_reached_a_verdict_keeps_the_verdict_and_the_extension_spent(tmp_path, monkeypatch):
+    from runesmith.app.verification_resume import resume_status, resume_verification
+    from runesmith.app.worker import StopRequested
+    ws, did = ran_out(tmp_path, monkeypatch)
+    finishing(monkeypatch, times_out="owner")
+    count = []
+
+    def checkpoint():
+        count.append(1)
+        if len(count) >= 5:                                                  # after both phases, before the apply
+            raise StopRequested()
+    with pytest.raises(StopRequested):
+        resume_verification(ws, did, "The owner's button", checkpoint=checkpoint)
+    status = resume_status(ws, ws._draft(did))
+    assert status["used"] and status["receipt"]["state"] == "interrupted"
+    assert ws._draft(did)["verification"]["acceptance"]["status"] == "timeout"
+
+
+def test_a_scheduled_recheck_that_was_stopped_is_asked_for_again_by_the_setting(tmp_path, monkeypatch):
+    from runesmith.app import rechecks
+    from runesmith.app.worker import StopRequested
+    ws, did = ran_out(tmp_path, monkeypatch)
+    worker = Worker(ws, EventBus())
+    finishing(monkeypatch)
+    calls = []
+
+    def checkpoint():
+        calls.append(1)
+        if len(calls) >= 3:
+            raise StopRequested()
+    monkeypatch.setattr(worker, "_work_checkpoint", checkpoint)
+    worker._execute(scheduled_recheck(ws, did), schedule_next=False)
+    assert worker.history[-1]["result"] == "stopped"
+    assert did not in _read_json(ws.home / rechecks.MARKS, {}) and rechecks.next_draft(ws)["id"] == did
+    assert Worker(ws, EventBus()).scheduled_job() == ("resume_check", {"draft_id": did, "reason": rechecks.REASON})
