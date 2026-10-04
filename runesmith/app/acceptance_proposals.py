@@ -12,6 +12,7 @@ The caller owns the Workspace instance lock, as with other Studio mutations.
 from __future__ import annotations
 
 import ast
+import calendar
 import hashlib
 import json
 import re
@@ -25,7 +26,7 @@ from runesmith import atomic
 from runesmith.app import acceptance_examples
 from runesmith.app.acceptance_contracts import expectations, publish_expectations
 from runesmith.app.building import _run_checks
-from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, source_context, why_no_answer
+from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, milestone_contract, source_context, why_no_answer
 from runesmith.app.snapshots import SnapshotUnsupported, collect_snapshot
 from runesmith.instruments import LenientSchema
 from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
@@ -423,8 +424,12 @@ def _holds(ws):
     return held
 
 
-def _clean(answer, style, data, ws=None) -> dict[str, Any]:
-    """The proposal as stored, from the model's answer in either style; a WorkspaceError says what is wrong."""
+def _clean(answer, style, data, ws=None, final=False) -> dict[str, Any]:
+    """The proposal as stored, from the model's answer in either style; a WorkspaceError says what is wrong.
+
+    `final`: this is the answer to the Checker's one more try. A file it still runs without listing is then no reason
+    to refuse it: it is kept with the finding under its check, so the autopilot turns it down and counts the round
+    (journey J11-CC4, review: refused twice, nothing was stored, and the schedule asked again at once, for ever)."""
     if style != 'examples':
         return validate(answer)
     milestone = data['milestone']
@@ -436,7 +441,7 @@ def _clean(answer, style, data, ws=None) -> dict[str, Any]:
     shaped = acceptance_examples.validate_examples(
         answer, ' '.join(str(milestone.get(k) or '') for k in ('title', 'detail', 'done_when')),
         json.dumps(context, ensure_ascii=False) + '\n' + str(data.get('documents') or ''),
-        refuse_missing=listed, held=_holds(ws) if ws is not None else None)
+        refuse_missing=listed and not final, held=_holds(ws) if ws is not None else None)
     # The limit is for check code a model writes; here the file is Runesmith's own template plus the examples,
     # which the examples format already bounds (journey J11-B12: the template grew, and three examples with their
     # motion files were refused as too long).
@@ -510,12 +515,16 @@ def status(ws) -> dict[str, Any]:
                          'autopilot': (match.get('autopilot') or {}).get('reason') if autopilot else None}
                         if match else {'provenance': 'owner file', 'checks': None, 'sha256': digest})
         waiting = next((p for p in reversed(record['proposals']) if p.get('state') == 'proposed'), None)
-        if approved or waiting:
+        # The schedule has stopped asking for this milestone's checks (journey J11, review of batch CC): said on the page,
+        # without reading the project's files on every poll (a source that changed meanwhile is seen by the schedule).
+        paused = None if approved or waiting else requests_paused(ws, milestone, record, verify_source=False)
+        if approved or waiting or paused:
             out[mid] = {'approved': approved,
                         'proposal': {k: waiting.get(k) for k in ('id', 'checks', 'assumes', 'dry_run', 'revision', 'code',
                                                                       'drafted_by', 'utc', 'dropped', 'not_checked', 'style',
                                                                       'autopilot')}
-                        if waiting else None}
+                        if waiting else None,
+                        **({'requests_paused': paused} if paused else {})}
     return out
 
 
@@ -568,13 +577,15 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
             raise PlannerUnavailable(f'the first answer broke a rule ({str(error)[:200]}), and asking again failed: {again}') from again
         checkpoint()
         try:
-            clean = _clean(out.data, style, data, ws)
+            clean = _clean(out.data, style, data, ws, final=True)
         except WorkspaceError as again:
             # Both answers are kept, so what the Checker wrote can be read (journey J11-G3).
             kept = ws.home / 'acceptance-proposals' / 'refused' / (key + '.json')
             _write_json(kept, {'milestone': milestone_id, 'utc': _now(), 'drafted_by': drafted_by,
                                'errors': [str(error)[:300], str(again)[:300]],
                                'answers': [_bounded(first_answer), _bounded(out.data)]})
+            note_refusal(ws, milestone_id, key, out.receipt.get('answered_by') or out.receipt.get('model') or drafted_by,
+                         f'Runesmith could not use either answer. First: {str(error)[:250]} Then: {str(again)[:250]}')
             if isinstance(error, acceptance_examples.NothingToCheck) and isinstance(again, acceptance_examples.NothingToCheck):
                 said = acceptance_examples._notes((out.data or {}).get('not_checked') if isinstance(out.data, dict) else None)
                 raise WorkspaceError('Nothing in this milestone could be checked automatically'
@@ -613,6 +624,115 @@ def propose(ws, router, milestone_id, *, checkpoint=lambda: None, style=None) ->
     ws.ledger.append('acceptance.proposed', {'milestone': milestone_id, 'proposal': key, 'checks': len(clean['checks']),
                                              'code_sha256': clean['code_sha256'], 'proposed_by': proposal['drafted_by']})
     return proposal
+
+
+def note_refusal(ws, milestone_id, key, drafted_by, reason) -> None:
+    """Keep a trace of a Checker answer Runesmith could not use at all (both tries broke a rule of the examples format),
+    in the milestone's record: the next Checker reads why, and with the check autopilot on it counts as a turned-down
+    round, so the schedule moves on after MAX_ROUNDS instead of asking again at once, for ever, and never building
+    (journey J11-CC4, review). Nothing was proposed, so the row is a discarded one."""
+    now = _now()
+    row = {'id': key, 'state': 'discarded', 'refused': True, 'utc': now, 'discarded_utc': now, 'milestone': milestone_id,
+           'drafted_by': drafted_by, 'reason': reason[:1000], 'checks': []}
+    if ws.settings().get('checks_autopilot'):
+        row['autopilot'] = {'decision': 'turned_down', 'reason': reason[:1000], 'utc': now}
+    with ws._lock:
+        record = _record(ws, milestone_id, {'milestone': milestone_id, 'proposals': []})
+        rows = record['proposals'] + [row]
+        keep = _kept_beyond_window(rows)
+        record['proposals'] = [r for i, r in enumerate(rows) if i >= len(rows) - 10 or id(r) in keep]
+        _write_json(_record_path(ws, milestone_id), record)
+
+
+# Failed scheduled requests for a milestone's checks (journey J11, review of batch CC): a request whose answer was not
+# usable, or that no model answered, was asked again at once and for ever, ahead of every build, so nothing else was
+# built. The record sits in the milestone's proposals file, on the milestone's contract and the project's source: after
+# REQUEST_FAILURES failed scheduled requests on the same ones the schedule stops asking until one of them changes. The
+# owner's own request always runs. The pause also ends after FORGIVEN_AFTER_S, so a long outage of every model, in which
+# no build changes the source, cannot stall a project for good.
+REQUEST_FAILURES = 2
+FORGIVEN_AFTER_S = 2 * 3600
+
+
+def _causes(error) -> list[Any]:
+    chain = []
+    while error is not None and len(chain) < 6 and all(error is not seen for seen in chain):
+        chain.append(error)
+        error = error.__cause__ or error.__context__
+    return chain
+
+
+def counts_as_failure(error) -> bool:
+    """Whether a failed scheduled request is held against its milestone. Not when the owner skipped it, and not when
+    nothing ran ("no model accepted it": every route refused it at admission): that only backs off, since it may pass
+    later (the full speed wait). Anything else counts: an answer that was not usable, a model that did not answer."""
+    if isinstance(error, SkippedByOwner):
+        return False
+    if any((getattr(cause, 'receipt', None) or {}).get(flag) for cause in _causes(error)
+           for flag in ('not_admitted', 'no_route_accepted')):
+        return False
+    return 'withdrew checks for this milestone while' not in str(error)
+
+
+def source_digest(ws) -> str | None:
+    """The project's source as the checks' trial sees it; None when it cannot be copied."""
+    try:
+        return collect_snapshot(ws)['digest']
+    except SnapshotUnsupported:
+        return None
+
+
+def note_request_failure(ws, milestone_id, error) -> dict[str, Any] | None:
+    """Count a failed scheduled request for this milestone's checks; the record {count, utc, reason, ...} or None when
+    it does not count. A failure on another contract or source than the last starts the count again."""
+    if not counts_as_failure(error):
+        return None
+    milestone = _milestone(ws, milestone_id)
+    contract, snapshot = milestone_contract(ws, milestone), source_digest(ws)
+    with ws._lock:
+        record = _record(ws, milestone_id, {'milestone': milestone_id, 'proposals': []})
+        before = record.get('request_failures') or {}
+        same = (before.get('contract') == contract and before.get('snapshot') == snapshot
+                and not _forgiven(before))
+        record['request_failures'] = {'count': (int(before.get('count') or 0) if same else 0) + 1, 'contract': contract,
+                                      'snapshot': snapshot, 'utc': _now(), 'reason': str(error)[:300]}
+        _write_json(_record_path(ws, milestone_id), record)
+        return dict(record['request_failures'])
+
+
+def clear_request_failures(ws, milestone_id) -> None:
+    """A request that was answered (or the owner's own withdrawal) ends the count."""
+    with ws._lock:
+        record = _record(ws, milestone_id)
+        if record.pop('request_failures', None) is not None:
+            _write_json(_record_path(ws, milestone_id), record)
+
+
+def _forgiven(failures) -> bool:
+    try:
+        ended = calendar.timegm(time.strptime(str(failures.get('utc')), '%Y-%m-%dT%H:%M:%SZ'))
+    except ValueError:
+        return True
+    return time.time() - ended > FORGIVEN_AFTER_S
+
+
+def requests_paused(ws, milestone, record=None, *, verify_source=True) -> dict[str, Any] | None:
+    """Why the schedule no longer asks for this milestone's checks: {count, utc, reason, message}, or None while it may.
+    Paused after REQUEST_FAILURES failed requests on this very milestone text and project source, until either changes
+    (`verify_source` off: the source is not read, for a page that only says so)."""
+    mid = milestone.get('id')
+    record = record if record is not None else _record(ws, mid)
+    failures = record.get('request_failures') or {}
+    if int(failures.get('count') or 0) < REQUEST_FAILURES or _forgiven(failures):
+        return None
+    if failures.get('contract') != milestone_contract(ws, milestone):
+        return None
+    if verify_source and failures.get('snapshot') != source_digest(ws):
+        return None
+    return {'count': failures['count'], 'utc': failures.get('utc'), 'reason': failures.get('reason'),
+            'message': f"The last {failures['count']} requests for these checks did not work ({failures.get('reason')}), so "
+                       'Runesmith stopped asking for them by itself. It asks again when the project’s files or this '
+                       'milestone change, or when you ask.'}
 
 
 def findings(proposal) -> list[str]:
@@ -929,6 +1049,7 @@ def withdraw(ws, milestone_id, *, reason: str) -> dict[str, Any]:
             if row.get('state') == 'proposed':      # written before his reason: neither he nor the autopilot approves it
                 row.update(state='stale', stale_note='Written before the owner withdrew checks, so it never read his reason.')
         record['withdrawals'] = (record.get('withdrawals') or 0) + 1
+        record.pop('request_failures', None)          # he asked for new checks: the schedule may ask again
         proposal.update(state='withdrawn', withdrawn_utc=_now(), reason=reason.strip()[:1000])
         _write_json(path, record)
         ws.ledger.append('acceptance.withdrawn', {'milestone': milestone_id, 'proposal': proposal.get('id'), 'kept': keep.name,

@@ -347,7 +347,14 @@ def test_every_reader_of_a_proposal_record_skips_a_malformed_row(tmp_path):
     record["proposals"] = [None, "oops"] + record["proposals"]
     path.write_text(json.dumps(record), encoding="utf-8")
     assert status(ws)["m1"]["proposal"]["id"] == first["id"]
-    assert autopilot.rounds_used(ws, "m1") == 0 and autopilot.needs_checks(ws) is None      # one is waiting
+    # One is waiting and was never reviewed: asked for again, it is reused and the review runs (review of batch CC).
+    assert autopilot.rounds_used(ws, "m1") == 0 and autopilot.needs_checks(ws) == "m1"
+    autopilot.act(ws, "m1", first, {"decision": "owner", "reason": "left for the owner"})
+    assert autopilot.needs_checks(ws) is None                                                   # judged: it waits for him
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["proposals"][-1].pop("autopilot")
+    record["proposals"] = [None, "oops"] + record["proposals"]                                  # the malformed rows again
+    path.write_text(json.dumps(record), encoding="utf-8")
     discard(ws, "m1", first["id"], reason="Not these.")
     assert autopilot.needs_checks(ws) == "m1"
 
