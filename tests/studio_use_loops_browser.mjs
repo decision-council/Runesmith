@@ -475,7 +475,7 @@ try{
     // B2.07 (a newcomer never meets a stale model name): the Model ID is pre-filled and the note says it is checked when the key
     // is added; the key brings the provider's own list (a recommended model and one-click choices); an owner's own name is kept;
     // a provider's "use X instead" is a button that changes only the model name, and survives the page being redrawn.
-    const presetsBefore=inference.presets.slice(),instrumentsBefore=inference.instruments.length;
+    const presetsBefore=inference.presets.slice(),instrumentsBefore=inference.instruments.length,readyBefore=structuredClone(inference.ready),rolesBefore=structuredClone(inference.roles);
     inference.presets.push({id:'gemini',label:'Google Gemini',group:'With a key',kind:'openai',base_url:'https://generativelanguage.googleapis.com/v1beta/openai',
       key:'required',key_url:'https://aistudio.google.com/apikey',suggested:['gemini-3.8-flash','gemini-3.6-flash'],blurb:'A free tier through Google AI Studio.'});
     modelsFixture={ok:true,status:200,models:['gemini-3.6-flash','gemini-3.9-flash','gemini-3.9-pro'],count:3,recommended:'gemini-3.9-flash',choices:['gemini-3.6-flash','gemini-3.9-pro']};
@@ -532,7 +532,7 @@ try{
     modelsDelayMs=0;
     // Leave the shared fixtures as they were.
     inference.presets.splice(0,inference.presets.length,...presetsBefore);inference.instruments.splice(instrumentsBefore);
-    for(const role of Object.keys(inference.roles))inference.roles[role]=inference.roles[role].filter(n=>!n.startsWith('gemini'));
+    inference.roles=rolesBefore;inference.ready=readyBefore;
     modelsFixture={ok:true,status:200,models:[],count:0,recommended:null,choices:[]};testFixtures={};
     await page.evaluate(()=>window.mount('inference'));
     loops.push({id:'B2.07',case:'Model ID pre-filled with its checked-when-you-add-your-key note; the key brings the live recommendation and one-click choices; an owner-typed name is kept; the provider hint is a button that outlives a redraw and switches only on click; Save at once reads the list first',result:'passed'});

@@ -571,6 +571,12 @@ def _provider_hint(raw: str) -> str | None:
     return model_hint(raw)
 
 
+def _with_hint(text: str) -> str:
+    """A refusal's words, with the replacement the provider named for a retired model (it becomes a button under Thinking power)."""
+    from runesmith.app.providers import with_model_hint
+    return with_model_hint(text)
+
+
 def why_no_answer(error) -> str:
     """Why a model call brought no answer, in plain words and with what to try; the gateway's words follow, short (F15)."""
     raw = str(error)
@@ -675,7 +681,7 @@ def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_toke
     if isinstance(outcome.data, dict) and outcome.data.get("skipped_by_owner"):
         raise SkippedByOwner("you skipped the request, so nothing changed")
     if not outcome.ok and outcome.error_kind == "config":
-        failure = PlannerUnavailable(outcome.error or "the model service refused this request")
+        failure = PlannerUnavailable(_with_hint(outcome.error or "the model service refused this request"))
         if (outcome.receipt or {}).get("refused_before_answer"):
             failure.remote_receipt = dict(outcome.receipt)    # refused before answering: no try is used (J2-B9)
         raise failure

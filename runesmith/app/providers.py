@@ -235,6 +235,14 @@ def model_hint(message: str, current: str = "") -> str | None:
     return None
 
 
+def with_model_hint(text: str) -> str:
+    """A refusal's plain words, plus "the service suggests X" when it named a replacement for a retired model."""
+    hint = model_hint(text)
+    if not hint:
+        return text
+    return f"{text} The service suggests {hint}: under Thinking power, press Test on that model to switch with one click."
+
+
 def _get_json(url: str, *, headers: dict[str, str] | None = None, timeout: float = 3.0) -> tuple[int, Any]:
     request = Request(url, headers=dict(headers or {}), method="GET")
     try:

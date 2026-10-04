@@ -229,3 +229,18 @@ def test_the_form_prefills_checks_on_the_key_and_offers_the_hint_as_a_button_tha
     assert "was only a suggestion" in UI                                                            # a replacement on Save is said
     assert "const lastTest = new Map()" in UI and "testStatus(i, reload)" in UI                     # the hint outlives load()
     assert "/model`, { model: t.hint, expect: i.model }" in UI and "suggests ${t.hint}" in UI
+
+
+def test_a_real_work_call_refused_for_a_retired_model_says_what_the_service_suggests(tmp_path):
+    # The path a build or plan really takes: the kernel turns the 404 into a "config" refusal, and the planner raises its words.
+    from runesmith.app.planner import PlannerUnavailable, _call
+    from runesmith.config import build_instrument
+    from runesmith.instruments import Router
+    with GoogleRetired() as server:
+        instrument = build_instrument("g", {"kind": "openai", "base_url": server.root + "/v1", "model": "gemini-2.5-flash"})
+        router = Router({"g": instrument}, {"plan": ["g"]}, backoff_s=(0, 0), sleep=lambda _: None)
+        with pytest.raises(PlannerUnavailable) as raised:
+            _call(None, router, "p", "s", {"type": "object"}, "k", 100)
+    message = str(raised.value)
+    assert "The service suggests gemini-3.8-flash" in message and "press Test on that model" in message
+    assert providers.with_model_hint("The service refused the key (401).") == "The service refused the key (401)."
