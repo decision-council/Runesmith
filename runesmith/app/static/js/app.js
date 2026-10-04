@@ -7,7 +7,8 @@ import { LOGO } from './icons.js';
 const JOB_WORDS = { propose_acceptance: 'Proposing acceptance checks', plan: 'Drafting a plan', goalposts: 'Proposing goalposts',
   draft: 'Drafting files', build: 'Building the next step', revise: 'Revising a draft', correct: 'Correcting a draft',
   escalate: 'Giving the step one more try', readmit: 'Checking a kept answer again', readmit_answer: 'Checking a kept answer again', supplement: 'Asking for missing files', breakdown: 'Proposing smaller steps',
-  map: 'Mapping the folder', round: 'The round', measure: 'Taking a measurement' };
+  map: 'Mapping the folder', round: 'The round', measure: 'Taking a measurement',
+  resume_check: 'Rechecking a draft whose checks did not finish', split: 'Breaking a stuck step down' };
 
 const NAV = [
   { section: 'Workspace' },

@@ -238,6 +238,7 @@ await context.route('**/*',async route=>{
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
   else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false,autonomy:'propose',
     exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark',recovery_policy:'wait',stuck_policy:'wait',recheck_policy:'wait'};
+  else if(p==='/api/ping')data={ok:true};                                      // B20.16: the slow note's plain request
   else if(p==='/api/map/environment')data=fixtureProbeMap||{map:{objects:fixtureMapObjects||[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
   else if(p==='/api/map/development')data={objects:fixtureProbeMap?.map.objects||[],goals:[],plan:null,lineage:[],campaigns:[]};
   else if(p==='/api/build')data={apply:false,acceptance_folder:'.runesmith/acceptance',last:null};
@@ -986,6 +987,8 @@ try{
     const sent=page.waitForRequest(r=>new URL(r.url()).pathname==='/api/worker/run'&&r.method()==='POST');
     await page.getByRole('dialog').getByRole('button',{name:'Queue draft only',exact:true}).click();
     assert.deepEqual((await sent).postDataJSON(),{job:'build',params:{author_only:true}});
+    // The request is seen as sent before the fixture's route records it; on a loaded machine that gap shows.
+    for(let i=0;i<60&&!requests.slice(start).some(r=>r.method==='POST');i++)await new Promise(r=>setTimeout(r,50));
     assert.equal(requests.slice(start).filter(r=>r.method==='POST').length,1);
     loops.push({id:'B10.04',case:'Confirmation sends only the typed author-only build, not a check or grant mutation',result:'passed'});
     await mount();await open();
@@ -1615,6 +1618,8 @@ try{
     const sent=page.waitForRequest(r=>new URL(r.url()).pathname==='/api/worker/run'&&r.method()==='POST');
     await page.getByRole('dialog').getByRole('button',{name:'Queue draft only',exact:true}).click();
     assert.deepEqual((await sent).postDataJSON(),{job:'build',params:{author_only:true}});
+    // The request is seen as sent before the fixture's route records it; on a loaded machine that gap shows.
+    for(let i=0;i<60&&!requests.slice(start).some(r=>r.method==='POST');i++)await new Promise(r=>setTimeout(r,50));
     assert.equal(requests.slice(start).filter(r=>r.method==='POST').length,1);
     loops.push({id:'B17.07',case:'A permitted click keeps the existing confirm-and-queue route; no budget reset, checks or apply request',result:'passed'});
     await page.locator('.toast').evaluateAll(nodes=>nodes.forEach(n=>n.remove())); // Clear transient fixture toasts for visual QA.
