@@ -13,7 +13,7 @@
   --c: 8px;                                      /* the chamfer: how far a corner is cut */
   --gold: #e8b04a; --gold-lt: #f8dc94; --gold-dp: #c58a34; --heat: #ff8a3d;
   --ember: var(--heat); --rune: var(--gold-lt); --violet: #8b6cff; --sky: #4aa8ff;
-  --good: #5fd3a0; --warn: var(--gold); --bad: #ff5a4f;
+  --good: #5fd3a0; --warn: #e8b04a; --bad: #ff5a4f;
   --good-soft: rgba(95, 211, 160, .12); --good-line: rgba(95, 211, 160, .42);
   --warn-soft: rgba(232, 176, 74, .14); --warn-line: rgba(232, 176, 74, .45);
   --bad-soft: rgba(255, 90, 79, .13); --bad-line: rgba(255, 90, 79, .45);
@@ -53,7 +53,7 @@
   --heat-soft: rgba(224, 100, 20, .12); --heat-line: rgba(154, 55, 6, .5);
   --band-bad: #b3261e; --band-minimal: #c58a34; --band-optimal: #0b6040; --band-world: #5a3ae0; --band-unknown: #8a8578;
 }
-:root[data-theme="light"] a { color: var(--accent-text); }   /* links: 5:1 or more on parchment */
+:root[data-theme="light"] a { color: #7d4e08; }   /* links: 5:1 or more on parchment */
 
 /* ---------------------------------------------------------- the cut ------ */
 /* Everything with a body gets 45-degree corners and a hairline that follows them: the straight edges are the border, the

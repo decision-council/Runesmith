@@ -341,7 +341,8 @@ def api_worker_run(s: Studio, q, body):
     params = {k: v for k, v in (body.get("params") or {}).items() if k in allowed}
     queued = s.worker.enqueue(job, **params)
     if job in runesmith_md.RETRIES:         # the owner's "one more try" and its kin: decisions for RUNESMITH.md
-        runesmith_md.retry_asked(_ws(s), job)
+        if getattr(s, 'ws', None) is not None:          # a Studio without a folder (or a test's stand-in) logs nothing
+            runesmith_md.retry_asked(s.ws, job)
     return queued
 
 
