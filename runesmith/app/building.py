@@ -1062,7 +1062,8 @@ def _apply_if_current(ws, draft, milestone, contract, grant, verification, resul
                 ran = int(oracle.get('ran') or 0)
                 skipped = int(oracle.get('skipped') or 0)
                 passed = max(0, ran - skipped - int(oracle.get('failures') or 0) - int(oracle.get('errors') or 0))
-                runesmith_md.build_done(ws, milestone['id'], draft, applied['files'], passed, ran - skipped)
+                runesmith_md.build_done(ws, milestone['id'], draft, applied['files'], passed, ran - skipped,
+                                        max(0, len(verification.get('acceptance_bundle') or {}) - 1))
                 result.update(advanced=True, summary=f"Applied {draft['id']}; acceptance passed; {milestone['id']} complete.")
             else:
                 result['summary'] = applied['detail']

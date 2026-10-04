@@ -355,11 +355,26 @@ def test_a_restart_decision_and_a_retry_are_logged(tmp_path):
     runesmith_md.restart_decision(ws, "park", "owner", 1)
     runesmith_md.restart_decision(ws, "keep", "Runesmith (your setting)", 3)
     runesmith_md.retry_asked(ws)
+    runesmith_md.retry_asked(ws, "resume_author")
+    runesmith_md.retry_asked(ws, "map")                         # not a retry: nothing is written
     assert [line.split(": ", 1)[1] for line in log_of(tmp_path)] == [
         "After a restart, you chose to keep the waiting work (2 jobs).",
         "After a restart, you chose to set the waiting work aside (1 jobs).",
         "After a restart, Runesmith chose to keep the waiting work (3 jobs), as your setting says.",
-        "You asked for one more try, with another model, for the milestones whose tries were used up."]
+        "You asked for one more try, with another model, for the milestones whose tries were used up.",
+        "You asked Runesmith to retrieve a model's saved answer after an interruption (no new model call)."]
+
+
+def test_a_build_judged_by_finished_milestones_checks_too_says_so(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.save_plan({"summary": "s", "milestones": [{"title": "Groups"}]})
+    runesmith_md.build_done(ws, "m1", {"drafted_by": None}, ["a.py"], 312, 312, 11)
+    runesmith_md.build_done(ws, "m1", {"drafted_by": None}, ["a.py"], 5, 5, 1)
+    runesmith_md.build_done(ws, "m1", {"drafted_by": None}, ["a.py"], 3, 3)
+    one, two, three = [line.split(": ", 1)[1] for line in log_of(tmp_path)[1:]]
+    assert "312 of 312 checks passed (this milestone's and those of the 11 finished milestones before it)," in one
+    assert "5 of 5 checks passed (this milestone's and those of the 1 finished milestone before it)," in two
+    assert "3 of 3 checks passed, its files" in three
 
 
 def test_a_logging_failure_never_breaks_the_work(tmp_path, monkeypatch):

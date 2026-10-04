@@ -340,8 +340,8 @@ def api_worker_run(s: Studio, q, body):
                "correct":{"attempt"}, "readmit":{"escalation"}, "readmit_answer":{"attempt"}, "breakdown":{"milestone"}, "propose_acceptance":{"milestone"}}.get(job, set())
     params = {k: v for k, v in (body.get("params") or {}).items() if k in allowed}
     queued = s.worker.enqueue(job, **params)
-    if job == "escalate":                   # the owner's "one more try": a decision for RUNESMITH.md
-        runesmith_md.retry_asked(_ws(s))
+    if job in runesmith_md.RETRIES:         # the owner's "one more try" and its kin: decisions for RUNESMITH.md
+        runesmith_md.retry_asked(_ws(s), job)
     return queued
 
 

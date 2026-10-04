@@ -295,9 +295,13 @@ def draft_applied(ws: Any, draft: dict, files: list[str]) -> None:
 
 
 @_safe
-def build_done(ws: Any, milestone_id: str, draft: dict, files: list[str], passed: int, total: int) -> None:
-    record(ws, f"Runesmith built {_milestone(ws, milestone_id)}: {passed} of {total} checks passed, its files were "
-               f"applied ({_names(files)}) and the milestone is done.{_by(ws, draft.get('drafted_by'))}")
+def build_done(ws: Any, milestone_id: str, draft: dict, files: list[str], passed: int, total: int,
+               earlier: int = 0) -> None:
+    """`earlier`: the finished milestones whose checks judged this build too (their checks are in `total`)."""
+    counted = (f" (this milestone's and those of the {earlier} finished milestone{'' if earlier == 1 else 's'} before it)"
+               if earlier else "")
+    record(ws, f"Runesmith built {_milestone(ws, milestone_id)}: {passed} of {total} checks passed{counted}, its files "
+               f"were applied ({_names(files)}) and the milestone is done.{_by(ws, draft.get('drafted_by'))}")
 
 
 @_safe
@@ -364,6 +368,17 @@ def restart_decision(ws: Any, decision: str, by: str, jobs: int) -> None:
         record(ws, f"After a restart, Runesmith chose to {what} ({jobs} jobs), as your setting says.")
 
 
+# What the owner asked for when he pressed a button that tries something again (the jobs the Studio's route queues).
+RETRIES = {
+    "escalate": "You asked for one more try, with another model, for the milestones whose tries were used up.",
+    "resume_author": "You asked Runesmith to retrieve a model's saved answer after an interruption (no new model call).",
+    "readmit": "You asked Runesmith to check a kept model answer again (no new model call).",
+    "readmit_answer": "You asked Runesmith to check a kept model answer again (no new model call).",
+    "resume_check": "You asked Runesmith to run a check that had timed out once more.",
+}
+
+
 @_safe
-def retry_asked(ws: Any) -> None:
-    record(ws, "You asked for one more try, with another model, for the milestones whose tries were used up.")
+def retry_asked(ws: Any, kind: str = "escalate") -> None:
+    if kind in RETRIES:
+        record(ws, RETRIES[kind])
