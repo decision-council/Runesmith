@@ -539,14 +539,29 @@ class Worker:
     # --------------------------------------------------------------------- loop --
 
     def scheduled_job(self) -> tuple[str, dict[str, Any]] | None:
-        """What a scheduled round runs now: the next configured mode (None when none is ready), a build step when
-        building is on, or a round. "Run now" asks the same (journey J11-F11: it always ran a repair round, which
-        never builds, and told the owner to draft a plan that already had ten milestones)."""
+        """What a scheduled round runs now: the unattended steps the owner's settings ask for, then the next configured
+        mode (None when none is ready), a build step when building is on, or a round. "Run now" asks the same (journey
+        J11-F11: it always ran a repair round, which never builds, and told the owner to draft a plan that already had
+        ten milestones). Saved work modes keep the unattended steps whenever one of them builds: saving the page made
+        the schedule return only the next mode, so the check autopilot, the recheck and the stuck policy never started
+        by themselves (found while writing the manual)."""
         from runesmith.app.work_modes import configuration, choose_next
-        if configuration(self.ws)['configured']:
+        config = configuration(self.ws)
+        settings = self.ws.settings()
+        if config['configured']:
+            if any(row['enabled'] and row['executor'] == 'build' for row in config['modes']):
+                if (step := self._unattended_step(settings)) is not None:
+                    return step
             mid = choose_next(self.ws)
             return None if mid is None else ('mode', {'mode': mid})
-        settings = self.ws.settings()
+        if (step := self._unattended_step(settings)) is not None:
+            return step
+        return ('build' if settings['build_steps'] else 'round'), {}
+
+    def _unattended_step(self, settings: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+        """The step the owner's unattended settings ask for before a build, or None: checks first with the autopilot, the
+        recheck of a draft whose checks did not finish, then the stuck policy's one more try or breakdown. The same
+        order and conditions with and without saved work modes."""
         if settings.get('checks_autopilot') and settings['build_steps'] and settings['autonomy'] != 'observe':
             # With the check autopilot on, a ready milestone without checks gets them first, so an unattended
             # project never waits for an approval.
@@ -568,7 +583,7 @@ class Worker:
             if _read_json(self.ws.home / 'WORK.json', {}).get('kind') not in stuck.TURN_KINDS:
                 if (turn := stuck.stuck_work(self.ws, settings['stuck_policy'])) is not None:
                     return turn
-        return ('build' if settings['build_steps'] else 'round'), {}
+        return None
 
     def _choose_scheduled(self) -> dict[str, Any] | None:
         """The step the schedule runs now as a job, or None when it chose nothing (and waited). Not under the worker's

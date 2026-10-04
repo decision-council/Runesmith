@@ -1129,3 +1129,121 @@ def test_a_scheduled_recheck_that_was_stopped_is_asked_for_again_by_the_setting(
     assert worker.history[-1]["result"] == "stopped"
     assert did not in _read_json(ws.home / rechecks.MARKS, {}) and rechecks.next_draft(ws)["id"] == did
     assert Worker(ws, EventBus()).scheduled_job() == ("resume_check", {"draft_id": did, "reason": rechecks.REASON})
+
+
+# ---- saved work modes keep the unattended steps (found while writing the manual) --------------------------------------
+# Once the owner pressed "Save modes", the schedule returned only the next mode: the check autopilot, the recheck and the
+# stuck policy never started by themselves. With the build mode on they run first, in the same order and under the same
+# conditions as before saving; with it off the schedule is the modes' alone.
+
+def save_modes(ws, **on):
+    """What "Save modes" on Modes & measurements writes: the named modes on, the rest off."""
+    from runesmith.app import work_modes
+    body = work_modes.configuration(ws)
+    work_modes.save(ws, [dict(row, enabled=bool(on.get(row["id"], False))) for row in body["modes"]], body["revision"],
+                    "Saved on Modes & measurements")
+    assert work_modes.configuration(ws)["configured"]
+
+
+def project_wanting_checks(tmp_path, monkeypatch):
+    ws = Workspace(tmp_path)
+    ws.update_settings({"build_steps": True, "checks_autopilot": True, "autonomy": "propose"})
+    first = ws.add_milestone("First", "does a", "", "a works")
+    return ws, ("propose_acceptance", {"milestone": first["id"]})
+
+
+def project_with_a_draft_to_recheck(tmp_path, monkeypatch):
+    from runesmith.app import rechecks
+    ws, did = ran_out(tmp_path, monkeypatch)
+    return ws, (rechecks.KIND, {"draft_id": did, "reason": rechecks.REASON})
+
+
+def project_with_tries_used_up(tmp_path, monkeypatch):
+    ws = stuck_project(tmp_path, stuck_policy="retry")
+    used_up(ws, "m2")
+    return ws, ("escalate", {"milestone_id": "m2"})
+
+
+STEPS = [("checks", project_wanting_checks), ("recheck", project_with_a_draft_to_recheck),
+         ("stuck", project_with_tries_used_up)]
+
+
+@pytest.mark.parametrize("name,project", STEPS, ids=[name for name, _ in STEPS])
+def test_with_saved_modes_and_the_build_mode_on_the_unattended_step_comes_first(tmp_path, monkeypatch, name, project):
+    ws, step = project(tmp_path, monkeypatch)
+    assert Worker(ws, EventBus()).scheduled_job() == step                     # before saving: the step
+    save_modes(ws, build=True)
+    assert Worker(ws, EventBus()).scheduled_job() == step                     # after saving: the same step, not the mode
+
+
+def test_with_saved_modes_the_checks_come_first_then_the_modes_take_their_turn(tmp_path, monkeypatch):
+    ws, step = project_wanting_checks(tmp_path, monkeypatch)
+    save_modes(ws, build=True)
+    worker = Worker(ws, EventBus())
+    assert worker.scheduled_job() == step
+    (ws.home / "acceptance").mkdir(exist_ok=True)
+    (ws.home / "acceptance" / (step[1]["milestone"] + ".py")).write_text("# approved\n")
+    assert worker.scheduled_job() == ("mode", {"mode": "build"})              # nothing unattended left: the next mode
+
+
+def test_with_saved_modes_the_recheck_is_asked_once_and_then_the_modes_go_on(tmp_path, monkeypatch):
+    from runesmith.app import rechecks
+    ws, step = project_with_a_draft_to_recheck(tmp_path, monkeypatch)
+    save_modes(ws, build=True)
+    assert Worker(ws, EventBus()).scheduled_job() == step
+    marks = ws.home / rechecks.MARKS
+    _write_json(marks, {step[1]["draft_id"]: {"utc": "2026-10-04T00:00:00Z"}})   # once per draft: it was asked
+    assert rechecks.next_draft(ws) is None
+    assert Worker(ws, EventBus()).scheduled_job() == ("mode", {"mode": "build"})
+
+
+def test_with_saved_modes_the_stuck_policy_takes_a_turn_and_the_modes_go_on_between(tmp_path, monkeypatch):
+    ws, step = project_with_tries_used_up(tmp_path, monkeypatch)
+    save_modes(ws, build=True)
+    worker = Worker(ws, EventBus())
+    assert worker.scheduled_job() == step
+    _write_json(ws.home / "WORK.json", {"utc": "2026-10-04T04:00:00Z", "kind": "escalate", "result": "failed"})
+    assert worker.scheduled_job() == ("mode", {"mode": "build"})              # while it waits on a model, the plan goes on
+    _write_json(ws.home / "WORK.json", {"utc": "2026-10-04T04:05:00Z", "kind": "mode", "result": "done"})
+    assert worker.scheduled_job() == step                                     # then its turn again
+
+
+def test_with_saved_modes_the_breakdown_of_the_stuck_policy_is_scheduled_too(tmp_path):
+    ws = stuck_project(tmp_path, stuck_policy="retry_split")
+    used_up(ws, "m2", escalation="failed")
+    save_modes(ws, build=True)
+    assert Worker(ws, EventBus()).scheduled_job() == ("split", {"milestone": "m2"})
+
+
+def test_with_saved_modes_the_stuck_policy_waits_when_it_is_the_default(tmp_path):
+    ws = stuck_project(tmp_path)
+    used_up(ws, "m2")
+    save_modes(ws, build=True)
+    assert Worker(ws, EventBus()).scheduled_job() == ("mode", {"mode": "build"})
+
+
+@pytest.mark.parametrize("name,project", STEPS, ids=[name for name, _ in STEPS])
+def test_with_saved_modes_and_the_build_mode_off_only_the_modes_choose(tmp_path, monkeypatch, name, project):
+    from runesmith.app import acceptance_autopilot, rechecks
+    ws, step = project(tmp_path, monkeypatch)
+    assert Worker(ws, EventBus()).scheduled_job() == step
+    save_modes(ws, troubleshoot=True)                                         # building is off in the saved modes
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("A step of the unattended settings was looked for with the build mode off")
+    monkeypatch.setattr(acceptance_autopilot, "needs_checks", forbidden)
+    monkeypatch.setattr(rechecks, "next_draft", forbidden)
+    monkeypatch.setattr(stuck, "stuck_work", forbidden)
+    assert Worker(ws, EventBus()).scheduled_job() == ("mode", {"mode": "troubleshoot"})
+    save_modes(ws)                                                            # and with every mode off: nothing at all
+    assert Worker(ws, EventBus()).scheduled_job() is None
+
+
+def test_run_now_under_saved_modes_asks_for_the_same_unattended_step(tmp_path, monkeypatch):
+    # "Run now" (api_worker_run job "next") asks scheduled_job: it queues the same step the schedule would.
+    ws, step = project_with_tries_used_up(tmp_path, monkeypatch)
+    save_modes(ws, build=True)
+    worker = Worker(ws, EventBus())
+    kind, params = worker.scheduled_job()
+    job = worker.enqueue(kind, **params)
+    assert (job["kind"], job["params"]) == step and job["by"] == "owner"
