@@ -484,20 +484,17 @@ def tries_used(ws):
     return ordinary_allowance(ws, contract, source_context(ws)["snapshot_digest"])["used"]
 
 
-def test_a_build_refused_for_an_unshown_file_uses_no_try_and_waits_until_it_is_shown(tmp_path):
-    # Journey J11-B15, end to end: no try used, no new call while the file is still not shown, a call again after.
+def test_a_build_refused_for_an_unshown_file_uses_no_try_and_shows_it_in_the_next_round(tmp_path):
+    # Journey J11-B15, end to end: no try used; the next round shows the file (it is wanted: the owner is not needed, and
+    # a source change no longer makes another call that is refused the same way), and its edit is judged like any other.
     from runesmith.app.building import build_step
-    from runesmith.app.snapshots import collect_snapshot
-    from runesmith.app.source_focus import save_focus
     ws = gap_project(tmp_path, [EDIT_HUGE] * 4)
     router = ws.router()
     calls = counting(router)
     with pytest.raises(PlannerUnavailable, match="huge.js was not shown"):
         build_step(ws, router)
     assert tries_used(ws) == 0 and len(calls) == 1
-    assert "huge.js is not shown to the models" in build_step(ws, router)["summary"] and len(calls) == 1
-    save_focus(ws, ["huge.js"], collect_snapshot(ws)["digest"], "Builds of this milestone edit it")
-    with pytest.raises(PlannerUnavailable):                           # shown now: its edit is judged like any other
+    with pytest.raises(PlannerUnavailable, match="Exact edit refused for huge.js"):
         build_step(ws, router)
     assert len(calls) == 2 and tries_used(ws) == 1
 
@@ -566,22 +563,21 @@ def test_a_correction_refused_for_an_unshown_file_is_not_counted(tmp_path):
 
 
 def marked(root):
-    """crowded() with three files an answer can need, each 39,000 bytes with a first line of its own so an edit can
-    name it once: the pads leave them no room, and prioritized, two of them fill the budget (one whole, one in parts)."""
+    """crowded() with four files an answer can need, each 39,000 bytes with a first line of its own so an edit can
+    name it once: the pads leave them no room, and prioritized, they fill the budget (one whole, two in parts of 4,000
+    characters each, none for the fourth)."""
     crowded(root)
-    for name in ("huge.js", "mid.js", "tall.js"):
+    for name in ("huge.js", "mid.js", "tall.js", "wide.js"):
         (root / name).write_bytes(f"// {name}\n".encode() + b"// y\n" * 7790)
 
 
 def test_files_that_cannot_be_shown_together_are_no_gap_the_owner_can_close(tmp_path):
     # Review of J11-B15: each time the owner prioritized the file named, another became the gap, until Author context
     # refused the whole list; the milestone then waited forever, and used no try, so no replan was ever asked. With
-    # parts (DD) it takes three files of this size: one whole, one in the 9,000 characters left, none for the third.
+    # parts (DD) it takes four files of this size: one whole, two in the 9,000 characters left, none for the fourth.
     from runesmith.app.building import build_step
-    from runesmith.app.snapshots import collect_snapshot
-    from runesmith.app.source_focus import save_focus
     every = {"title": "All", "files": [{"path": name, "edits": [{"old_text": f"// {name}", "new_text": "// one"}]}
-                                       for name in ("huge.js", "mid.js", "tall.js")]}
+                                       for name in ("huge.js", "mid.js", "tall.js", "wide.js")]}
     first, second = tmp_path / "first", tmp_path / "second"
     first.mkdir(), second.mkdir()
     ws = gap_project(first, [every] * 5)
@@ -592,14 +588,14 @@ def test_files_that_cannot_be_shown_together_are_no_gap_the_owner_can_close(tmp_
             build_step(ws, router)
     assert tries_used(ws) == 3
     assert build_step(ws, router).get("replan_needed")                       # the way out: smaller steps
-    # a gap the owner can close is still waited for, with no try used
+    # a gap the next round closes is no try, and the next round builds
     only = {"title": "Only", "files": [{"path": "huge.js", "edits": [{"old_text": "// huge.js", "new_text": "// one"}]}]}
-    ws2 = gap_project(second, [only])
+    ws2 = gap_project(second, [only] * 2)
     marked(second)
     with pytest.raises(PlannerUnavailable, match="was not shown to the model"):
         build_step(ws2, ws2.router())
     assert tries_used(ws2) == 0
-    save_focus(ws2, ["huge.js"], collect_snapshot(ws2)["digest"], "Builds of this milestone edit it")
+    assert build_step(ws2, ws2.router(), author_only=True)["draft"] and tries_used(ws2) == 1
 
 
 def test_a_retained_candidate_file_that_is_no_longer_shown_is_the_same_uncounted_gap(tmp_path):
@@ -628,9 +624,7 @@ def test_a_retained_candidate_file_that_is_no_longer_shown_is_the_same_uncounted
         build_step(ws, ws.router())
     states = sorted(_json.loads(p.read_text())["state"] for p in (ws.home / "build-attempts").glob("*.json"))
     assert states == ["answered", "context_gap"] and tries_used(ws) == used
-    assert "c_x.js is not shown to the models" in build_step(ws, ws.router())["summary"]
-    save_focus(ws, ["c_x.js"], collect_snapshot(ws)["digest"], "Now it is shown")
-    assert build_step(ws, ws.router(), author_only=True)["draft"]            # the same answer is admitted now
+    assert build_step(ws, ws.router(), author_only=True)["draft"]            # the next round shows c_x.js: admitted now
     assert tries_used(ws) == used + 1
 
 

@@ -187,13 +187,20 @@ def milestone_terms(ws, milestone: dict, *, feedback: bool = True) -> dict[str, 
     from runesmith.app.workspace import _read_json
     texts = [str(milestone.get(k) or '') for k in ('title', 'detail', 'done_when')]
     anchors: list[str] = []
+    wanted: set[str] = set()
     if feedback and milestone.get('id'):
         contract = milestone_contract(ws, milestone)
         refused = []
         for path in (ws.home / 'build-attempts').glob('*.json'):
             row = _read_json(path, {})
             note = row.get('feedback') if isinstance(row, dict) else None
-            if isinstance(note, dict) and row.get('contract') == contract and isinstance(note.get('requested_old_text'), str):
+            if not isinstance(note, dict) or row.get('contract') != contract:
+                continue
+            # A file the last answer could not change because the model was not shown it: this call shows it (the gap
+            # closes itself, with no try and no owner), after the prioritized files (review of the merged batch).
+            if row.get('state') == 'context_gap' and isinstance(note.get('not_shown'), str):
+                wanted.add(note['not_shown'])
+            if isinstance(note.get('requested_old_text'), str):
                 try:
                     written = path.stat().st_mtime_ns
                 except OSError:
@@ -209,7 +216,7 @@ def milestone_terms(ws, milestone: dict, *, feedback: bool = True) -> dict[str, 
         for _, draft in sorted(failing, key=lambda r: r[0], reverse=True)[:3]:
             texts.append(' '.join(_sentences(draft_owner_feedback(ws, draft)))[:3000])
     terms = extract_terms(*texts, anchors=anchors)
-    return dict(terms, text=' '.join(texts[:3]))
+    return dict(terms, text=' '.join(texts[:3]), wanted=sorted(wanted))
 
 
 def milestone_contract(ws, milestone: dict) -> str:
@@ -941,8 +948,17 @@ def _not_shown(rel, context, ws=None, needed=()):
     elif reason == 'file_limit':
         # A file over the limit is shown in parts (J11-B15); this is one that cannot be, even then: no line of it is short
         # enough to quote.
-        words = (f"{rel} is too large to show a model, even in parts (its lines are too long to quote), so a change to it "
-                 "cannot be checked against it. Split it into smaller files.")
+        from runesmith.app.workspace import MAX_DRAFT_FILE_BYTES
+        try:
+            size = (ws.root / rel).stat().st_size if ws is not None else 0
+        except OSError:
+            size = 0
+        if size > MAX_DRAFT_FILE_BYTES:
+            words = (f"{rel} is too large to draft ({MAX_DRAFT_FILE_BYTES:,} bytes at most), so a change to it could not be "
+                     "kept. Split it into smaller files.")
+        else:
+            words = (f"{rel} is too large to show a model, even in parts (its lines are too long to quote), so a change to it "
+                     "cannot be checked against it. Split it into smaller files.")
         if _prioritized(ws, context, rel):
             words += " It is prioritized under Author context, which cannot show it either: take it out of the list once it is split."
     elif reason == 'not_utf8':
@@ -952,8 +968,8 @@ def _not_shown(rel, context, ws=None, needed=()):
             words += " It is prioritized under Author context, which cannot show it either: take it out of the list."
     else:
         words = (f"{rel} was not shown to the model (the other files filled the source budget), so its change cannot be "
-                 f"checked against it. Prioritize {rel} under Goals & plan, Author context, so models see it; this used "
-                 "up no try.")
+                 f"checked against it. Prioritize {rel} under Goals & plan, Author context, so models see it (the next "
+                 "round also shows it by itself); this used up no try.")
     failure = PlannerUnavailable(words)
     # No "path": that names a refusal a correction can repair, and no correction can show the model a file.
     failure.feedback = {'not_shown': rel, 'reason': reason}
@@ -976,7 +992,10 @@ def _inside_shown(before, after, edit, ranges):
     old_text is placed where it occurs; one a forgiving match repaired (indentation, quotes) by the lines it changed."""
     from runesmith.app.source_parts import changed_lines, holding_range, line_span, shifted_ranges, split_lines
     old = edit.get('old_text') if isinstance(edit, dict) else None
-    span = line_span(before, old) or changed_lines(before, after)
+    exact, moved = line_span(before, old), changed_lines(before, after)
+    # Both: an old text ending in a newline on the last shown line, with a new text that does not end in one, changes the
+    # next line too, which was not shown (review of the merged batch).
+    span = moved if exact is None else (min(exact[0], moved[0]), max(exact[1], moved[1]))
     index = holding_range(ranges, *span)
     if index is None:
         raise _OutsideShown(span[0], span[1], len(split_lines(before)))
@@ -1107,28 +1126,43 @@ def admit_answer_files(ws, context: dict[str, Any], raw_files, *, allowed_paths:
                         shown_as=_candidate_ranges(candidate_view,rel,candidate,part is not None)
                         if shown_as is not False:
                             bases.insert(0, ('candidate',candidate,shown_as))
+                def replay(base_text,base_ranges):
+                    nonlocal edit_index
+                    value=base_text;repeated,done=_repeated(f['edits']),set()
+                    shown=None if base_ranges is None else [list(r) for r in base_ranges]
+                    for edit_index,edit in enumerate(f['edits']):
+                        key=_edit_key(edit)
+                        if key in repeated:
+                            if key not in done:
+                                if shown is None:value=_replace_every(value,key,repeated[key])
+                                else:value,shown=_replace_every_inside(value,key,repeated[key],shown)
+                                done.add(key)
+                            continue
+                        before=value
+                        value=_apply_one_edit(value,edit,rel)
+                        if shown is not None:shown=_inside_shown(before,value,edit,shown)
+                    return value
                 errors=[];proposed=None
                 for base_name,base_text,base_ranges in bases:
                     try:
-                        value=base_text;repeated,done=_repeated(f['edits']),set()
-                        shown=None if base_ranges is None else [list(r) for r in base_ranges]
-                        for edit_index,edit in enumerate(f['edits']):
-                            key=_edit_key(edit)
-                            if key in repeated:
-                                if key not in done:
-                                    if shown is None:value=_replace_every(value,key,repeated[key])
-                                    else:value,shown=_replace_every_inside(value,key,repeated[key],shown)
-                                    done.add(key)
-                                continue
-                            before=value
-                            value=_apply_one_edit(value,edit,rel)
-                            if shown is not None:shown=_inside_shown(before,value,edit,shown)
-                        proposed=value;f['revision_base']=base_name;base_used=base_text;break
+                        proposed=replay(base_text,base_ranges);f['revision_base']=base_name;base_used=base_text;break
                     except (ValueError,TypeError,KeyError) as candidate_error:
                         if isinstance(candidate_error,_OutsideShown):candidate_error.shown=base_ranges
                         errors.append(candidate_error)
                 if proposed is None:
                     raise errors[-1]
+                if (f.get('revision_base')=='current' and bases[0][0]=='candidate' and bases[0][2] is not None
+                        and any(isinstance(error,_OutsideShown) for error in errors)):
+                    # The edit lies in the lines of the current file the model was shown, but not in the candidate's shown
+                    # lines: the text is the model's own copy, so it is applied to the candidate, and the candidate's other
+                    # changes are kept, as for any revision. Only when it does not apply there is the current file edited
+                    # (review of the merged batch: the candidate's work was dropped without a word).
+                    try:
+                        again=replay(bases[0][1],None)
+                    except (ValueError,TypeError,KeyError):
+                        pass
+                    else:
+                        proposed=again;f['revision_base']='candidate';base_used=bases[0][1]
                 f['content']=proposed
             except (ValueError, TypeError, KeyError) as error:
                 feedback={'path':rel,'scope':'Unapplied candidate; source excerpt is from the actual current file.',

@@ -147,7 +147,7 @@ async function showAuthorContext() {
       Object.keys(data.focus_errors).length ? h('p.callout.warn', 'Prioritized files that models cannot be shown: '
         + Object.entries(data.focus_errors).map(([file, why]) => `${file} ` + ({
           not_model_visible: 'is gone or hidden: take it out of the list.',
-          file_limit: `is over ${data.focused_file_bytes} bytes and has lines too long to show even in parts: split it, then take it out of the list.`,
+          file_limit: `is too large to draft, or has lines too long to show even in parts: split it, then take it out of the list.`,
           not_utf8: 'is not UTF-8 text: save it as UTF-8, or take it out of the list.',
           packet_budget: `does not fit the ${data.budget_chars}-character budget with the other prioritized files: take one out.`,
         }[why] || `cannot be shown (${why}).`)).join(' ')) : null,

@@ -14,7 +14,7 @@ import json
 
 from runesmith.app.source_parts import (MIN_PART_CHARS, build_parts, check_ranges, named_in, quotable, render_parts,
                                         split_lines)
-from runesmith.app.workspace import WorkspaceError, _now, _read_json, _write_json
+from runesmith.app.workspace import MAX_DRAFT_FILE_BYTES, WorkspaceError, _now, _read_json, _write_json
 
 CONTEXT_CHARS = 48000
 DEFAULT_FILE_BYTES = 20000
@@ -82,13 +82,20 @@ def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, inclu
     inventory = [p for p, e in snapshot['manifest'].items() if e['visibility'] == 'model']
     visible = set(inventory)
     focus_errors = {p: 'not_model_visible' for p in paths if p not in visible}
-    order = [p for p in paths if p in visible] + [p for p in inventory[:2000] if p not in paths]
+    # Prioritized files first, then the files the milestone names or that its last refused answer asked for (the
+    # `wanted` words: a gap closes itself in the next round), then the rest (journey J11-B15, review of the merged batch:
+    # a named module was crowded out by the prioritized program's parts and the milestone waited for good).
+    rest = [p for p in inventory[:2000] if p not in paths]
+    named = {p for p in rest if named_in(terms.get('text'), p) or p in (terms.get('wanted') or ())}
+    order = [p for p in paths if p in visible] + [p for p in rest if p in named] + [p for p in rest if p not in named]
     files, hashes, omitted, reasons, rows, used = {}, {}, [], {}, [], 0
     shown_parts, deferred, row_of, texts = {}, [], {}, {}
     part_cap = min(FOCUSED_FILE_BYTES, max(MIN_PART_CHARS, int(limit * parts_share)))
 
     def in_parts(rel, budget):
         """Why the file cannot be shown in parts (None when it was): no room for a useful excerpt, or no line short enough."""
+        if len(snapshot['files'][rel]) > MAX_DRAFT_FILE_BYTES:
+            return 'file_limit'             # a draft cannot hold it, so no answer to it could ever be kept (review of the merged batch)
         if len(snapshot['files'][rel]) > FOCUSED_FILE_BYTES and not quotable(texts[rel]):
             return 'file_limit'             # no line short enough to quote: no budget could ever show it
         if budget < MIN_PART_CHARS:
@@ -116,8 +123,12 @@ def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, inclu
     caps = {rel: FOCUSED_FILE_BYTES if rel in paths or rel in larger else DEFAULT_FILE_BYTES for rel in order}
     whole_limit = limit - min(parts_reserve, limit) if parts and any(
         len(snapshot['files'][rel]) > min(caps[rel], limit) for rel in order) else limit
+    # Room kept for the other files before a prioritized file's parts take the rest: the small files and the named ones,
+    # at most a quarter of the budget, so a module added later is still shown whole.
+    room = min(limit // 4, sum(len(snapshot['files'][rel]) for rel in rest
+                               if len(snapshot['files'][rel]) <= DEFAULT_FILE_BYTES or rel in named))
     over_cap = set()
-    for rel in [rel for rel in order if rel not in larger] + larger:
+    for rel in [rel for rel in order if rel not in larger or rel in named] + [rel for rel in larger if rel not in named]:
         data = snapshot['files'][rel]
         focused = rel in paths
         cap = caps[rel]
@@ -143,7 +154,7 @@ def select_context(ws, snapshot, limit=CONTEXT_CHARS, *, focus_paths=None, inclu
             if not focused:
                 deferred.append(rel)
                 continue
-            reason = in_parts(rel, min(part_cap, limit - used))
+            reason = in_parts(rel, max(min(part_cap, limit - used - room), min(MIN_PART_CHARS, limit - used)))
             used += shown_parts[rel]['chars'] if rel in shown_parts else 0
         settle(rel, reason, focused)
     # The files the milestone names first, then those that can never be whole: they share what is left, and a file that
@@ -175,6 +186,8 @@ def _omission_reason(data, rel='', parts_era=False):
     except UnicodeError:return 'not_utf8'
     if len(data) <= FOCUSED_FILE_BYTES:
         return 'packet_budget'
+    if len(data) > MAX_DRAFT_FILE_BYTES:
+        return 'file_limit'
     if parts_era and build_parts(rel, content.replace('\r\n', '\n'), None, FOCUSED_FILE_BYTES):
         return 'packet_budget'
     return 'file_limit'
@@ -231,11 +244,15 @@ def with_recorded_parts(context, snapshot, excerpts):
     is checked again against the lines its author saw, never against today's choice (journey J11-B15)."""
     inventory = {p for p, e in snapshot['manifest'].items() if e['visibility'] == 'model'}
     shown = recorded_parts(snapshot, inventory, excerpts)
+    # A file its call was shown only in parts is not whole here, though today's budget would hold it (review of the merged
+    # batch: the replay then took any edit to it, with no range check).
+    whole = {rel: text for rel, text in context['files'].items() if rel not in shown}
     result = {k: v for k, v in context.items() if k != 'excerpts'}
-    result.update(omitted=[rel for rel in context['omitted'] if rel not in shown],
+    result.update(files=whole, file_hashes={rel: h for rel, h in context['file_hashes'].items() if rel in whole},
+                  omitted=[rel for rel in context['omitted'] if rel not in shown],
                   omission_reasons={rel: why for rel, why in (context.get('omission_reasons') or {}).items()
                                     if rel not in shown},
-                  digest=context_digest(context['files'], shown))
+                  digest=context_digest(whole, shown))
     return dict(result, excerpts=shown) if shown else result
 
 
