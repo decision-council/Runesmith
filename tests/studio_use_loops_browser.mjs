@@ -109,6 +109,7 @@ const capacityFixture={name:'capacity-author',observed_at:'2026-09-27T03:00:00Z'
     {model:'gemini2:small',status:'cooldown_elapsed',detail:'The reported wait has elapsed; availability has not been rechecked.',observed_at:'2026-09-27T02:00:00Z',retry_at:'2026-09-27T02:30:00Z',remaining_s:0},
     {model:'openrouter:paid',status:'past_success',detail:'This route answered then; current capacity and author quality are unverified.',observed_at:'2026-09-26T22:00:00Z'},
     {model:'other:<img src=x onerror=window.capacityInjected=true>',status:'unknown',detail:'No matching retained outcome in the scanned receipts.'}]};
+let modelsFixture={ok:true,status:200,models:[],count:0,recommended:null,choices:[]},modelsDelayMs=0,testFixtures={};      // B2.07
 let capacityRoute={name:'capacity-author',revision:'route-fixture',model:'gemini:small',fallback_models:['gemini2:small','openrouter:paid'],blockers:[]};
 const unknownUsage={tokens_in:null,tokens_out:null,observed_tokens_in:null,observed_tokens_out:null,
   attempts:null,token_complete_attempts:0,token_basis:'unknown',est_usd:null,reported_est_usd:null,cost_status:'tokens_incomplete'};
@@ -268,6 +269,9 @@ await context.route('**/*',async route=>{
     if(req.method()==='POST')capacityRoute={...capacityRoute,...body,revision:'route-fixture-2'};
     data=capacityRoute;
   }
+  else if(p==='/api/inference/models'){if(modelsDelayMs)await new Promise(resolve=>setTimeout(resolve,modelsDelayMs));data=modelsFixture;}
+  else if(/^\/api\/inference\/test\/[^/]+$/.test(p)){const queue=testFixtures[p.split('/')[4]]||[];data=queue.length>1?queue.shift():queue[0]||{ok:true,detail:'answered with usable JSON',latency_s:0.1};}
+  else if(/^\/api\/inference\/instruments\/[^/]+\/model$/.test(p)){const item=inference.instruments.find(i=>i.name===p.split('/')[4]);item.model=body.model;data=item;}
   else if(p==='/api/manual')data={requests:manualRequests};
   else if(p==='/api/inference/instruments'){
     const item={...body.spec,name:body.name,roles:body.roles,usable:true,key:{},label:body.spec.label};
@@ -468,6 +472,70 @@ try{
     assert.equal(manualRequests.length,0);assert.equal(requests.filter(r=>r.path==='/api/manual/skip-request/skip').length,1);
     await page.screenshot({path:path.join(artifacts,'B2-relay-empty.png')});
     loops.push({id:'B2.05',case:'Escape cancels skip; explicit skip clears the matching request',result:'passed'});
+    // B2.07 (a newcomer never meets a stale model name): the Model ID is pre-filled and the note says it is checked when the key
+    // is added; the key brings the provider's own list (a recommended model and one-click choices); an owner's own name is kept;
+    // a provider's "use X instead" is a button that changes only the model name, and survives the page being redrawn.
+    const presetsBefore=inference.presets.slice(),instrumentsBefore=inference.instruments.length;
+    inference.presets.push({id:'gemini',label:'Google Gemini',group:'With a key',kind:'openai',base_url:'https://generativelanguage.googleapis.com/v1beta/openai',
+      key:'required',key_url:'https://aistudio.google.com/apikey',suggested:['gemini-3.8-flash','gemini-3.6-flash'],blurb:'A free tier through Google AI Studio.'});
+    modelsFixture={ok:true,status:200,models:['gemini-3.6-flash','gemini-3.9-flash','gemini-3.9-pro'],count:3,recommended:'gemini-3.9-flash',choices:['gemini-3.6-flash','gemini-3.9-pro']};
+    testFixtures={'gemini':[{ok:false,kind:'config',detail:'The service does not know this model or address. (http_404 "This model models/gemini-3.9-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash")',
+      model:'gemini-3.9-flash',suggested_model:'gemini-3.8-flash',label:'Google Gemini'},{ok:true,detail:'answered with usable JSON',latency_s:0.2,model:'gemini-3.8-flash',label:'Google Gemini'}]};
+    await page.evaluate(()=>window.mount('inference'));
+    const modelCalls=()=>requests.filter(r=>r.path==='/api/inference/models');
+    const callsBefore=modelCalls().length;
+    await page.getByRole('button',{name:'Add thinking power',exact:true}).click();
+    const dialog=page.getByRole('dialog');
+    await dialog.getByText('Google Gemini',{exact:true}).click();
+    const modelBox=dialog.getByLabel('Model ID',{exact:true});
+    assert.equal(await modelBox.inputValue(),'gemini-3.8-flash');                       // a value, never an empty box or a bare placeholder
+    assert((await dialog.innerText()).includes('(checked when you add your key)'));
+    assert.equal(modelCalls().length,callsBefore);                                      // nothing asked before there is a key
+    await dialog.getByPlaceholder('paste your key').fill('synthetic-test-key-123');
+    await dialog.getByPlaceholder('paste your key').press('Tab');
+    await page.waitForFunction(()=>document.querySelector('[role=dialog] input[aria-label="Model ID"]').value==='gemini-3.9-flash');
+    assert.equal(modelCalls().length,callsBefore+1);
+    assert.equal(modelCalls().at(-1).body.preset,'gemini');
+    assert((await dialog.innerText()).includes('Recommended from Google Gemini'));
+    for(const choice of ['gemini-3.6-flash','gemini-3.9-pro'])assert(await dialog.getByRole('button',{name:choice,exact:true}).isVisible(),choice);
+    await dialog.getByRole('button',{name:'gemini-3.9-pro',exact:true}).click();
+    assert.equal(await modelBox.inputValue(),'gemini-3.9-pro');                         // one click picks it
+    await modelBox.fill('my-own-model');
+    await dialog.getByRole('button',{name:'List models',exact:true}).click();
+    await page.waitForFunction(()=>[...document.querySelectorAll('[role=dialog] .hint')].some(n=>n.textContent.includes('is not in Google Gemini')));
+    assert.equal(await modelBox.inputValue(),'my-own-model');                           // an owner's own name is never replaced
+    await dialog.getByRole('button',{name:'gemini-3.9-flash',exact:true}).click();
+    await page.screenshot({path:path.join(artifacts,'B2-fresh-models-form.png')});
+    await dialog.getByRole('button',{name:'Save and test',exact:true}).click();await dialog.waitFor({state:'hidden'});
+    const geminiSave=requests.filter(r=>r.path==='/api/inference/instruments').at(-1);
+    assert.equal(geminiSave.body.spec.model,'gemini-3.9-flash');assert.equal(geminiSave.body.spec.preset,'gemini');
+    await page.getByText('Google Gemini suggests gemini-3.8-flash:',{exact:true}).first().waitFor();
+    const switches=()=>requests.filter(r=>r.path==='/api/inference/instruments/gemini/model');
+    assert.equal(switches().length,0);                                                  // never switched silently
+    await page.evaluate(()=>window.mount('inference'));                                  // a redraw must not wipe the offer
+    await page.getByRole('button',{name:'Use gemini-3.8-flash',exact:true}).waitFor();
+    assert.equal(switches().length,0);
+    await page.getByRole('button',{name:'Use gemini-3.8-flash',exact:true}).click();
+    await page.getByText(/✓ tested just now/).first().waitFor();
+    assert.equal(switches().length,1);assert.deepEqual(switches()[0].body,{model:'gemini-3.8-flash',expect:'gemini-3.9-flash'});
+    assert.equal(inference.instruments.find(i=>i.name==='gemini').model,'gemini-3.8-flash');
+    assert.equal(await page.getByRole('button',{name:'Use gemini-3.8-flash',exact:true}).count(),0);
+    // Save and test at once with a key that was never looked up: the list is read first, and the screen says what changed.
+    modelsDelayMs=400;testFixtures={};
+    await page.evaluate(()=>{window.toastLog=[];new MutationObserver(list=>list.forEach(m=>m.addedNodes.forEach(n=>n.classList?.contains('toast')&&window.toastLog.push(n.textContent)))).observe(document.body,{childList:true,subtree:true});});
+    await page.getByRole('button',{name:'Add thinking power',exact:true}).click();
+    await dialog.getByText('Google Gemini',{exact:true}).click();
+    await dialog.getByPlaceholder('paste your key').fill('synthetic-test-key-456');
+    await dialog.getByRole('button',{name:'Save and test',exact:true}).click();await dialog.waitFor({state:'hidden'});
+    assert.equal(requests.filter(r=>r.path==='/api/inference/instruments').at(-1).body.spec.model,'gemini-3.9-flash');
+    await page.waitForFunction(()=>window.toastLog.some(t=>t.includes('Using gemini-3.9-flash')&&t.includes('was only a suggestion')));
+    modelsDelayMs=0;
+    // Leave the shared fixtures as they were.
+    inference.presets.splice(0,inference.presets.length,...presetsBefore);inference.instruments.splice(instrumentsBefore);
+    for(const role of Object.keys(inference.roles))inference.roles[role]=inference.roles[role].filter(n=>!n.startsWith('gemini'));
+    modelsFixture={ok:true,status:200,models:[],count:0,recommended:null,choices:[]};testFixtures={};
+    await page.evaluate(()=>window.mount('inference'));
+    loops.push({id:'B2.07',case:'Model ID pre-filled with its checked-when-you-add-your-key note; the key brings the live recommendation and one-click choices; an owner-typed name is kept; the provider hint is a button that outlives a redraw and switches only on click; Save at once reads the list first',result:'passed'});
   }
   if(selected.has('B3')){
     ownerBrief='';fixturePlan=null;heldPlans=[];mission.infer_purpose=false;

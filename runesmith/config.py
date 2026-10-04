@@ -39,7 +39,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                                   "model": "liquid/lfm-2.5-2.6b:free", "api_key_env": "OPENROUTER_API_KEY",
                                   "note": "2.6B free model; repaired real code through the suit in 2026-09-24 probes"},
         "gemini_openai_endpoint": {"kind": "openai", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                                   "model": "gemini-2.5-flash", "api_key_env": "GEMINI_API_KEY"},
+                                   "model": "gemini-3.8-flash", "api_key_env": "GEMINI_API_KEY"},
         "milliner_router": {"kind": "milliner", "base_url": "http://127.0.0.1:8765", "model": "groq:openai/gpt-oss-20b",
                             "token_env": "MILLINER_TOKEN"},
         "chat_by_hand": {"kind": "manual", "model": "the chat model you relay to", "timeout_s": 3600,

@@ -588,6 +588,14 @@ def api_instrument_save(s: Studio, q, body):
     return saved
 
 
+@route("POST", r"/api/inference/instruments/([A-Za-z0-9_.-]+)/model")
+def api_instrument_model(s: Studio, q, body, name):
+    # The one-click switch to the model a provider's own refusal named. Only the model name changes.
+    saved = _ws(s).set_instrument_model(name, body.get("model", ""), expect=body.get("expect"))
+    s.bus.publish("inference", {})
+    return saved
+
+
 @route("GET", r"/api/inference/routes/([A-Za-z0-9_.-]+)")
 def api_instrument_route(s: Studio, q, body, name):
     from runesmith.app.inference_routes import route_view

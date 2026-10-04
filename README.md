@@ -73,7 +73,7 @@ Until you add a model, Runesmith can map your folder and watch it, but it cannot
 
 1. Under **With a key**, choose **Google Gemini** (the free tier of Google AI Studio) or **NVIDIA** (many models with a free endpoint, among them Nemotron and Kimi).
 2. Click **Get a key**. It opens [aistudio.google.com/apikey](https://aistudio.google.com/apikey) or [build.nvidia.com/models](https://build.nvidia.com/models). Make a key and paste it into Runesmith.
-3. Keep the suggested model (`gemini-2.5-flash` or `nvidia/nemotron-3-super-120b-a12b`), or type another. **List models** asks the provider what it serves.
+3. Paste your key and Runesmith asks the provider which models it serves today, then fills in a recommended one (for Gemini, the newest flash model) and offers a few others as buttons. Keep it, or type another. **List models** asks again. If a provider ever answers that a model is no longer available and names its replacement, Runesmith shows that as a button; it never switches silently.
 4. Leave the roles ticked and click **Save and test**. One tiny call confirms that the model answers.
 
 Add both if you like. Under **Who does what**, the first model in each role is preferred and the others are fallbacks.
@@ -237,7 +237,7 @@ Free hosted tiers work the same way. `api_key_env` names the environment variabl
 
 ```json
 {"instruments": {"gemini": {"kind": "openai", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                            "model": "gemini-2.5-flash", "api_key_env": "GEMINI_API_KEY"}},
+                            "model": "gemini-3.8-flash", "api_key_env": "GEMINI_API_KEY"}},
  "roles": {"repair": ["gemini"], "kaizen": ["gemini"]}}
 ```
 

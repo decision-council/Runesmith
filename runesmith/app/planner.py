@@ -566,6 +566,11 @@ def settled_state(error, otherwise='failed') -> str:
     return 'context_gap' if getattr(error, 'context_gap', None) else otherwise
 
 
+def _provider_hint(raw: str) -> str | None:
+    from runesmith.app.providers import model_hint
+    return model_hint(raw)
+
+
 def why_no_answer(error) -> str:
     """Why a model call brought no answer, in plain words and with what to try; the gateway's words follow, short (F15)."""
     raw = str(error)
@@ -582,6 +587,9 @@ def why_no_answer(error) -> str:
                  'or put another model first under Thinking power')
     elif any(word in low for word in ('auth_failed', 'token unavailable', '401', '403')):
         plain = 'the model service refused the key or token: check it under Thinking power'
+    elif _provider_hint(raw):
+        plain = (f'the service no longer offers this model and suggests {_provider_hint(raw)}: under Thinking power, '
+                 'press Test on that model and then the button that offers the switch')
     else:
         plain = 'the model did not answer'
     return f'{plain} ({raw[:160]})'
