@@ -154,7 +154,7 @@ def select_context(ws, snapshot, limit=None, *, focus_paths=None, include_rows=F
             row_of[rel].update(included=True)
             continue
         if reason is None and not parts:
-            reason = 'file_limit' if len(data) > cap else 'packet_budget'
+            reason = 'file_limit' if len(data) > FOCUSED_FILE_BYTES else 'packet_budget'      # prioritizing it shows it whole
         elif reason is None:
             # Over its cap, or the budget cannot hold it whole: shown in parts instead of not at all (journey J11-B15,
             # B16). A prioritized file is shown at once, so it keeps its place at the front of the budget; the others

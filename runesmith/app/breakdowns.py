@@ -136,8 +136,9 @@ def input_packet(ws, milestone_id):
                 'exist in the current project. A repair step may name only existing files; missing files '
                 'can only be proposed as new builds. Prefer complete vertical slices (one useful command '
                 'with persistence and tests) over parser stubs or a rewrite of every command at once. Files listed under '
-                'files_no_model_can_see cannot be shown to any model, so no step may edit them as they are: a step that '
-                'splits such a file into smaller files comes first, and the others build on the pieces.'),
+                'files_no_model_can_see cannot be shown to any model, so no step may edit them, and none can split them (that '
+                'is an edit too): the owner splits such a file by hand. Steps may add new files that use them, and the '
+                'diagnosis says that the owner must split them first.'),
         'parent':parent, 'breakdown_depth':_breakdown_depth(plan,milestone_id),
         'public_acceptance':expectations(ws,milestone_id),
         'ancestor_done_when':[m.get('done_when') for m in plan.get('milestones',[])
@@ -148,7 +149,7 @@ def input_packet(ws, milestone_id):
         'source_context':source_context(ws,limit=20000,snapshot=snapshot),
         'failed_checks':failed[:3],
         # Files no model can be shown (over the limit, not UTF-8): steps that edit them are refused every time (journey
-        # J11-B15 review of the 40,000-byte wall), so the steps must split them first.
+        # J11-B15 review of the 40,000-byte wall), and no step can split them: the owner does.
         'files_no_model_can_see':{p:r for p,r in (source_context(ws,snapshot=snapshot).get('omission_reasons') or {}).items()
                                   if r in ('file_limit','not_utf8')},
         'refusals':[a['error'] for a in attempts[-3:] if a.get('error')],

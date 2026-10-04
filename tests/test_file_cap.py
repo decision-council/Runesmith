@@ -129,23 +129,46 @@ def attempt(ws, row):
 
 def test_split_it_first_is_said_only_for_a_file_over_the_cap(tmp_path):
     ws = plan_for(tmp_path)
-    contract, context = milestone_contract(ws, milestone(ws)), source_context(ws)
+    contract = milestone_contract(ws, milestone(ws))
     (tmp_path / 'wide.py').write_bytes(b'x = 1; ' * ((FOCUSED_FILE_BYTES + 700) // 7))
+    (tmp_path / 'big.py').write_bytes(b'x = 1\n' * ((MAX_DRAFT_FILE_BYTES + 600) // 6))
+    (tmp_path / 'ok.py').write_bytes(b'x = 1\n' * 3000)                                    # 18,000 bytes: not over any cap
+    context, tight = source_context(ws), source_context(ws, limit=3000)
+    assert 'ok.py' in context['files'] and 'ok.py' not in tight['files']
 
-    def cause(reason, name='wide.py'):
-        attempt(ws, {'contract': contract, 'snapshot_digest': context['snapshot_digest'], 'state': 'failed',
+    def cause(reason, name='wide.py', shown=context):
+        attempt(ws, {'contract': contract, 'snapshot_digest': shown['snapshot_digest'], 'state': 'failed',
                      'utc': '2026-10-04T22:00:00Z', 'feedback': {'not_shown': name, 'reason': reason}})
-        return _used_up_cause(ws, contract, context)
+        return _used_up_cause(ws, contract, shown)
     over = cause('file_limit')
     assert over.startswith('wide.py is too large to show a model, even in parts (over 160,000 bytes')
     assert 'split it first, yourself' in over and 'no step can do that' in over and '40,000 bytes at most' not in over
-    (tmp_path / 'big.py').write_bytes(b'x = 1\n' * ((MAX_DRAFT_FILE_BYTES + 600) // 6))
     assert 'too large to draft (400,000 bytes at most)' in cause('file_limit', 'big.py')
-    (tmp_path / 'ok.py').write_bytes(b'x = 1\n' * 3000)                                    # 18,000 bytes: not over any cap
-    within = cause('file_limit', 'ok.py')
+    # An attempt recorded before the cap was raised, for a file within it: nothing to split, and nothing to say once it is shown.
+    assert cause('file_limit', 'ok.py') == ''
+    within = cause('file_limit', 'ok.py', tight)
     assert 'split it' not in within and 'prioritize it under Author context' in within
     assert 'split' not in cause('not_utf8') and 'UTF-8' in cause('not_utf8')
     assert 'split' not in cause('budget_together') and 'Author context' in cause('budget_together')
+
+
+def test_a_late_answer_replay_shows_the_same_files_whole(tmp_path):
+    # The replay of a late answer (and every selection made without parts) judges an answer by what its call was shown:
+    # the 40,179-byte program is whole there too, and a context-only file within the cap is a gap prioritizing closes, not
+    # a refusal for its size.
+    ws = plan_for(tmp_path, title='Wire the camera', detail='change motion.mjs so the camera follows the subject',
+                  done_when='the camera moves')
+    text = j11_program(tmp_path)
+    program(tmp_path, name='other.mjs', functions=360)
+    program(tmp_path, name='aside.mjs', functions=380)
+    assert CONTEXT_FILE_BYTES < (tmp_path / 'aside.mjs').stat().st_size < FOCUSED_FILE_BYTES
+    context = source_context(ws, milestone=milestone(ws), parts=False)
+    assert context['files']['motion.mjs'] == text and 'motion.mjs' not in context['omission_reasons']
+    assert context['omission_reasons'].get('aside.mjs') == 'packet_budget'           # not 'file_limit': prioritizing shows it
+    edit = {'path': 'aside.mjs', 'edits': [{'old_text': 'function shape3(', 'new_text': 'function shape3x('}]}
+    with pytest.raises(PlannerUnavailable, match='aside.mjs was not shown to the model') as refused:
+        admit_answer_files(ws, context, [edit])
+    assert settled_state(refused.value) == 'context_gap' and refused.value.context_gap['path'] == 'aside.mjs'
 
 
 def tries_used(ws):

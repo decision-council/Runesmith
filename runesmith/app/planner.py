@@ -965,7 +965,7 @@ def _not_shown(rel, context, ws=None, needed=()):
         # A file the milestone must change is shown whole up to FOCUSED_FILE_BYTES, and one over that in parts (J11-B15);
         # this is one that cannot be, even then: no line of it is short enough to quote, or a draft cannot hold it. No
         # model can be shown it to split it, so the owner does that (a step that moves a part into a new file needs the
-        # file shown).
+        # file shown). A file within FOCUSED_FILE_BYTES is never refused for its size: at worst it is a gap prioritizing closes.
         from runesmith.app.source_focus import FOCUSED_FILE_BYTES
         from runesmith.app.workspace import MAX_DRAFT_FILE_BYTES
         try:
@@ -976,10 +976,6 @@ def _not_shown(rel, context, ws=None, needed=()):
             words = (f"{rel} is too large to draft ({MAX_DRAFT_FILE_BYTES:,} bytes at most), so a change to it could not be "
                      "kept, and no model can be shown it to split it. Split it into smaller files yourself: move a part "
                      "of it into a new file.")
-        elif 0 < size <= FOCUSED_FILE_BYTES:
-            words = (f"{rel} is too large to show a model here ({size:,} bytes): a file is shown whole up to "
-                     f"{FOCUSED_FILE_BYTES:,} bytes only when the step names it or it is prioritized under Author context, "
-                     "so a change to it cannot be checked against it. Prioritize it there, or name it in the step.")
         else:
             words = (f"{rel} is too large to show a model, even in parts (over {FOCUSED_FILE_BYTES:,} bytes, and its lines "
                      "are too long to quote), so a change to it cannot be checked against it. No model can be shown it to "

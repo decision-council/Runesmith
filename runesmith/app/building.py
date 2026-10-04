@@ -530,6 +530,9 @@ def _used_up_cause(ws, contract, context):
     if reason == 'file_limit' and size > MAX_DRAFT_FILE_BYTES:
         why = f'is too large to draft ({MAX_DRAFT_FILE_BYTES:,} bytes at most)'
     elif reason == 'file_limit' and 0 < size <= FOCUSED_FILE_BYTES:
+        # An attempt recorded when only a prioritized file was shown whole above CONTEXT_FILE_BYTES (before the cap was raised).
+        if name in context['files'] or name in (context.get('excerpts') or {}):
+            return ''                       # shown now: the cause is gone
         why = f'was not shown whole to a model ({size:,} bytes; only a prioritized or named file is shown whole above {CONTEXT_FILE_BYTES:,})'
     elif reason == 'file_limit':
         why = f'is too large to show a model, even in parts (over {FOCUSED_FILE_BYTES:,} bytes, and its lines are too long to quote)'
