@@ -46,12 +46,12 @@
   --focus: inset 0 0 0 1px #7d4e08, inset 0 0 12px rgba(197, 138, 52, .35), 0 0 0 2px rgba(197, 138, 52, .6), 0 0 14px 2px rgba(197, 138, 52, .3);
   --glass: rgba(243, 239, 230, .82);
   /* Status colours dark enough to read on parchment: 4.5:1 or more (journey J9-F6). Gold is the fill, never the text. */
-  --good: #0f6e46; --warn: #7d4e08; --bad: #b3261e; --heat: #a83d08; --violet: #5a3ae0;
-  --good-soft: rgba(15, 110, 70, .10); --good-line: rgba(15, 110, 70, .42);
+  --good: #0b6040; --warn: #7d4e08; --bad: #b3261e; --heat: #9a3706; --violet: #5a3ae0; --sky: #1b5fa6;
+  --good-soft: rgba(11, 96, 64, .10); --good-line: rgba(11, 96, 64, .42);
   --warn-soft: rgba(197, 138, 52, .16); --warn-line: rgba(125, 78, 8, .45);
   --bad-soft: rgba(179, 38, 30, .09); --bad-line: rgba(179, 38, 30, .42);
-  --heat-soft: rgba(224, 100, 20, .12); --heat-line: rgba(168, 61, 8, .5);
-  --band-bad: #b3261e; --band-minimal: #c58a34; --band-optimal: #0f6e46; --band-world: #5a3ae0; --band-unknown: #8a8578;
+  --heat-soft: rgba(224, 100, 20, .12); --heat-line: rgba(154, 55, 6, .5);
+  --band-bad: #b3261e; --band-minimal: #c58a34; --band-optimal: #0b6040; --band-world: #5a3ae0; --band-unknown: #8a8578;
 }
 :root[data-theme="light"] a { color: var(--accent-text); }   /* links: 5:1 or more on parchment */
 
@@ -61,7 +61,7 @@
 .card, .hero, .modal, .toast, .cmdk .box, .map-wrap, .map-side, .map-legend, .callout, .note, .provider, .instrument, .role-lane,
 .choice, .btn, .seg, .seg button, .chip, .tag, .badge, .kbd, .status-pill, .ws-switch, .input, .select, .textarea, .switch span,
 .note-btn, .item .ico, .feed .ev .dot, .stage .orb, .diff, pre.code, .console, .folder-list, .comment-banner, .skip-link,
-.nav a, .nav .count, .cmdk .opt, .rung .pip, .genesis .g-btn, .genesis .g-name textarea, .genesis .g-name .types button, .genesis .g-name .go {
+.nav a, .nav .count, .cmdk .opt, .rung .pip {
   --c: 8px; --edge: var(--line);
   --d0: calc(var(--c) * .7071);
   --d1: calc(var(--d0) + 1px);
@@ -186,18 +186,18 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .status-pill {
   --c: 7px; --edge: var(--line-2); position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 10px;
   background-color: var(--bg-2); font-family: var(--display); font-size: 14px; letter-spacing: .07em; font-variant-caps: all-small-caps;
-  color: var(--text-2); max-width: 46vw; cursor: pointer;
+  color: var(--text-2); max-width: 46vw; min-width: 0; cursor: pointer;
 }
 .status-pill .led { width: 7px; height: 7px; transform: rotate(45deg); background: var(--text-3); flex: none; }
 .status-pill.busy .led { background: var(--heat); box-shadow: 0 0 8px 1px var(--heat); animation: pulse 2.4s infinite; }
-.status-pill.busy, .status-pill.needs { --edge: var(--heat-line); }
+.status-pill.busy, .status-pill.needs { --edge: var(--heat-line); color: var(--text); }   /* cream text: it stays 4.5:1 while the band passes */
 .status-pill.idle .led { background: var(--good); }
 .status-pill.paused .led { background: var(--warn); }
 .status-pill.needs .led { background: var(--heat); box-shadow: 0 0 8px 1px var(--heat); animation: pulse 1.2s infinite; }
 /* running work: a slow band of heat passes through the chip */
 .status-pill.busy::before, .status-pill.needs::before, .badge.heat::before {
   content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(100deg, transparent 0 38%, rgba(255, 138, 61, .30) 50%, transparent 62% 100%) 0 0 / 250% 100% no-repeat;
+  background: linear-gradient(100deg, transparent 0 38%, rgba(255, 138, 61, .38) 50%, transparent 62% 100%) 0 0 / 250% 100% no-repeat;
   animation: heat-sweep 3.8s linear infinite;
 }
 @keyframes heat-sweep { from { background-position: 150% 0; } to { background-position: -50% 0; } }
@@ -284,7 +284,7 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .badge.bad { background-color: var(--bad-soft); --edge: var(--bad-line); color: var(--bad); }
 .badge.accent { background-color: var(--accent-soft); --edge: var(--accent-line); color: var(--accent-text); }
 .badge.rune { background-color: var(--rune-soft); --edge: var(--line-2); color: var(--accent-text); }
-.badge.heat { background-color: var(--heat-soft); --edge: var(--heat-line); color: var(--heat); overflow: hidden; }
+.badge.heat { background-color: var(--heat-soft); --edge: var(--heat-line); color: var(--text); overflow: hidden; }
 .badge.violet { background-color: rgba(139, 108, 255, .15); --edge: rgba(139, 108, 255, .45); color: #a891ff; }
 .measurement-readiness .badge { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 :root[data-theme="light"] .badge.violet { color: #5a3ae0; background-color: rgba(90, 58, 224, .10); --edge: rgba(90, 58, 224, .4); }
@@ -640,3 +640,15 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
 @media (max-width: 640px) { .btn { white-space: normal; text-align: left; flex-shrink: 1; } }
 /* Paths, digests and commands in monospace have no spaces to break at; on a phone they wrap anywhere (J9). */
 .mono { overflow-wrap: anywhere; }
+
+/* ---- keyboard focus (last, so it wins over every component rule above) ----------------------------------------------
+   A chamfered box clips an outer ring, so focus is the gold hairline plus an inset glow (--focus). On a gold fill a gold
+   ring would vanish, so those get a dark ring inside a light one. (Kept in separate rules: :is() takes the specificity of
+   its most specific member, which would let the plain rule beat the gold-fill one.) */
+:is(.btn, .chip, .seg button, .tabs button, .nav a, .provider, .choice, .ws-switch, .cmdk .opt, .card.hoverable, .tag, .status-pill, .note-btn,
+    .input, .select, .textarea, .kbd):focus-visible,
+.switch input:focus-visible + span { --edge: var(--gold); box-shadow: var(--focus); }
+:is(.btn.primary, .note-btn.has, .skip-link):focus-visible,
+.switch input:checked:focus-visible + span { --edge: var(--on-accent); box-shadow: inset 0 0 0 2px var(--on-accent), inset 0 0 0 3px var(--gold-lt); }
+:root[data-theme="light"] .nav .count.hot { color: #fff; }
+:root[data-theme="light"] .rung.achieved .pip::after { border-color: #fff; }

@@ -1,4 +1,21 @@
 /* Genesis: Runesmith's opening sequence. Always cinematic dark, whatever the theme: slate, gold and the heat of the forge. */
+/* The cut: 45-degree corners and a hairline that follows them (the same construction as app.css; this file is also
+   embedded on its own in the public site, so it carries its own copy). */
+.genesis .g-btn, .genesis .g-name textarea, .genesis .g-name .types button, .genesis .g-name .go {
+  --c: 8px; --edge: rgba(232, 176, 74, .3);
+  --d0: calc(var(--c) * .7071); --d1: calc(var(--d0) + 1px);
+  --cuts: linear-gradient(135deg, transparent var(--d0), var(--edge) var(--d0) var(--d1), transparent var(--d1)),
+          linear-gradient(225deg, transparent var(--d0), var(--edge) var(--d0) var(--d1), transparent var(--d1)),
+          linear-gradient(315deg, transparent var(--d0), var(--edge) var(--d0) var(--d1), transparent var(--d1)),
+          linear-gradient(45deg, transparent var(--d0), var(--edge) var(--d0) var(--d1), transparent var(--d1));
+  --cuts-pos: left top, right top, right bottom, left bottom;
+  --cuts-size: var(--c) var(--c), var(--c) var(--c), var(--c) var(--c), var(--c) var(--c);
+  border: 1px solid var(--edge);
+  background-image: var(--cuts); background-position: var(--cuts-pos); background-size: var(--cuts-size);
+  background-repeat: no-repeat; background-origin: border-box;
+  clip-path: polygon(var(--c) 0, calc(100% - var(--c)) 0, 100% var(--c), 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, var(--c) 100%, 0 calc(100% - var(--c)), 0 var(--c));
+  transition: background-color .16s, color .16s, transform .1s;
+}
 /* Everything is sized to the player, not the window (container units), so the sequence fits a full screen, a
    laptop and a small web player alike: the scene has the upper band, the words the lower one. */
 .genesis {
@@ -70,7 +87,7 @@
 .genesis .g-name .big::placeholder { color: rgba(255,255,255,.18); }
 .genesis .g-name textarea { --c: 10px; --edge: rgba(232, 176, 74, .25); width: 100%; margin-top: 1.8cqh; min-height: clamp(40px, 9cqh, 84px); background-color: rgba(255, 255, 255, .04); color: #f3ead8;
   padding: 1.2cqh 1.6cqh; font: inherit; font-size: clamp(12px, 1.9cqh, 15px); resize: vertical; outline: none; }
-.genesis .g-name textarea:focus { --edge: #e8b04a; box-shadow: var(--focus); }
+.genesis .g-name textarea:focus { --edge: #e8b04a; box-shadow: var(--focus, inset 0 0 0 1px #e8b04a, inset 0 0 14px rgba(232, 176, 74, .38)); }
 .genesis .g-name .types { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 1.8cqh 0 0; }
 .genesis .g-name .types button { --c: 7px; --edge: rgba(232, 176, 74, .3); background-color: rgba(255, 255, 255, .03); color: #d8d1c3; padding: .9cqh 1.5cqh; cursor: pointer;
   font-family: var(--display, system-ui); letter-spacing: .03em; font-size: clamp(11px, 1.75cqh, 13.5px); display: inline-flex; gap: 7px; align-items: center; }
@@ -102,3 +119,6 @@
 }
 /* a phone-sized player: the title line alone, and nothing in the corners to cover the scene (last, so it wins) */
 @container (max-height: 300px) { .genesis .g-caption .s, .genesis .g-brand, .genesis .g-top { display: none; } .genesis .g-caption { bottom: 9%; } }
+/* keyboard focus on the first-run controls: the same inset gold glow as the Studio (a chamfered box clips an outer ring) */
+.genesis .g-btn:focus-visible, .genesis .g-name .types button:focus-visible { --edge: #e8b04a; box-shadow: inset 0 0 0 1px #e8b04a, inset 0 0 14px rgba(232, 176, 74, .38); outline: none; }
+.genesis .g-name .go:focus-visible { --edge: #0b0e14; box-shadow: inset 0 0 0 2px #0b0e14, inset 0 0 0 3px #f8dc94; outline: none; }

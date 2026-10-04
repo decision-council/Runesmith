@@ -101,6 +101,9 @@ export function logoMark({ forge = false } = {}) {
     `<path fill="url(#${k}g)" d="${MARK_STONE}"/></svg>`;
 }
 
+// The static mark: the public site's bundle (scripts/build_site.py) reads this one.
+export const LOGO = logoMark({ forge: true });
+
 // The wordmark, cut without curves ("runes were cut"); it takes the text colour of its parent.
 let wordCount = 0;
 export function wordmark() {
