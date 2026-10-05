@@ -222,7 +222,11 @@ export default async function developmentLens(body, ctx) {
       holder.firstChild.addEventListener('click', (e) => { const n = e.target.closest('.node'); if (n) pick(n, false); });
       keyboardNodes(holder.firstChild, (n) => pick(n, true));
     }
-    trackHost.append(holder);
+    const asList = h('details.lm-group.mt-8', h('summary', h('b', 'List view'), ' · the same tracks for the keyboard and screen readers'),
+      ...lanes.map((lane, i) => h('div', h('div.small.mt-8', h('b', lane.label), ` · ${lane.sub}`), h('ul.lm-rows', { role: 'list' }, lane.stations.map((st, j) => h('li', h('button.lm-row', { type: 'button', 'data-name': `${i}:${j}`,
+        class: trackSel === `${i}:${j}` ? 'sel' : '', onclick: () => { trackSel = `${i}:${j}`; openTrackPanel(lane, st, true); } },
+        h('span.lm-name', st.label), h('span.tiny.faint', `${st.tick ? '✓ ' : ''}${st.status === 'achieved' ? 'achieved' : humanize(st.status)}${st.sub ? ` · ${st.sub}` : ''}`))))))));
+    trackHost.append(holder, ...(lanes.length ? [asList] : []));
     if (trackPanel) trackHost.append(trackPanel);
   };
   const closeTrack = () => { trackSel = null; trackPanel = null; trackToken++; drawTracks(); };

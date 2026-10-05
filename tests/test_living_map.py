@@ -397,6 +397,7 @@ def test_badges_come_from_the_drafts_the_plan_and_the_ledger(tmp_path):
     by = nodes(living_map.structure_view(ws))
     kinds = {b["kind"] for b in by["src/shop/cart.py"]["badges"]}
     assert {"draft_waiting", "milestone"} <= kinds
+    assert "changed" in {b["kind"] for b in by["src/shop/prices.py"]["badges"]}
     labels = {row["label"]: row for row in by["src/shop/prices.py"]["evidence"]}
     assert "applied from a draft by you" in labels["Last change"]["value"] and "gemini-test" in labels["Last change"]["value"]
     assert labels["Last change"]["source"].startswith("ledger and draft record")
@@ -603,3 +604,120 @@ def test_the_map_endpoints_read_and_write_nothing(studio_with_shop):
     # the Studio's own bookkeeping may move (its lock and its session files); records, maps and the ledger may not
     assert not [c for c in changed if c in ("ledger.jsonl", "WORK.json", "PLAN.json", "ENVIRONMENT.json", "runesmith.json")
                 or c.startswith(("drafts/", "experience/", "generations/"))], changed
+
+
+# ----------------------------------------------------------------------- the browser fixture, the doc and the words --
+
+VIEWS = Path(__file__).resolve().parents[1] / "runesmith" / "app" / "static" / "js" / "views"
+DOC = Path(__file__).resolve().parents[1] / "docs" / "MAP_LOGIC.md"
+
+
+def _keys(rows: list[dict]) -> set[str]:
+    return set().union(*(set(r) for r in rows)) if rows else set()
+
+
+def test_the_browser_fixture_has_the_shape_the_builders_produce(tmp_path):
+    """The loops (B28 to B31) serve tests/fixtures/living_map.json for the map's endpoints. If a builder gains or loses a field,
+    regenerate it with ``python tests/living_map_fixture.py``; until then this fails."""
+    import living_map_fixture
+    committed = json.loads((Path(__file__).parent / "fixtures" / "living_map.json").read_text(encoding="utf-8"))
+    fresh = living_map_fixture.build(tmp_path)
+    s_old, s_new = committed["structure"], fresh["structure"]
+    assert set(s_old) == set(s_new)
+    for part in ("nodes", "groups", "edges"):
+        assert _keys(s_old[part]) == _keys(s_new[part]), part
+    assert set(s_old["run"]) == set(s_new["run"]) and set(s_old["counts"]) == set(s_new["counts"])
+    g_old, g_new = committed["development"]["graph"], fresh["development"]["graph"]
+    assert set(g_old) == set(g_new)
+    for part in ("nodes", "edges", "tracks"):
+        assert _keys(g_old[part]) == _keys(g_new[part]), part
+    assert _keys(committed["development"]["lineage_ordered"]["stations"]) == _keys(fresh["development"]["lineage_ordered"]["stations"])
+    old_rungs = {rung for ladder in committed["development"]["ladders"].values() for rung in ladder}
+    new_rungs = {rung for ladder in fresh["development"]["ladders"].values() for rung in ladder}
+    assert old_rungs == new_rungs
+    assert set(committed["environment"]) == set(fresh["environment"]) and set(committed["operations"]) == set(fresh["operations"])
+    assert set(committed["self"]) == set(fresh["self"]) and set(committed["self"]["metrics"]) == set(fresh["self"]["metrics"])
+    assert _keys(committed["operations"]["stages"]) == _keys(fresh["operations"]["stages"])
+    assert committed["development"]["living_problems"] == [] and fresh["development"]["living_problems"] == []
+
+
+def _table_rows() -> list[dict[str, str]]:
+    text = DOC.read_text(encoding="utf-8")
+    block = text[text.index("## 7. The Automate mapping"):text.index("## 8.")]
+    rows = []
+    for line in block.splitlines():
+        if line.startswith("| ") and not line.startswith("| ---") and not line.startswith("| Part"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            rows.append(dict(zip(("part", "ids", "request", "site", "confirmation"), cells)))
+    return rows
+
+
+def test_the_automate_table_matches_the_code():
+    """MAP_LOGIC.md section 7: every control in the table exists in map-parts.js and the other way round; every setting it names is
+    a real setting; every endpoint it names is a real route; and the places it says send the same request still contain it."""
+    import re
+    from runesmith.app import server
+    from runesmith.app.workspace import SETTING_TYPES
+    rows = _table_rows()
+    assert len(rows) >= 25
+    parts = (VIEWS / "map-parts.js").read_text(encoding="utf-8")
+    registry = parts[parts.index("const REG = {"):parts.index("const NEEDS")]
+    in_code = set(re.findall(r"^  (\w+): \(S, ctx", registry, re.M)) - {"none"}
+    in_doc = set()
+    for row in rows:
+        in_doc |= {i.strip("` ") for i in row["ids"].split(",") if i.strip("` ") and i.strip("` ") != "(none)"}
+    assert in_doc == in_code, (in_doc ^ in_code)
+    routes = [(verb, pattern) for verb, pattern, _ in server.ROUTES]
+    sites = {name: (VIEWS / name).read_text(encoding="utf-8") for name in ("settings.js", "home.js", "goals.js", "improve.js", "map.js")}
+    body_keys = set(SETTING_TYPES) | {"title", "detail", "track", "done_when", "allow_apply"}
+    for row in rows:
+        for method, path in re.findall(r"(GET|POST) (/api/[\w/\-{}]+)", row["request"]):
+            probe = re.sub(r"\{[^}]*\}", "x1", path)
+            assert any(verb == method and pattern.fullmatch(probe) for verb, pattern in routes), (row["ids"], method, path)
+            literal = path.split("{")[0]
+            named = re.findall(r"([\w-]+\.js)", row["site"])
+            if named:
+                assert any(literal in sites[name] for name in named if name in sites), (row["ids"], literal, named)
+        for body in re.findall(r"\{([a-z_, ]+)\}", row["request"]):
+            for key in (k.strip() for k in body.split(",")):
+                assert key in body_keys or key in ("generation", "incumbent", "milestone"), (row["ids"], key)
+    assert not [r for r in rows if not r["confirmation"]]
+
+
+def test_the_confirmations_the_map_repeats_are_the_owners_own_words():
+    """A control the owner already confirms elsewhere asks with the same words here (docs/MAP_LOGIC.md, section 7)."""
+    parts = (VIEWS / "map-parts.js").read_text(encoding="utf-8")
+    sources = {name: (VIEWS / name).read_text(encoding="utf-8") for name in ("goals.js", "improve.js", "home.js", "settings.js")}
+    pairs = [
+        ("goals.js", "Apply checked drafts automatically in this folder?"),
+        ("goals.js", "It writes only when a draft passes both its own tests and your acceptance checks for the milestone. You can turn this off here at any time; backups and Undo stay available."),
+        ("goals.js", "Allow automatic apply"),
+        ("goals.js", "Let Runesmith approve checks itself?"),
+        ("goals.js", "Runesmith then asks for acceptance checks for ready milestones and approves them only when they pass every test: tried on your project, no problems it found itself, and a second model working out the same expected values. Otherwise it turns them down with the reason and asks again, twice at most, then leaves them for you. Checks you approved are never replaced by it. You can read and replace any of its checks."),
+        ("goals.js", "Turn on the check autopilot"),
+        ("goals.js", "Name the files or folders Runesmith may write first, for example: src, tests. A . means the whole folder."),
+        ("improve.js", "is checked (digests, allowed imports, a confined smoke test), frozen next to your active generation, and put on trial against it. It becomes active only if it wins on your own work."),
+        ("improve.js", "Adopt and start the trial"),
+        ("improve.js", "This is your choice, recorded as such in the ledger. It skips the trial, so use it to roll back to an earlier generation rather than to promote an untested one. An open trial is closed by it."),
+        ("improve.js", "Stop this trial?"),
+        ("improve.js", "stays active and"),
+        ("improve.js", "is not used. The counts so far are kept, and the trial is recorded as closed by your choice."),
+        ("improve.js", "Trial stopped; what runs is unchanged."),
+        ("home.js", "Fix the failing tests?"),
+        ("home.js", "Runesmith adds a milestone, “Make the failing tests pass”. Your"),
+        ("home.js", "test file(s) are frozen as they are now and decide when it is done."),
+        ("home.js", "You review the fix and apply it yourself."),
+        ("home.js", "Fixing the failing tests: follow it in Goals & plan and Activity."),
+        ("settings.js", "This executes the project’s own code, on a throwaway copy of the folder, so nothing is written into it. Only for projects you trust: the copy is not a security boundary."),
+    ]
+    for source, fragment in pairs:
+        assert fragment in sources[source], (source, fragment)
+        assert fragment in parts, ("the map's own copy", fragment)
+
+
+def test_the_map_files_never_print_null_or_read_a_button_after_waiting():
+    """Two browser slips tests/test_static_js_hygiene.py already guards, named here for the new files."""
+    from test_static_js_hygiene import null_appends, target_after_await
+    for name in ("map.js", "map-parts.js", "map-structure.js", "map-self.js", "map-plan.js", "map-ops.js"):
+        text = (VIEWS / name).read_text(encoding="utf-8")
+        assert not null_appends(text) and not target_after_await(text), name

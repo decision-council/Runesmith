@@ -738,3 +738,4 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
 .lm-card-sel { box-shadow: 0 0 0 2px var(--accent); }
 .lm-pulse { animation: lm-fade 2.2s ease-in-out infinite; }
 @keyframes lm-fade { 0%, 100% { stroke-opacity: .85; } 50% { stroke-opacity: .2; } }
+.lm-row .badge, .lm-panel .badge, .lm-detail .badge { white-space: normal; max-width: 100%; text-align: left; overflow-wrap: anywhere; height: auto; }

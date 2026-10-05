@@ -52,6 +52,7 @@ export default async function selfLens(body, ctx) {
   const data = await get('/api/map/self');
   const wrap = h('div.map-wrap');
   let selected = null, current = null, token = 0;
+  let mode = window.matchMedia?.('(max-width: 560px)').matches ? 'list' : 'graph';
   const kernel = data.kernel, organs = data.active_organs;
   const { stations, ordered } = stationsOf(data);
   const shown = stations.length > CAP ? stations.slice(stations.length - CAP) : stations;
@@ -112,16 +113,36 @@ export default async function selfLens(body, ctx) {
     const holder = h('div', { html: s });
     const svg = holder.firstChild;
     svg.setAttribute('role', 'group');
-    svg.setAttribute('aria-label', `Runesmith's anatomy: ${N} kernel modules, ${organs.length} organ${organs.length === 1 ? '' : 's'} and ${stations.length} generation${stations.length === 1 ? '' : 's'}. Tab to a part and press Enter for its details.`);
+    svg.setAttribute('aria-label', `Runesmith's anatomy: ${N} kernel modules, ${organs.length} organ${organs.length === 1 ? '' : 's'} and ${stations.length} generation${stations.length === 1 ? '' : 's'}. Tab to a part and press Enter for its details, or use the list view.`);
     const pz = panZoom(svg, svg.querySelector('.pz'));
     svg.addEventListener('click', (e) => { const n = e.target.closest('.node'); if (n) open(n.dataset.kind, n.dataset.name, false); });
     keyboardNodes(svg, (n) => open(n.dataset.kind, n.dataset.name, true));
-    wrap.append(...[h('div.map-tools', h('button.btn.sm.icon', { 'aria-label': 'Zoom in', title: 'Zoom in', onclick: () => pz.zoom(1.2) }, icon('plus')),
-      h('button.btn.sm.icon', { 'aria-label': 'Zoom out', title: 'Zoom out', onclick: () => pz.zoom(1 / 1.2) }, icon('minus')),
-      h('button.btn.sm.icon', { 'aria-label': 'Reset the view', title: 'Reset view', onclick: () => pz.reset() }, icon('crosshair')), h('span.badge.rune', `Runesmith ${data.identity.version}`)), svg,
-      h('div.map-legend', h('span', h('b', { style: { color: 'var(--rune)' } }, '■'), ' kernel module (fixed)'), h('span', h('b', { style: { color: 'var(--ember)' } }, '●'), ' organ (can be improved)'),
+    const toggle = h('div.seg.lm-mode', { role: 'group', 'aria-label': 'How to show the parts' }, [['graph', 'Graph', 'branch'], ['list', 'List', 'menu']].map(([id, label, ic]) => h('button', { class: mode === id ? 'on' : '',
+      'aria-pressed': String(mode === id), onclick: () => { mode = id; draw(); } }, icon(ic), label)));
+    wrap.append(...[h('div.map-tools.lm-tools', ...[mode === 'graph' ? h('button.btn.sm.icon', { 'aria-label': 'Zoom in', title: 'Zoom in', onclick: () => pz.zoom(1.2) }, icon('plus')) : null,
+      mode === 'graph' ? h('button.btn.sm.icon', { 'aria-label': 'Zoom out', title: 'Zoom out', onclick: () => pz.zoom(1 / 1.2) }, icon('minus')) : null,
+      mode === 'graph' ? h('button.btn.sm.icon', { 'aria-label': 'Reset the view', title: 'Reset view', onclick: () => pz.reset() }, icon('crosshair')) : null,
+      toggle, h('span.badge.rune', `Runesmith ${data.identity.version}`)].filter(Boolean)), mode === 'graph' ? svg : listView(),
+      h('div.map-legend.lm-legend', h('span', h('b', { style: { color: 'var(--rune)' } }, '■'), ' kernel module (fixed)'), h('span', h('b', { style: { color: 'var(--ember)' } }, '●'), ' organ (can be improved)'),
         h('span.faint', '✓ only on the active generation or one that won its trial · click any part')),
       problem ? h('div.lm-notice.small', { role: 'status' }, icon('info'), `${problem}: the generations are listed as found, with no state claimed.`) : null, current].filter(Boolean));
+  };
+  // the same parts as a list, for the keyboard, a screen reader and a phone
+  const listView = () => {
+    const row = (kind, name, ...cells) => h('li', h('button.lm-row', { type: 'button', 'data-name': name, 'data-kind': kind, class: selected === name ? 'sel' : '', onclick: () => open(kind, name, true) }, ...cells));
+    const metricsRows = Object.entries(CAP_NAMES).map(([k, label]) => {
+      const c = data.capabilities[k] || { band: 'unknown', value: null }, m = metrics?.metrics?.[k];
+      return row('metric', k, h('span.lm-name', label), h('span', { class: `band ${c.band}` }, c.value == null ? 'unknown' : fmtCap(k, c.value)), h('span.tiny.faint', m ? `${m.n} judged session${m.n === 1 ? '' : 's'}${m.few ? ' · few sessions' : ''}` : 'sample unknown'));
+    });
+    return h('div.lm-listbox', { role: 'group', 'aria-label': 'List view: the generations, organs, metrics and kernel modules' },
+      h('details.lm-group', { open: true }, h('summary', h('b', 'Generations'), ` · ${plural(stations.length, 'generation')}, parent to child`),
+        h('ul.lm-rows', { role: 'list' }, stations.map((g) => row('generation', g.id, h('span.lm-kind', g.tick ? '✓ ' + (STATE_SHORT[g.state] || g.state) : STATE_SHORT[g.state] || g.state),
+          h('span.lm-name', { style: { paddingLeft: `${Math.min(3, g.depth) * 14}px` } }, g.name), h('span.tiny.faint', g.state_words.slice(0, 90)))))),
+      h('details.lm-group', { open: true }, h('summary', h('b', 'Organs'), ` · ${plural(organs.length, 'organ')}, improvable only with evidence`),
+        h('ul.lm-rows', { role: 'list' }, organs.map((o) => row('organ', o.path, h('span.lm-name.mono', o.path), h('span.tiny.faint', `${o.lines} lines`))))),
+      h('details.lm-group', { open: true }, h('summary', h('b', 'Self-knowledge'), ' · what Runesmith knows about its own repairs'), h('ul.lm-rows', { role: 'list' }, metricsRows)),
+      h('details.lm-group', h('summary', h('b', 'Kernel'), ` · ${plural(kernel.length, 'fixed module')}`),
+        h('ul.lm-rows', { role: 'list' }, kernel.map((c) => row('kernel', c.path, h('span.lm-name.mono', c.path), h('span.tiny.faint', `${c.lines || '?'} lines`))))));
   };
 
   const close = () => { selected = null; token++; defaultPanel().then((el) => { current = el; draw(); }); };

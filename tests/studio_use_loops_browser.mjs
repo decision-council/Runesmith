@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const dependencies=process.env.RUNESMITH_TEST_NODE_MODULES;
 const {chromium}=require(dependencies?path.join(dependencies,'playwright'):'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23,B24,B25,B26,B27').split(','));
+const selected=new Set((process.argv.find(v=>v.startsWith('--series='))?.slice(9)||'B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20,B21,B22,B23,B24,B25,B26,B27,B28,B29,B30,B31').split(','));
 const artifacts=path.join(root,'training','.tmp','studio-use-loops-'+new Date().toISOString().replace(/[:.]/g,'-'));
 mkdirSync(artifacts,{recursive:true});
 const executable=[chromium.executablePath(),'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -57,6 +57,10 @@ let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
 let fixtureAutonomy='propose';
 let discoverFixture=[];
+// B28 to B31 (the Living map): the answers of the map's endpoints, built by the real builders (tests/living_map_fixture.py)
+const living=JSON.parse(readFileSync(path.join(root,'tests','fixtures','living_map.json'),'utf8'));
+let livingStructure=null,livingSelf=null,livingOps=null,livingDev=null,livingImprove=null,livingSettings=null;
+const livingTries={known:true,used:1,remaining:2,limit:3,one_more_try_used:false,source:'the build attempts own records'};
 const planningBlocks=()=>[
   ...(fixtureAutonomy==='observe'?['You chose to just look (observe), so Runesmith does not ask a model to plan.']:[]),
   ...(!mission.modes.some(m=>m.executor==='map_plan'&&m.enabled)?['Map & Plan is off. Existing plans may still drive Build.']:[]),
@@ -237,11 +241,14 @@ await context.route('**/*',async route=>{
     planning_blockers:planningBlocks(),autonomy:fixtureAutonomy,held_plans:heldPlans,breakdowns:fixtureBreakdowns,acceptance_expectations:fixtureExpectations,acceptance_checks:fixtureAcceptance,current_checks:[],
     readiness:Object.fromEntries((fixturePlan?.milestones||[]).map(m=>[m.id,{ready:true,unmet:[]}]))};
   else if(p==='/api/goalposts')data={goalposts:null,ready:planningBlocks().length===0,planning_blockers:planningBlocks()};
-  else if(p==='/api/settings')data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false,autonomy:'propose',
-    exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark',recovery_policy:'wait',stuck_policy:'wait',recheck_policy:'wait'};
+  else if(p==='/api/settings'){
+    if(livingSettings){if(req.method()==='POST')Object.assign(livingSettings,body);data=livingSettings;}
+    else data={build_steps:true,build_paths:['src','tests'],auto_work:false,kaizen:false,autonomy:'propose',
+      exclude:[],interval_minutes:60,workspace_name:'Bakery handbook',theme:'dark',recovery_policy:'wait',stuck_policy:'wait',recheck_policy:'wait'};
+  }
   else if(p==='/api/ping')data={ok:true};                                      // B20.16: the slow note's plain request
   else if(p==='/api/map/environment')data=fixtureProbeMap||{map:{objects:fixtureMapObjects||[{name:'Bakery handbook',root:true},{name:'recipes',root:false},{name:'shop',root:false}]}};
-  else if(p==='/api/map/development')data={objects:fixtureProbeMap?.map.objects||[],goals:[],plan:null,lineage:[],campaigns:[]};
+  else if(p==='/api/map/development')data=livingDev||{objects:fixtureProbeMap?.map.objects||[],goals:[],plan:null,lineage:[],campaigns:[]};
   else if(p==='/api/build')data={apply:false,acceptance_folder:'.runesmith/acceptance',last:null};
   else if(p==='/api/author-context'&&req.method()==='GET')data={focus:{paths:[],reason:'',utc:null},focus_errors:authorFocusErrors,settings_error:null,
     truncated_inventory:false,snapshot_digest:'a'.repeat(64),included_count:2,whole_count:1,parts_count:1,parts_for:{id:'m1',title:'Camera follows the subject'},
@@ -306,6 +313,13 @@ await context.route('**/*',async route=>{
     data={id:'mnew',status:'open',...body};
   }
   else if(/^\/api\/plan\/milestones\/[A-Za-z0-9_-]+$/.test(p)&&req.method()==='POST')data={id:p.split('/')[4],...body};     // an edit (B20.15)
+  else if(p==='/api/map/structure'&&livingStructure==='fail'){await route.fulfill({status:500,json:{error:'fixture: the structure could not be built'}});return;}
+  else if(p==='/api/map/structure'&&livingStructure)data=livingStructure;
+  else if(p==='/api/map/self'&&livingSelf)data=livingSelf;
+  else if(p==='/api/map/operations'&&livingOps)data=livingOps;
+  else if(p==='/api/improve'&&req.method()==='GET'&&livingImprove)data=livingImprove;
+  else if(/^\/api\/improve\/(adopt|activate)\//.test(p))data={ok:true,id:'gen-fixture',trial_closed:null};
+  else if(/^\/api\/map\/milestone\//.test(p))data=livingTries;
   else {await route.fulfill({status:400,json:{error:'Unimplemented fixture route: '+p}});return;}
   await route.fulfill({json:data});
 });
@@ -2729,6 +2743,453 @@ try{
     assert.equal(requests.slice(start).filter(r=>r.method==='POST').length,0);
     loops.push({id:'B27.07',case:'Viewing and resizing evidence submits no worker job, model request or write',result:'passed'});
     fixtureProbeMap=null;
+  }
+  // ---- B28 to B31: the Living map's four tabs (docs/MAP_LOGIC.md). The answers are tests/fixtures/living_map.json, built by the
+  // real builders from a small bakery project; the page is the real frontend; no Studio, model or project is involved.
+  const lens=async(name,params='')=>{
+    await page.evaluate(async([name,params])=>{
+      window.cleanup?.();document.querySelector('#page').replaceChildren();window.navigation=null;
+      const module=await import('/static/js/views/map.js');
+      window.cleanup=await module.default(document.querySelector('#page'),{sub:[name],params:new URLSearchParams(params),
+        app:{state:{workspace:{name:'Moonlight Bakery'}}},navigate(...args){window.navigation=args;},refreshState(){}});
+    },[name,params]);
+  };
+  const posts=(from)=>requests.slice(from).filter(r=>r.method==='POST').map(r=>[r.path,r.body]);
+  const reset=()=>{
+    livingSettings=structuredClone(living.settings);fixtureProbeMap=structuredClone(living.environment);livingStructure=structuredClone(living.structure);
+    livingSelf=structuredClone(living.self);livingOps=structuredClone(living.operations);livingDev=structuredClone(living.development);
+    livingImprove=structuredClone(living.improve);fixFixture={offer:null};
+  };
+  const noOverflow=async(why)=>{
+    const wide=await page.locator('#page').evaluate(el=>{const box=el.getBoundingClientRect();return {fits:document.documentElement.scrollWidth<=document.documentElement.clientWidth+1,
+      offenders:[...el.querySelectorAll('*')].filter(c=>!c.closest('.lm-scroll,.console')&&c.getBoundingClientRect().right>box.right+1).slice(0,5).map(c=>c.tagName+'.'+(c.getAttribute('class')||'')+' '+(c.textContent||'').slice(0,30))};});
+    assert(wide.fits&&!wide.offenders.length,'The page is wider than the screen: '+why+' '+JSON.stringify(wide.offenders));
+  };
+  const heads=(panel)=>panel.locator('h4').allTextContents();
+  const control=(panel,id)=>panel.locator(`[data-control="${id}"]`);
+  const controls=(panel)=>panel.locator('[data-control]').evaluateAll(els=>els.map(e=>e.dataset.control));
+  const cancel=async()=>{await page.getByRole('button',{name:'Cancel',exact:true}).click();await page.waitForTimeout(150);};
+  if(selected.has('B28')){
+    const start=requests.length;
+    reset();
+    await page.setViewportSize({width:1440,height:1000});
+    await lens('environment');
+    const st=living.structure;
+    assert.equal(await page.locator('.map-wrap .node.lm-part').count(),st.counts.drawn);
+    assert.equal(await page.locator('.map-wrap .lm-centre').count(),1);
+    assert.equal(await page.locator('.map-wrap .lm-group-label').count(),st.groups.length);
+    assert.equal(await page.locator('.map-wrap .lm-edge').count(),st.edges.length);
+    const label=async name=>page.locator(`.map-wrap .node[data-name="${name}"]`).getAttribute('aria-label');
+    assert((await label('src/bakery/reports.py')).includes('Bad: tests/test_reports.py failed'));
+    assert((await label('src/bakery/legacy.py')).includes('Minimal: No test file imports this module'));
+    assert((await page.locator('[data-run]').innerText()).includes('latest test run'));
+    assert((await page.locator('.map-wrap svg.lm-structure').getAttribute('aria-label')).includes('Tab to a part'));
+    loops.push({id:'B28.01',case:'A one-project folder draws its files around it: parts, folders, links, state with its reason, and the run they rest on',result:'passed'});
+
+    const panel=page.getByRole('region',{name:'Details: src/bakery/reports.py',exact:true});
+    await page.locator('.map-wrap .node[data-name="src/bakery/reports.py"]').click();
+    await panel.waitFor();
+    assert.deepEqual(await heads(panel),['What this is','Evidence','Automate']);
+    const facts=await panel.locator('.lm-fact').allInnerTexts();
+    assert(facts.length>=8);for(const text of facts)assert(text.includes('Source: '),text);
+    assert((await panel.innerText()).includes('tests/test_reports.py failed'));
+    assert.deepEqual(await controls(panel),['watch_tests','fix_tests','milestone_form','exclude']);
+    loops.push({id:'B28.02',case:'Clicking a module opens What this is, Evidence (every fact with its source) and Automate',result:'passed'});
+
+    let from=requests.length;
+    await panel.getByRole('button',{name:'Turn on and measure'}).click();
+    await cancel();
+    assert.deepEqual(posts(from),[]);
+    await panel.getByRole('button',{name:'Turn on and measure'}).click();
+    await page.getByRole('button',{name:'Turn it on and measure',exact:true}).click();
+    await page.waitForTimeout(300);
+    assert.deepEqual(posts(from),[['/api/settings',{probe_tests:true,policy_chosen:true}],['/api/worker/run',{job:'map',params:{probe:true}}]]);
+    loops.push({id:'B28.03',case:'Watch its tests asks first (Cancel sends nothing), then sends the setting and the map job exactly',result:'passed'});
+
+    from=requests.length;
+    const title=panel.getByLabel('Milestone title');
+    assert.equal(await title.inputValue(),'Work on src/bakery/reports.py');
+    await panel.getByLabel('Done when').fill('daily adds up');
+    assert.deepEqual(posts(from),[]);
+    await panel.getByRole('button',{name:'Save the milestone'}).click();await page.waitForTimeout(250);
+    assert.deepEqual(posts(from),[['/api/plan/milestones',{title:'Work on src/bakery/reports.py',detail:'',track:'',done_when:'daily adds up'}]]);
+    loops.push({id:'B28.04',case:'Make a milestone sends nothing until Save, then the existing milestone request',result:'passed'});
+
+    assert(await panel.getByRole('button',{name:'Fix the failing tests',exact:true}).isDisabled());
+    assert((await control(panel,'fix_tests').innerText()).includes('Not offered now'));
+    await panel.getByRole('button',{name:'Close the details'}).click();
+    fixFixture={offer:{object:'bakery',path:'D:/fixture/bakery',tests_green:0.75,code_paths:['src'],test_files:4}};
+    await page.locator('.map-wrap .node[data-name="src/bakery/reports.py"]').click();
+    await panel.waitFor();
+    from=requests.length;
+    await panel.getByRole('button',{name:'Fix the failing tests',exact:true}).click();
+    assert((await page.getByRole('dialog').innerText()).includes('Your 4 test file(s) are frozen as they are now and decide when it is done. You review the fix and apply it yourself.'));
+    await cancel();
+    assert.deepEqual(posts(from),[]);
+    await panel.getByRole('button',{name:'Fix the failing tests',exact:true}).click();
+    await page.getByRole('button',{name:'Fix them',exact:true}).click();await page.waitForTimeout(300);
+    assert.deepEqual(posts(from),[['/api/fix-tests',{allow_apply:false}],['/api/worker/run',{job:'build'}]]);
+    assert.deepEqual(await page.evaluate(()=>window.navigation),['goals']);
+    loops.push({id:'B28.05',case:'Fix the failing tests is offered only when the Overview offers it, asks with the Overview words, and sends its two existing requests',result:'passed'});
+
+    await panel.getByRole('button',{name:'Close the details'}).click();
+    await page.locator('.map-wrap .node[data-name="__hub"]').click();
+    const hub=page.getByRole('region',{name:'Details: the whole workspace',exact:true});
+    await hub.waitFor();
+    assert.deepEqual(await heads(hub),['What this is','Evidence','Automate']);
+    assert.deepEqual(await controls(hub),['auto_work','interval_minutes','probe_tests','max_objects','read_notes','exclude','remap']);
+    from=requests.length;
+    await control(hub,'auto_work').getByRole('button',{name:'Turn on'}).click();await page.waitForTimeout(200);
+    await control(hub,'interval_minutes').locator('select').selectOption('15');await page.waitForTimeout(200);
+    const maxObjects=control(hub,'max_objects').locator('input');await maxObjects.fill('10');await maxObjects.press('Tab');await page.waitForTimeout(200);
+    await control(hub,'read_notes').getByRole('button',{name:'Turn off'}).click();await page.waitForTimeout(200);
+    assert.deepEqual(posts(from),[['/api/settings',{auto_work:true,policy_chosen:true}],['/api/settings',{interval_minutes:15}],['/api/settings',{max_objects:10}],['/api/settings',{read_notes:false}]]);
+    assert((await control(hub,'auto_work').innerText()).includes('Scheduled rounds: on.'));
+    loops.push({id:'B28.06',case:'The workspace hub lists its owner controls with their current value, and each sends its existing settings request',result:'passed'});
+
+    await hub.getByRole('button',{name:'Close the details'}).click();
+    const reach=await page.locator('.map-wrap .node[data-name="src/bakery/prices.py"]');
+    await reach.focus();await page.keyboard.press('Enter');
+    await page.getByRole('region',{name:'Details: src/bakery/prices.py',exact:true}).waitFor();
+    assert(await page.evaluate(()=>document.activeElement?.tagName==='H3'));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(()=>document.activeElement?.dataset?.name==='src/bakery/prices.py');
+    loops.push({id:'B28.07',case:'Tab reaches a part, Enter opens its panel and puts the focus on its heading, Escape returns to the part',result:'passed'});
+
+    from=requests.length;
+    await page.locator('.lm-mode').getByRole('button',{name:'List'}).click();
+    assert.equal(await page.locator('.lm-row').count(),st.nodes.length);
+    assert.equal(await page.locator('button.lm-row').count(),st.nodes.length);
+    const row=page.locator('.lm-row[data-name="src/bakery/reports.py"]');
+    assert((await row.getAttribute('aria-label')).includes('Bad'));
+    await row.focus();await page.keyboard.press('Enter');
+    await page.getByRole('region',{name:'Details: src/bakery/reports.py',exact:true}).waitFor();
+    assert(await page.evaluate(()=>document.activeElement?.tagName==='H3'));
+    assert.deepEqual(posts(from),[]);
+    loops.push({id:'B28.08',case:'The list view carries every part as a native button with its state, and opens the same panel from the keyboard; looking sends no write',result:'passed'});
+
+    // "+N more": a folder with parts that are not drawn
+    livingStructure=structuredClone(living.structure);
+    const group=livingStructure.groups.find(g=>g.id==='src/bakery');
+    const hidden=livingStructure.nodes.filter(n=>n.group==='src/bakery').slice(-3);
+    for(const n of hidden)n.drawn=false;
+    group.drawn-=3;group.more=3;group.more_ids=hidden.map(n=>n.id);
+    await lens('environment');
+    assert.equal(await page.locator('.map-wrap .lm-more').count(),1);
+    assert((await page.locator('.map-wrap .lm-more').getAttribute('aria-label')).includes('3 more files in src/bakery'));
+    await page.locator('.map-wrap .lm-more').click();
+    const morePanel=page.getByRole('region',{name:'Details: +3 in src/bakery',exact:true});
+    await morePanel.waitFor();
+    assert.deepEqual(await heads(morePanel),['What this is','Evidence','Automate']);
+    from=requests.length;
+    await morePanel.getByRole('button',{name:/Show them in the drawing/}).click();await page.waitForTimeout(300);
+    assert(requests.slice(from).some(r=>r.path==='/api/map/structure'&&decodeURIComponent(r.query).includes('expand=src/bakery')));
+    loops.push({id:'B28.09',case:'A folder past the cap shows one +N more part that opens its files and asks for the folder expanded',result:'passed'});
+
+    // fallback: the structure cannot be built; and an empty folder; and a folder of documents
+    livingStructure='fail';await lens('environment');
+    assert.equal(await page.locator('.map-wrap .node[data-name="__hub"]').count(),1);
+    assert.equal(await page.locator('.map-wrap .lm-part').count(),0);
+    assert((await page.locator('.lm-notice').innerText()).includes('could not be read'));
+    livingStructure={...structuredClone(living.structure),empty:true,nodes:[],groups:[],edges:[],sentence:'There are no files here yet. When there are, they appear around the folder, each with what is known about it.'};
+    await lens('environment');
+    assert((await page.locator('.lm-notice').innerText()).includes('no files here yet'));
+    livingStructure=structuredClone(living.structure);
+    livingStructure.nodes=livingStructure.nodes.filter(n=>n.kind==='doc');livingStructure.edges=[];livingStructure.groups=livingStructure.groups.filter(g=>livingStructure.nodes.some(n=>n.group===g.id));
+    livingStructure.counts={...livingStructure.counts,files:3,edges:0,drawn:3,listed:3,modules:0,tests:0};
+    livingStructure.sentence='3 files: 3 documents. There is no code to link, so there are no edges.';
+    await lens('environment');
+    assert.equal(await page.locator('.lm-edge').count(),0);assert.equal(await page.locator('.lm-part').count(),3);
+    loops.push({id:'B28.10',case:'If the structure cannot be built the objects are drawn as before with a plain line; an empty folder and a folder of documents are drawn without edges',result:'passed'});
+
+    reset();
+    for(const width of [1440,800,390]){
+      await page.setViewportSize({width,height:1000});await lens('environment');
+      await noOverflow(`Environment at ${width}`);
+      if(width===390){assert.equal(await page.locator('.lm-mode .on').innerText(),'List');assert.equal(await page.locator('.lm-row').count(),st.nodes.length);}
+      await page.screenshot({path:path.join(artifacts,`B28-environment-${width}.png`),fullPage:width===390});
+    }
+    await page.setViewportSize({width:1440,height:1000});await lens('environment');
+    const dark=await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--band-bad'));
+    await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
+    const light=await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--band-bad'));
+    assert.notEqual(dark.trim(),light.trim());
+    await page.locator('.map-wrap .node[data-name="src/bakery/reports.py"]').click();await page.waitForTimeout(500);
+    await page.screenshot({path:path.join(artifacts,'B28-environment-light.png')});
+    await noOverflow('Environment in the light theme');
+    await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
+    loops.push({id:'B28.11',case:'Desktop, tablet and phone widths fit without sideways scrolling (the phone starts on the list); light and dark both draw',result:'passed'});
+  }
+  if(selected.has('B29')){
+    reset();
+    await page.setViewportSize({width:1440,height:1000});
+    await lens('self');
+    const ordered=living.self.lineage_ordered.stations;
+    const names=await page.locator('.node.lm-station').evaluateAll(els=>els.map(e=>e.getAttribute('aria-label').split(':')[0]));
+    assert.deepEqual(names,ordered.map(s=>s.name));
+    assert.equal(await page.locator('.node.lm-station .lm-tick').count(),ordered.filter(s=>s.tick).length);
+    assert.equal(ordered.filter(s=>s.tick).length,1);                                          // only the active generation is ticked
+    const onTrial=ordered.find(s=>s.state==='on_trial');
+    assert((await page.locator(`.node[data-name="${onTrial.id}"]`).getAttribute('aria-label')).includes('on trial'));
+    assert(!(await page.locator(`.node[data-name="${onTrial.id}"]`).innerHTML()).includes('lm-tick'));
+    assert((await page.locator(`.node[data-name="${onTrial.id}"]`).textContent()).includes('5/9 vs 3/8'));
+    assert((await page.locator('.map-side').innerText()).includes('judged sessions since'));
+    loops.push({id:'B29.01',case:'The lineage is drawn parent to child with each state in words; only the active generation carries a tick; the metrics name their samples',result:'passed'});
+
+    await page.locator(`.node[data-name="${onTrial.id}"]`).click();
+    const gen=page.getByRole('region',{name:`Details: ${onTrial.name}`,exact:true});
+    await gen.waitFor();
+    assert.deepEqual(await heads(gen),['What this is','Evidence','Automate']);
+    for(const text of await gen.locator('.lm-fact').allInnerTexts())assert(text.includes('Source: '),text);
+    assert.deepEqual(await controls(gen),['activate','stop_trial']);
+    let from=requests.length;
+    await gen.getByRole('button',{name:'Make active'}).click();await cancel();
+    await gen.getByRole('button',{name:'Stop this trial'}).click();await cancel();
+    assert.deepEqual(posts(from),[]);
+    await gen.getByRole('button',{name:'Make active'}).click();
+    await page.getByRole('button',{name:'Make active',exact:true}).last().click();await page.waitForTimeout(300);
+    assert.deepEqual(posts(from),[[`/api/improve/activate/${onTrial.id}`,{}]]);
+    assert.deepEqual(await page.evaluate(()=>window.navigation),['map','self']);
+    from=requests.length;
+    await lens('self');
+    await page.locator(`.node[data-name="${onTrial.id}"]`).click();await gen.waitFor();
+    await gen.getByRole('button',{name:'Stop this trial'}).click();
+    await page.getByRole('button',{name:'Stop the trial',exact:true}).click();await page.waitForTimeout(300);
+    assert.deepEqual(posts(from),[[`/api/improve/activate/${onTrial.incumbent??onTrial.trial.incumbent}`,{}]]);
+    loops.push({id:'B29.02',case:'A generation opens What / Evidence / Automate; Make active and Stop this trial ask with the Self-improvement words, Cancel sends nothing, Confirm sends the existing request',result:'passed'});
+
+    await lens('self');
+    await page.locator('.node[data-kind="kernel"]').first().click();
+    const kernelPanel=page.locator('.map-side[aria-label^="Details:"]');
+    await kernelPanel.waitFor();
+    assert((await kernelPanel.innerText()).includes('Not automatable, by design'));
+    assert.equal(await kernelPanel.locator('[data-control]').count(),0);
+    assert((await kernelPanel.innerText()).includes('no improvement loop can rewrite its own judge'));
+    await page.locator('.node[data-kind="organ"]').first().click();
+    const organ=page.locator('.map-side[aria-label^="Details: "]').last();
+    await page.waitForFunction(()=>document.querySelector('.map-side [data-control="kaizen"]'));
+    assert.deepEqual(await controls(organ),['kaizen','self_improvement_share','kaizen_every','min_experience','adopt']);
+    for(const button of await organ.locator('[data-control="adopt"] button').all())assert(await button.isDisabled());      // a trial is open
+    from=requests.length;
+    await control(organ,'kaizen').getByRole('button',{name:'Turn off'}).click();await page.waitForTimeout(200);
+    await control(organ,'self_improvement_share').locator('select').selectOption('30');await page.waitForTimeout(200);
+    assert.deepEqual(posts(from),[['/api/settings',{kaizen:false,policy_chosen:true}],['/api/settings',{self_improvement_share:30}]]);
+    loops.push({id:'B29.03',case:'A kernel module says it cannot be automated and why; an organ offers self-improvement, its share and Adopt (disabled while a trial is open)',result:'passed'});
+
+    livingSelf.metrics.metrics.repair_yield={...livingSelf.metrics.metrics.repair_yield,n:4,few:true};
+    await lens('self');
+    assert((await page.locator('.map-side').innerText()).includes('few sessions'));
+    await page.locator('.map-side .gauge-row').first().click();
+    const metric=page.getByRole('region',{name:'Details: Repair yield',exact:true});
+    await metric.waitFor();
+    assert.deepEqual(await heads(metric),['What this is','Evidence','Automate']);
+    assert((await metric.innerText()).includes('few sessions'));
+    assert((await metric.innerText()).includes('During the trial: candidate'));
+    loops.push({id:'B29.04',case:'A metric with fewer than ten sessions says few sessions, names its window and, during a trial, its arms',result:'passed'});
+
+    livingSelf.lineage_ordered=null;livingSelf.living_problems=['the lineage of generations: RuntimeError: boom'];
+    await lens('self');
+    assert((await page.locator('.lm-notice').innerText()).includes('no state claimed'));
+    assert.equal(await page.locator('.node.lm-station').count(),living.self.lineage.length);
+    assert.equal(await page.locator('.node.lm-station .lm-tick').count(),1);
+    reset();
+    await lens('self');
+    await page.locator(`.node[data-name="${onTrial.id}"]`).focus();await page.keyboard.press('Enter');
+    await page.getByRole('region',{name:`Details: ${onTrial.name}`,exact:true}).waitFor();
+    assert(await page.evaluate(()=>document.activeElement?.tagName==='H3'));
+    for(const width of [1440,800,390]){await page.setViewportSize({width,height:1000});await lens('self');await noOverflow(`Self at ${width}`);
+      if(width===390){assert.equal(await page.locator('.lm-mode .on').innerText(),'List');assert.equal(await page.locator('.lm-row[data-kind="generation"]').count(),ordered.length);
+        await page.locator(`.lm-row[data-name="${onTrial.id}"]`).focus();await page.keyboard.press('Enter');await page.getByRole('region',{name:`Details: ${onTrial.name}`,exact:true}).waitFor();await noOverflow('a generation panel on a phone');}
+      else assert.equal(await page.locator('.lm-mode .on').innerText(),'Graph');await page.screenshot({path:path.join(artifacts,`B29-self-${width}.png`)});}
+    await page.evaluate(()=>{document.documentElement.dataset.theme='light';});await page.screenshot({path:path.join(artifacts,'B29-self-light.png')});
+    await noOverflow('Self in the light theme');await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
+    loops.push({id:'B29.05',case:'If the lineage cannot be ordered the generations are listed with no state claimed; the keyboard path, three widths and both themes hold',result:'passed'});
+  }
+  if(selected.has('B30')){
+    reset();
+    await page.setViewportSize({width:1440,height:1100});
+    await lens('development');
+    const g=living.development.graph;
+    assert.equal(await page.locator('.lm-plan .lm-ms[data-name]').count(),g.counts.drawn);
+    assert.equal(await page.locator('.lm-plan .lm-pedge').count(),g.edges.length);
+    assert.equal(await page.locator('.lm-plan .lm-pedge.unmet').count(),g.edges.filter(e=>!e.met).length);
+    for(const state of ['done','doing','needs_you','dropped'])assert(await page.locator(`.lm-plan .lm-ms.${state}`).count()>=1,state);
+    const needs=g.nodes.find(n=>n.state==='needs_you');
+    assert((await page.locator(`.lm-plan .lm-ms[data-name="${needs.id}"]`).getAttribute('aria-label')).includes('waiting for your review'));
+    const collect=page.locator('.node.lm-station[aria-label^="bakery: tests collect"]');
+    assert((await collect.locator('title').innerHTML()).includes('latest test run'));
+    assert((await collect.textContent()).includes('·'));
+    assert((await collect.getAttribute('aria-label')).includes('achieved'));
+    assert((await page.locator('.node.lm-station[aria-label^="bakery: tests pass"]').getAttribute('aria-label')).includes('not achieved'));
+    loops.push({id:'B30.01',case:'The plan is a graph with prerequisites as edges and a state each; the ladder names the test run it rests on',result:'passed'});
+
+    const ladderIds=living.development.lineage_ordered.stations.map(s=>s.name);
+    const lane=await page.locator('.node.lm-station[aria-label^="Runesmith itself:"]').evaluateAll(els=>els.map(e=>e.getAttribute('aria-label')));
+    assert.deepEqual(lane.map(t=>t.split(': ')[1].split(',')[0]),ladderIds);
+    assert.equal(lane.filter(t=>t.includes('achieved')).length,0);
+    assert.equal(await page.locator('.node.lm-station[aria-label^="Runesmith itself:"] .lm-tick').count(),living.development.lineage_ordered.stations.filter(s=>s.tick).length);
+    assert.equal(await page.locator('.lm-group .lm-row[data-name*=":"]').count(),await page.locator('.node.lm-station').count());           // the list view of the tracks
+    loops.push({id:'B30.02',case:'The generations track follows the lineage, states each station in words and ticks only the active generation (or one that won)',result:'passed'});
+
+    await page.locator(`.lm-plan .lm-ms[data-name="${needs.id}"]`).click();
+    const ms=page.getByRole('region',{name:`Details: ${needs.title}`,exact:true});
+    await ms.waitFor();
+    assert.deepEqual(await heads(ms),['What this is','Evidence','Automate']);
+    for(const text of await ms.locator('.lm-fact').allInnerTexts())assert(text.includes('Source: '),text);
+    assert((await ms.innerText()).includes('added by you'));
+    await page.waitForFunction(()=>document.body.textContent.includes('1 of 3 used'));
+    assert.deepEqual(await controls(ms),['propose_checks','checks_autopilot','stuck_policy','recheck_policy','build_steps','build_apply','link']);
+    let from=requests.length;
+    await ms.getByRole('button',{name:'Propose acceptance checks'}).click();await page.waitForTimeout(200);
+    await control(ms,'stuck_policy').locator('select').selectOption('retry');await page.waitForTimeout(200);
+    await control(ms,'recheck_policy').locator('select').selectOption('recheck');await page.waitForTimeout(200);
+    assert.deepEqual(posts(from),[['/api/worker/run',{job:'propose_acceptance',params:{milestone:needs.id}}],['/api/settings',{stuck_policy:'retry'}],['/api/settings',{recheck_policy:'recheck'}]]);
+    from=requests.length;
+    await control(ms,'checks_autopilot').getByRole('button',{name:'Turn on'}).click();
+    assert((await page.getByRole('dialog').innerText()).includes('Runesmith then asks for acceptance checks for ready milestones'));
+    await cancel();assert.deepEqual(posts(from),[]);
+    await control(ms,'checks_autopilot').getByRole('button',{name:'Turn on'}).click();
+    await page.getByRole('button',{name:'Turn on the check autopilot',exact:true}).click();await page.waitForTimeout(250);
+    assert.deepEqual(posts(from),[['/api/settings',{build_steps:false,build_apply:false,build_paths:['src'],checks_autopilot:true}]]);
+    from=requests.length;
+    await control(ms,'build_apply').getByRole('button',{name:'Turn on'}).click();
+    assert((await page.getByRole('dialog').innerText()).includes('Runesmith may then write only in: src.'));
+    await cancel();assert.deepEqual(posts(from),[]);
+    await control(ms,'build_apply').getByRole('button',{name:'Turn on'}).click();
+    await page.getByRole('button',{name:'Allow automatic apply',exact:true}).click();await page.waitForTimeout(250);
+    assert.deepEqual(posts(from),[['/api/settings',{build_steps:false,build_apply:true,build_paths:['src'],checks_autopilot:true}]]);
+    loops.push({id:'B30.03',case:'A milestone opens What / Evidence / Automate; its controls send their existing requests, and the two that ask first ask with the Goals & plan words',result:'passed'});
+
+    const done=g.nodes.find(n=>n.state==='done');
+    await ms.getByRole('button',{name:'Close the details'}).click();
+    await page.locator(`.lm-plan .lm-ms[data-name="${done.id}"]`).click();
+    const donePanel=page.getByRole('region',{name:`Details: ${done.title}`,exact:true});
+    await donePanel.waitFor();
+    assert((await donePanel.innerText()).includes('Not automatable, by design'));
+    assert.equal(await donePanel.locator('[data-control]').count(),0);
+    await donePanel.getByRole('button',{name:'Close the details'}).click();
+    await page.locator('.node.lm-station[aria-label^="bakery: tests pass"]').click();
+    const rung=page.getByRole('region',{name:'Details: tests pass',exact:true});
+    await rung.waitFor();
+    assert.deepEqual(await heads(rung),['What this is','Evidence','Automate']);
+    assert((await rung.innerText()).includes('latest test run'));
+    assert.deepEqual(await controls(rung),['watch_tests','fix_tests','remap']);
+    loops.push({id:'B30.04',case:'A finished milestone is history (no controls, and why); a test rung names its run and offers watching the tests',result:'passed'});
+
+    // a plan past the cap, expanded by track
+    livingDev=structuredClone(living.development);
+    const many=Array.from({length:80},(_,i)=>({...structuredClone(g.nodes[0]),id:`m${i}`,title:`Step ${i}`,state:i<50?'done':i===50?'ready':'waiting',status:i<50?'done':'open',track:'Long',level:Math.min(i,6),
+      depends_on:[],unmet:[],needs:[],drawn:i>=20&&i<80&&i-20<60,evidence:g.nodes[0].evidence}));
+    livingDev.graph={...g,nodes:many,edges:[],tracks:[{name:'Long',purpose:'',total:80,counts:{done:50,ready:1,waiting:29,doing:0,needs_you:0,dropped:0},more:20,more_ids:many.slice(0,20).map(n=>n.id)}],counts:{...g.counts,total:80,drawn:60,done:50,ready:1,waiting:29,doing:0,needs_you:0,dropped:0}};
+    await lens('development');
+    assert.equal(await page.locator('.lm-plan .lm-ms[data-name^="m"]:not([data-name^="more:"])').count(),60);
+    assert.equal(await page.locator('.lm-plan .lm-ms[data-name^="more:"]').count(),1);
+    await page.locator('.lm-plan .lm-ms[data-name^="more:"]').click();
+    assert.equal(await page.locator('.lm-plan .lm-ms[data-name^="m"]:not([data-name^="more:"])').count(),80);
+    await page.locator('.lm-mode').first().getByRole('button',{name:'List'}).click();
+    assert.equal(await page.locator('.lm-host').first().locator('.lm-row').count(),80);
+    loops.push({id:'B30.05',case:'A long plan draws about sixty milestones, each track says +N more and expands; the list view holds every milestone',result:'passed'});
+
+    // the plan graph or the lineage could not be built: the older view, and a line saying what
+    livingDev=structuredClone(living.development);livingDev.graph=null;livingDev.lineage_ordered=null;
+    livingDev.living_problems=['the plan graph: RuntimeError: damaged PLAN.json','the lineage of generations: RuntimeError: damaged manifest'];
+    await lens('development');
+    assert((await page.locator('#page').innerText()).includes('The milestones are in Goals & plan.'));
+    assert((await page.locator('#page').innerText()).includes('no state claimed'));
+    assert(await page.locator('.node.lm-station').count()>=3);
+    reset();
+    for(const width of [1440,800,390]){await page.setViewportSize({width,height:1100});await lens('development');await noOverflow(`Development at ${width}`);await page.screenshot({path:path.join(artifacts,`B30-development-${width}.png`),fullPage:true});}
+    await page.evaluate(()=>{document.documentElement.dataset.theme='light';});await page.screenshot({path:path.join(artifacts,'B30-development-light.png'),fullPage:true});
+    await noOverflow('Development in the light theme');await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
+    loops.push({id:'B30.06',case:'If a builder fails the older tracks are drawn with a plain line; three widths and both themes hold',result:'passed'});
+  }
+  if(selected.has('B31')){
+    reset();
+    await page.setViewportSize({width:1440,height:1100});
+    await lens('operations');
+    const ops=living.operations;
+    assert.equal(await page.locator('.stage.lm-stage').count(),6);
+    assert.deepEqual(await page.locator('.stage.lm-stage b').allInnerTexts(),ops.stages.map(s=>String(s.count)));
+    let from=requests.length;
+    const open=async(id)=>{await page.locator(`.stage[data-key="stage:${id}"]`).click();const panel=page.locator('.lm-detail .map-side');await panel.waitFor();const word=id[0].toUpperCase()+id.slice(1);await page.waitForFunction(w=>document.querySelector('.lm-detail .map-side h3')?.textContent.startsWith(w),word);return panel;};
+    let panel=await open('discover');
+    assert.deepEqual(await heads(panel),['What this is','Evidence','Automate']);
+    for(const text of await panel.locator('.lm-fact').allInnerTexts())assert(text.includes('Source: '),text);
+    assert((await panel.innerText()).includes('objects whose tests failed in the latest round'));
+    assert.deepEqual(await controls(panel),['auto_work','interval_minutes','full_speed','autonomy']);
+    await control(panel,'auto_work').getByRole('button',{name:'Turn on'}).click();await page.waitForTimeout(200);
+    await control(panel,'full_speed').getByRole('button',{name:'Turn on'}).click();await page.waitForTimeout(200);
+    await control(panel,'autonomy').locator('select').selectOption('observe');await page.waitForTimeout(200);
+    assert.deepEqual(posts(from),[['/api/settings',{auto_work:true,policy_chosen:true}],['/api/settings',{full_speed:true}],['/api/settings',{autonomy:'observe'}]]);
+    panel=await open('map');assert.deepEqual(await controls(panel),['probe_tests','max_objects','remap']);
+    panel=await open('judge');assert.deepEqual(await controls(panel),['checks_autopilot','link']);
+    panel=await open('propose');assert.deepEqual(await controls(panel),['build_apply','autonomy','link']);
+    panel=await open('apply');assert.deepEqual(await controls(panel),['build_apply','autonomy','link']);
+    assert((await page.locator('.stage[data-key="stage:repair"]').getAttribute('aria-label')).includes('judged'));
+    loops.push({id:'B31.01',case:'Each work-loop stage opens its definition, its count with the window and source, and the controls that govern it',result:'passed'});
+
+    from=requests.length;
+    panel=await open('judge');
+    await control(panel,'checks_autopilot').getByRole('button',{name:'Turn on'}).click();await cancel();
+    assert.deepEqual(posts(from),[]);
+    await control(panel,'checks_autopilot').getByRole('button',{name:'Turn on'}).click();
+    await page.getByRole('button',{name:'Turn on the check autopilot',exact:true}).click();await page.waitForTimeout(250);
+    assert.deepEqual(posts(from),[['/api/settings',{build_steps:false,build_apply:false,build_paths:['src'],checks_autopilot:true}]]);
+    loops.push({id:'B31.02',case:'The Judge stage turns the check autopilot on with the Goals & plan confirmation, Cancel sending nothing',result:'passed'});
+
+    livingOps.stats={...livingOps.stats,'gemini-x':{calls:3,errors:3,latency_s:3}};livingOps.roles={...livingOps.roles,repair:['gemini-x']};
+    livingOps.roles_evidence={...livingOps.roles_evidence,'gemini-x':{calls:3,errors:3,failing_every_call:true,last_utc:'2026-10-05T13:00:00Z',last_error:'HTTP 429',source:'OPERATIONS.json: every call counted since this home was created'}};
+    await lens('operations');
+    const roleRow=page.locator('.item[data-key="role:repair"]');
+    assert((await roleRow.innerText()).includes('failing every call (3 of 3)'));
+    await roleRow.click();
+    panel=page.locator('.lm-detail .map-side');await panel.waitFor();
+    assert.deepEqual(await heads(panel),['What this is','Evidence','Automate']);
+    assert((await panel.innerText()).includes('last error: HTTP 429'));
+    await panel.getByRole('button',{name:'Open Thinking power'}).click();
+    assert.deepEqual(await page.evaluate(()=>window.navigation),['inference']);
+    loops.push({id:'B31.03',case:'A model route that failed every call is marked with its count; its role opens the chain with calls, errors and a way to Thinking power',result:'passed'});
+
+    from=requests.length;
+    await page.locator('button[data-key="attention:share"]').click();
+    panel=page.locator('.lm-detail .map-side');await panel.waitFor();
+    await control(panel,'self_improvement_share').locator('select').selectOption('30');await page.waitForTimeout(200);
+    assert.deepEqual(posts(from),[['/api/settings',{self_improvement_share:30}]]);
+    await page.locator('button[data-key="trial:open"]').click();
+    panel=page.locator('.lm-detail .map-side');await panel.waitFor();
+    assert((await panel.innerText()).includes('level'));
+    from=requests.length;
+    await panel.getByRole('button',{name:'Stop this trial'}).click();await cancel();
+    assert.deepEqual(posts(from),[]);
+    await panel.getByRole('button',{name:'Stop this trial'}).click();
+    await page.getByRole('button',{name:'Stop the trial',exact:true}).click();await page.waitForTimeout(250);
+    assert.deepEqual(posts(from),[[`/api/improve/activate/${ops.trial.incumbent}`,{}]]);
+    loops.push({id:'B31.04',case:'Attention opens its share control and the trial opens its counts and Stop this trial, both with their existing requests and confirmations',result:'passed'});
+
+    livingOps.worker={...livingOps.worker,recovery:{required:true,waiting:2,revision:'r1'}};
+    await lens('operations');
+    assert((await page.locator('#page').innerText()).includes('A restart hold waits for you'));
+    await page.locator('button[data-key="schedule:rounds"]').click();
+    panel=page.locator('.lm-detail .map-side');await panel.waitFor();
+    assert.deepEqual(await controls(panel),['autonomy','auto_work','interval_minutes','full_speed','recovery_policy','link']);
+    from=requests.length;
+    await control(panel,'recovery_policy').locator('select').selectOption('keep');await page.waitForTimeout(200);
+    assert.deepEqual(posts(from),[['/api/settings',{recovery_policy:'keep'}]]);
+    await panel.getByRole('button',{name:'Open Activity'}).click();
+    assert.deepEqual(await page.evaluate(()=>window.navigation),['activity']);
+    loops.push({id:'B31.05',case:'The schedule opens its settings; a restart hold is shown and leads to Activity, where its review keeps its own confirmations',result:'passed'});
+
+    livingOps.stages=null;livingOps.living_problems=['the stage counters: RuntimeError: damaged ENVIRONMENT.json'];
+    await lens('operations');
+    assert.equal(await page.locator('.stage.lm-stage').count(),6);
+    assert((await page.locator('#page').innerText()).includes('Could not read in full: the stage counters'));
+    reset();
+    await page.setViewportSize({width:1440,height:1100});await lens('operations');await page.locator('.stage[data-key="stage:discover"]').focus();await page.keyboard.press('Enter');
+    await page.locator('.lm-detail .map-side').waitFor();assert(await page.evaluate(()=>document.activeElement?.tagName==='H3'));
+    for(const width of [1440,800,390]){await page.setViewportSize({width,height:1100});await lens('operations');await page.locator('.stage[data-key="stage:repair"]').click();await page.waitForTimeout(300);await noOverflow(`Operations at ${width}`);await page.screenshot({path:path.join(artifacts,`B31-operations-${width}.png`)});}
+    await page.evaluate(()=>{document.documentElement.dataset.theme='light';});await page.screenshot({path:path.join(artifacts,'B31-operations-light.png')});
+    await noOverflow('Operations in the light theme');await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
+    loops.push({id:'B31.06',case:'If the stage counters cannot be read the older counts show with a plain line; the keyboard path, three widths and both themes hold',result:'passed'});
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({state:'passed',scope:'actual frontend + simulated API; no live Studio',loops,artifacts,requests:requests.length}));
