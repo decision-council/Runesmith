@@ -324,7 +324,7 @@ def test_with_one_provider_at_its_limit_the_overview_suggests_a_second_free_one(
     from runesmith.app import guide
     calm = api_state(studio, {}, None)['pacing']
     assert (calm['limited'], calm['only_provider_limited'], calm['waiting'], calm['guide_url'], calm['guide_words']) == (
-        [], False, False, '', guide.FREE_INFERENCE_WORDS)
+        [], False, False, guide.free_inference_url(), guide.FREE_INFERENCE_WORDS)
     hold(ws, 'g')
     pacing = api_state(studio, {}, None)['pacing']
     assert pacing['only_provider_limited'] and len(pacing['limited']) == 1
@@ -340,13 +340,13 @@ def test_the_overview_card_and_its_guide_link_are_in_the_page():
     assert 'pacingCard(s, navigate)' in home and 'Add a second free provider' in home and 'p.guide_url' in home
     assert 'p.guide_words' in home                                  # the chapter is named in words, linked or not
     from runesmith.app import guide
-    assert guide.free_inference_url() == ''                          # no address yet: the chapter is named, not linked
-    guide.GUIDE_URL = 'https://example.org/guide/'
+    assert guide.free_inference_url() == 'https://aithinklab.com/guide/#chapter-4'   # the published guide's chapter id
+    saved_url = guide.GUIDE_URL
+    guide.GUIDE_URL = ''
     try:
-        assert guide.free_inference_url() == 'https://example.org/guide' + guide.FREE_INFERENCE_CHAPTER
-        assert guide.FREE_INFERENCE_CHAPTER == '#chapter-4-thinking-power-where-to-get-a-model-for-free-and-how-to-connect-it'
+        assert guide.free_inference_url() == ''                      # no address: the chapter is named, not linked
     finally:
-        guide.GUIDE_URL = ''
+        guide.GUIDE_URL = saved_url
 
 
 def test_a_test_does_not_ask_a_held_back_provider_and_a_new_key_lifts_the_hold(tmp_path, monkeypatch):

@@ -146,7 +146,7 @@ Honest note: in our longest journey, the operator still had to step in. At one p
 
 A step-by-step guide to using Runesmith, from the first start to a finished project.
 
-**[Read the guide](GUIDE_URL)**
+**[Read the guide](https://aithinklab.com/guide/)**
 
 The Studio is also documented page by page in [docs/STUDIO.md](docs/STUDIO.md).
 
