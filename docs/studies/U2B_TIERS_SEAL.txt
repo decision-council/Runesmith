@@ -1,0 +1,4 @@
+PROTOCOL.md sha256 dd1e203100730081f75777a36ad84889f049d7b4952fb805face4845cd0097a7
+PROTOCOL.json sha256 2a7c49052c088534fde519f3c2bf3f54cf461a44a5646f167a0748699cfec574
+sealed_utc 2026-10-05T23:41:05Z
+no U2b session exists; no outcome of the 21 primary tasks has been read
