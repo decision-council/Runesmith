@@ -1,0 +1,5 @@
+U2-TIERS run protocol (PROTOCOL.json, binds U2_TIERS_PROTOCOL.md and its seal)
+sha256 02dbf094ad6d8c189cd3d9d972c0adbf58e1cdf21651d41bd5626645f46a7049
+sealed 2026-10-05T21:02:33Z (local seal)
+evaluation start 2026-10-05T21:03:14Z
+pushed 2026-10-05T21:03:58Z, after the evaluation start and before any outcome was read

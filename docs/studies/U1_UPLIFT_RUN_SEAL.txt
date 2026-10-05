@@ -1,0 +1,4 @@
+U1-UPLIFT run protocol (PROTOCOL.json, binds PROTOCOL.md, amendments 1-4 and their seals)
+sha256 732e866d8c9489ab563d39cefc71089ff17e29d7f67a5dfe5d8667d31309604c
+sealed 2026-10-05T16:16:33Z (local seal)
+pushed 2026-10-05T21:03:58Z, after the analysis (2026-10-05T19:35:16Z); the protocol and amendments were pushed before any session (7f60236..880d9ca)
