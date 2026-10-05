@@ -772,6 +772,21 @@ def api_set_aside_correction(s: Studio, q, body, key):
     return result
 
 
+@route("POST", r"/api/build/escalations/([A-Za-z0-9_-]+)/close")
+def api_close_interrupted_escalation(s: Studio, q, body, key):
+    """The owner closes a one more try that was interrupted and that Runesmith could not settle by itself: it counts as
+    used, nothing is sent, and the milestone is no longer held by it (Needs you, "Close the interrupted call")."""
+    from runesmith.app.author_recovery import close_interrupted_escalation
+    running = s.worker.current
+    if running and running.get("kind") == "escalate":
+        raise WorkspaceError("A one more try is running now; wait for it to finish.")
+    ws = _ws(s)
+    result = close_interrupted_escalation(ws, key)
+    runesmith_md.interrupted_closed(ws, result.get("milestone"))
+    s.bus.publish("work", {"escalation_closed": key})
+    return result
+
+
 @route("GET", r"/api/notes")
 def api_notes(s: Studio, q, body):
     ws = _ws(s)

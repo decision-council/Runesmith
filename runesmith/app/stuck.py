@@ -14,7 +14,9 @@ from __future__ import annotations
 from typing import Any
 
 from runesmith.app import automatic
-from runesmith.app.author_allowance import _load, ordinary_allowance, shared_reads
+from runesmith.app.author_allowance import (ESCALATION_SETTLED, NOTHING_USED, UnresolvedAllowance, _load, ordinary_allowance,
+                                             shared_reads)
+from runesmith.app.author_recovery import pending_authors
 from runesmith.app.breakdowns import adopt_breakdown, can_break_down, propose_breakdown, room_for_breakdown
 from runesmith.app.building import build_escalation_status
 from runesmith.app.planner import PlannerUnavailable, milestone_contract, milestone_ready, ready_milestones, source_context
@@ -25,9 +27,30 @@ SPLITS = 'STUCK_SPLITS.json'          # {milestone id: when Runesmith broke it d
 TURN_KINDS = ('escalate', 'split')    # the steps this module asks the schedule for
 
 
+def _escalating(ws) -> bool:
+    """Whether a one more try is running now (the worker's own record of its current job): its receipt is started on
+    purpose, and nothing is interrupted."""
+    current = _read_json(ws.home / 'STUDIO_CURRENT.json', {})
+    return isinstance(current, dict) and current.get('kind') == 'escalate'
+
+
+def _interrupted_row(ws, milestone, error: UnresolvedAllowance) -> dict[str, Any] | None:
+    """The row for a milestone whose one more try was started and never settled, when Runesmith has no way left to settle
+    it by itself: the restart and every build settle what they can (`close_interrupted_escalations`), a saved model job that
+    can still be retrieved is fetched by the next build, and a call that is running is no interruption. What stays is the
+    owner's to close (journey J11: such a receipt blocked its milestone for hours and the Overview said nothing)."""
+    if error.folder != 'build-escalations' or _escalating(ws):
+        return None
+    if error.receipt_state == 'started' and any(row['can_resume'] for row in pending_authors(ws, milestone=milestone['id'])):
+        return None
+    return {'milestone': milestone, 'escalated': True, 'interrupted': error.name.removesuffix('.json')}
+
+
 def stuck_milestones(ws, context=None) -> list[dict[str, Any]]:
     """The ready milestones whose ordinary tries are used up on today's source, each with whether its one more try is
-    too ({'milestone', 'escalated'}). A draft that waits for checks or the owner, or is applied, is no stuck milestone."""
+    too ({'milestone', 'escalated'}), and those whose one more try was interrupted and is the owner's to close
+    ({'milestone', 'escalated': True, 'interrupted': receipt id}). A draft that waits for checks or the owner, or is
+    applied, is no stuck milestone."""
     context = context or source_context(ws)
     rows, drafts = [], None
     with shared_reads():                  # every receipt once, not once per ready milestone (review of batch EE)
@@ -35,8 +58,13 @@ def stuck_milestones(ws, context=None) -> list[dict[str, Any]]:
             contract = milestone_contract(ws, milestone)
             try:
                 allowance = ordinary_allowance(ws, contract, context['snapshot_digest'])
+            except UnresolvedAllowance as error:
+                row = _interrupted_row(ws, milestone, error)
+                if row:
+                    rows.append(row)      # never silent: a one more try nobody settled is told to the owner
+                continue
             except WorkspaceError:
-                continue                  # unreadable or unresolved evidence: the owner's to reconcile, not a setting's
+                continue                  # unreadable or damaged evidence: the owner's to reconcile, not a setting's
             if allowance['remaining']:
                 continue
             if drafts is None:
@@ -119,6 +147,9 @@ def _judge(ws, policy, rows) -> tuple[tuple[str, dict[str, Any]] | None, dict[st
     for row in rows:
         milestone = row['milestone']
         note = {'milestone': milestone, 'escalated': row['escalated'], 'retry': offered == milestone['id']}
+        if row.get('interrupted'):        # whatever the setting: no step of it can be taken until the call is closed
+            waiting[milestone['id']] = dict(note, kind='interrupted', receipt=row['interrupted'])
+            continue
         if policy not in POLICIES:
             waiting[milestone['id']] = dict(note, kind='wait')
         elif not row['escalated']:
@@ -179,6 +210,8 @@ def sync_notices(ws, policy, waiting) -> list[str]:
         for milestone_id, row in waiting.items():
             old = before.get(milestone_id)
             facts = {'kind': row['kind'], 'contract': contracts[milestone_id], 'escalated': row['escalated'], 'retry': row['retry']}
+            if row.get('receipt'):
+                facts['receipt'] = row['receipt']
             if isinstance(old, dict) and old.get('kind') == row['kind'] and old.get('contract') == contracts[milestone_id]:
                 after[milestone_id] = dict(old, **facts)          # said already; the facts that only change what is offered refresh
                 continue
@@ -240,13 +273,33 @@ def owner_needed(ws) -> list[dict[str, Any]]:
                 continue                                          # edited since: new wording, new tries
         except WorkspaceError:
             continue
+        if note.get('kind') == 'interrupted' and _settled_receipt(ws, note.get('receipt')):
+            continue                                              # closed since (by the owner, or by the next build)
         out.append(_describe(ws, plan, milestone, note))
     return out
+
+
+def _settled_receipt(ws, receipt_id) -> bool:
+    """Whether the one more try receipt is gone or no longer unresolved (cheap: one file)."""
+    if not isinstance(receipt_id, str) or not receipt_id or '/' in receipt_id or '\\' in receipt_id:
+        return True
+    row = _read_json(ws.home / 'build-escalations' / (receipt_id + '.json'), None)
+    return not isinstance(row, dict) or row.get('state') in ESCALATION_SETTLED or row.get('state') in NOTHING_USED
 
 
 def _describe(ws, plan, milestone, note) -> dict[str, Any]:
     title = str(milestone.get('title') or milestone['id'])
     kind = note.get('kind')
+    if kind == 'interrupted':
+        what = (f'“{title}” cannot go on by itself: its one more try, with another model, was interrupted (the Studio was '
+                'closed or stopped while it worked), and what is saved does not say how it ended. Nothing is sent again by '
+                'itself. Closing the call counts the one more try as used.')
+        choices = [{'id': 'close_interrupted', 'label': 'Close the interrupted call',
+                    'detail': 'Counts its one more try as used and sends nothing. The build goes on from there.'},
+                   {'id': 'edit', 'label': 'Edit the milestone', 'detail': 'New wording gives it fresh tries. Goals & plan.'},
+                   {'id': 'set_aside', 'label': 'Set it aside', 'detail': 'The plan goes on without it; you can reopen it later.'}]
+        return {'milestone': milestone['id'], 'title': title, 'utc': note.get('utc'), 'kind': kind, 'code': 'interrupted',
+                'receipt': note.get('receipt'), 'what': what, 'choices': choices}
     used = 'its three tries and its one more try are' if note.get('escalated') else 'its three tries are'
     head = f'“{title}” cannot go on by itself: {used} used up on the files as they are now.'
     code, why = _facet(ws, milestone)
@@ -288,7 +341,7 @@ def defers_breakdown(ws, milestone_id, policy) -> bool:
     if policy not in POLICIES:
         return False
     row = next((r for r in stuck_milestones(ws) if r['milestone']['id'] == milestone_id), None)
-    if row is None:
+    if row is None or row.get('interrupted'):
         return False
     if not row['escalated']:
         return True

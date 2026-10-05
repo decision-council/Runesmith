@@ -34,6 +34,11 @@ function needsYouCard(s, navigate, redraw) {
       await post('/api/worker/run', { job: 'breakdown', params: { milestone: r.milestone } });
       toast('Asked a model for smaller steps. They wait for your review under Goals & plan.', 'good', 6000);
     }),
+    close_interrupted: (e, r) => withBusy(e.currentTarget, async () => {
+      await post(`/api/build/escalations/${r.receipt}/close`, {});
+      toast('Closed. Its one more try counts as used, nothing was sent, and the build goes on from there.', 'good', 6000);
+      redraw?.();
+    }),
     review: () => navigate('goals'),
     show_file: () => navigate('goals'),
     edit: () => navigate('goals'),

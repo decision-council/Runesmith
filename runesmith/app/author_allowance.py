@@ -17,6 +17,20 @@ from runesmith.app.workspace import WorkspaceError
 
 LIMIT = 3
 
+# A one more try's receipt is settled in one of these; 'transport_failed' and 'context_gap' used nothing up (below).
+ESCALATION_SETTLED = frozenset({'answered', 'failed', 'recovered'})
+NOTHING_USED = frozenset({'transport_failed', 'context_gap'})
+
+
+class UnresolvedAllowance(WorkspaceError):
+    """A receipt of the milestone's own that no one settled: a call that started and left no outcome. `folder` and `name`
+    say which receipt, so the caller can tell a one more try (reconciled by `close_interrupted_escalations`) from an
+    ordinary try. Raised with the same words as ever."""
+
+    def __init__(self, folder, name, state=None):
+        super().__init__(f'Unresolved author allowance receipt {folder}/{name}; reconcile it before another call.')
+        self.folder, self.name, self.receipt_state = folder, name, state
+
 
 def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
@@ -115,17 +129,25 @@ def _read_folder(ws, folder):
 def _records(ws, folder, contract=None):
     result = []
     for name, row in _load(ws, folder):
-        if row.get('state') in ('transport_failed', 'context_gap'):
+        if row.get('state') in NOTHING_USED:
             # No model answered (J2-B9), or it answered for a file it was never shown (J11-B15): nothing used up.
             continue
-        states = {'answered', 'failed', 'recovered'} if folder == 'build-escalations' else {'answered', 'failed'}
+        states = ESCALATION_SETTLED if folder == 'build-escalations' else {'answered', 'failed'}
         if row.get('state') not in states:
             # An unresolved call blocks its own milestone's allowance, not every milestone's (journey J11-B6). It is
             # still listed, so the scope checks below see it; damaged receipts above still block everything.
             if contract is None or row.get('contract') == contract:
-                raise WorkspaceError(f'Unresolved author allowance receipt {folder}/{name}; reconcile it before another call.')
+                raise UnresolvedAllowance(folder, name, row.get('state'))
         result.append((name, row))
     return result
+
+
+def unresolved_escalations(ws, contract=None):
+    """The one more try receipts that were started and never settled, as (file name, receipt) pairs: of this milestone
+    contract only when one is given. An unreadable folder raises, as everywhere here."""
+    return [(name, row) for name, row in _load(ws, 'build-escalations')
+            if row.get('state') not in NOTHING_USED and row.get('state') not in ESCALATION_SETTLED
+            and (contract is None or row.get('contract') == contract)]
 
 
 def ordinary_allowance(ws, contract, snapshot):

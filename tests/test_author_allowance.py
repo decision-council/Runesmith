@@ -105,13 +105,15 @@ def test_new_escalation_records_source_and_never_repeats(tmp_path, monkeypatch):
     assert path.read_bytes() == old
 
 
-@pytest.mark.parametrize('kind', ['unknown_source', 'corrupt', 'conflicting_source', 'unfinished'])
+# A receipt left "started" is not in this list any more: a restart or a build settles it as used ("interrupted by a restart"),
+# which is still never unused (tests/test_interrupted_escalation.py). A state nothing knows stays unresolved, for the owner.
+@pytest.mark.parametrize('kind', ['unknown_source', 'corrupt', 'conflicting_source', 'unknown_state'])
 def test_escalation_evidence_cannot_become_unused(tmp_path, monkeypatch, kind):
     ws = setup(tmp_path); _, row = legacy_attempt(ws)
     record = dict(id='e123', state='failed', contract=row['contract'], scope=row['scope'])
     if kind == 'unknown_source': record['scope'] = 'a' * 64
     if kind == 'conflicting_source': record['snapshot_digest'] = 'b' * 64
-    if kind == 'unfinished': record['state'] = 'started'
+    if kind == 'unknown_state': record['state'] = 'uncertain'
     path = ws.home / 'build-escalations' / 'e123.json'; _write_json(path, record)
     if kind == 'corrupt': path.write_text('{')
     monkeypatch.setattr(building, 'draft_files', lambda *a, **k: pytest.fail('Ambiguous continuation called author'))

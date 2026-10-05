@@ -369,13 +369,22 @@ def restart_decision(ws: Any, decision: str, by: str, jobs: int) -> None:
 
 
 @_safe
+def interrupted_closed(ws: Any, milestone_id: str | None) -> None:
+    record(ws, f"You closed the interrupted one more try for {_milestone(ws, milestone_id)}: it counts as used, and nothing was sent.")
+
+
+@_safe
 def stuck_needs_owner(ws: Any, milestone_id: str, kind: str) -> None:
     """A milestone whose tries are used up, and for which Runesmith has nothing left to try by itself: said once, when it
     starts to wait, so the log shows why the project stands still."""
+    if kind == "interrupted":       # its one more try was cut short and the saved records do not say how it ended
+        record(ws, f"{_sentence(_milestone(ws, milestone_id))} needs you: its one more try was interrupted and could not be "
+                   "settled by itself. Close the interrupted call (Overview, Needs you).")
+        return
     why = {"gap": "its one more try could not change a file no model is shown",
            "wait": "your setting is to wait for you when tries are used up"}.get(
         kind, "its tries and its one more try are used up and nothing more is left for your setting to try")
-    record(ws, f"{_sentence(_milestone(ws, milestone_id))} needs you: {why}. Ask for smaller steps, edit the milestone "
+    record(ws,f"{_sentence(_milestone(ws, milestone_id))} needs you: {why}. Ask for smaller steps, edit the milestone "
                "or set it aside (Overview, Needs you).")
 
 
