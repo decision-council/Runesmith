@@ -147,8 +147,9 @@ def test_a_chain_is_only_built_when_asked_and_never_twice(tmp_path, listed):
     again = ws.add_gemini_chain('gemini')
     assert again['ok'] and again['added'] == [] and 'already set up' in again['detail']
     assert len(ws.config()['instruments']) == 3
-    with pytest.raises(Exception):
-        ws.save_instrument('paid', {'kind': 'openai', 'model': 'm', 'base_url': 'https://example.org/v1'}, roles=['plan'])
+    ws.save_instrument('paid', {'kind': 'openai', 'model': 'm', 'base_url': 'https://example.org/v1'}, roles=['plan'])
+    from runesmith.app.workspace import WorkspaceError
+    with pytest.raises(WorkspaceError, match='only a Google Gemini'):
         ws.add_gemini_chain('paid')
 
 
@@ -302,10 +303,10 @@ def test_an_answer_cut_off_twice_is_given_up_in_plain_words_after_two_requests_o
     assert 'finish_reason' not in words and 'truncated' not in words
     one, single = probe('gemini-3.8-flash', CUT_OFF, CUT_OFF)
     # A plan goes the same way: asked again once, and the words are the plain ones.
-    from runesmith.app.planner import PlannerUnavailable, _call
+    from runesmith.app.planner import PlannerUnavailable, ShortAnswers, _call
     plan_router = Router({one.name: one}, {'plan': [one.name]}, backoff_s=())
     with pytest.raises(PlannerUnavailable) as plan:
-        _call(None, plan_router, 'p', 's', {'type': 'object'}, 'k', 6000, short_answer=True)
+        _call(None, ShortAnswers(plan_router), 'p', 's', {'type': 'object'}, 'k', 6000)
     assert [b['max_tokens'] for b in single] == [12000, 24000] and 'ran out of room' in str(plan.value)
 
 

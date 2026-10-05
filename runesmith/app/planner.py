@@ -758,13 +758,23 @@ def cut_off_failure(outcome) -> 'PlannerUnavailable':
     return failure
 
 
-def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_tokens: int, receipt_out: dict | None = None,
-          *, short_answer: bool = False):
+class ShortAnswers:
+    """A router whose calls are for short answers (a plan): each goes through ``call_short_answer``. Anything else about the
+    router is the router's own. The plan's call keeps its signature, so it is handed this instead of being changed."""
+
+    def __init__(self, router):
+        self._router = router
+
+    def call(self, role, *, prompt, system, schema, max_tokens, key):
+        return call_short_answer(self._router, role, prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
+
+    def __getattr__(self, name):
+        return getattr(self._router, name)
+
+
+def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_tokens: int, receipt_out: dict | None = None):
     try:
-        if short_answer:                                # a plan: its answer is short, its model may think first
-            outcome = call_short_answer(router, "plan", prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
-        else:
-            outcome = router.call("plan", prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
+        outcome = router.call("plan", prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
     except KeyError as error:
         raise PlannerUnavailable("no model is set up for planning: add one under Thinking power") from error
     except TransportCensored as error:
@@ -799,8 +809,8 @@ def draft_plan(ws, router, *, checkpoint=lambda: None, automatic=False) -> dict[
     checkpoint()
     binding = require_planning(ws, automatic=automatic)
     explicit = planning_direction(ws)['explicit']
-    data, by = _call(ws, router, plan_prompt(ws), PLAN_SYSTEM, PLAN_SCHEMA,
-                     f"plan-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}", 6000, short_answer=True)
+    data, by = _call(ws, ShortAnswers(router), plan_prompt(ws), PLAN_SYSTEM, PLAN_SCHEMA,       # a plan's answer is short; its model may think first
+                     f"plan-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}", 6000)
     data["drafted_by"] = by
     data['purpose_origin'] = {'kind': 'owner-directed' if explicit else 'inferred',
                               'policy_revision': binding['policy_revision'],
