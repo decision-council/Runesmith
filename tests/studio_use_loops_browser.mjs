@@ -2902,6 +2902,33 @@ try{
     assert.equal(await page.locator('.lm-edge').count(),0);assert.equal(await page.locator('.lm-part').count(),3);
     loops.push({id:'B28.10',case:'If the structure cannot be built the objects are drawn as before with a plain line; an empty folder and a folder of documents are drawn without edges',result:'passed'});
 
+    // several objects: the rings as before, a way into one object's structure, and a way back
+    reset();
+    const first=fixtureProbeMap.map.objects[0];first.root=false;
+    const second={...structuredClone(first),name:'recipes',path:'D:/fixture/recipes',kind:'document_collection',ladder:[],objectives:[],facts:{documents:3},probe:null,measured_utc:null};
+    fixtureProbeMap.map.objects=[first,second];livingStructure.object={...livingStructure.object,root:false};
+    await lens('environment');
+    assert.equal(await page.locator('.map-wrap .lm-part').count(),0);
+    assert.equal(await page.locator('.map-wrap .node[data-name="recipes"]').count(),1);
+    await page.locator('.map-wrap .node[data-name="bakery"]').click();
+    const objectPanel=page.getByRole('region',{name:'Details: bakery',exact:true});
+    await objectPanel.waitFor();
+    assert.deepEqual(await heads(objectPanel),['What this is','Evidence','Automate']);
+    await page.waitForFunction(()=>document.querySelector('.map-side [data-control="exclude"]'));
+    assert.deepEqual(await controls(objectPanel),['watch_tests','fix_tests','exclude','remap']);
+    from=requests.length;
+    await control(objectPanel,'exclude').getByRole('button',{name:'bakery'}).click();await page.waitForTimeout(250);
+    assert.deepEqual(posts(from),[['/api/settings',{exclude:['bakery']}],['/api/worker/run',{job:'map'}]]);
+    await objectPanel.getByRole('button',{name:'Show its structure'}).click();
+    await page.waitForFunction(()=>document.querySelector('.map-wrap .lm-part'));
+    assert.equal(await page.locator('.map-wrap .lm-part').count(),st.counts.drawn);
+    assert(requests.some(r=>r.path==='/api/map/structure'&&r.query.includes('object=bakery')));
+    assert.equal(await page.locator('.map-wrap .lm-centre[data-name="bakery"]').count(),1);
+    await page.getByRole('button',{name:'All objects'}).click();
+    await page.waitForFunction(()=>!document.querySelector('.map-wrap .lm-part'));
+    assert.equal(await page.locator('.map-wrap .node[data-name="recipes"]').count(),1);
+    loops.push({id:'B28.12',case:'With several objects the rings stay, an object opens its structure from its panel and All objects returns; its panel offers watching, fixing, keeping out and re-mapping',result:'passed'});
+
     reset();
     for(const width of [1440,800,390]){
       await page.setViewportSize({width,height:1000});await lens('environment');

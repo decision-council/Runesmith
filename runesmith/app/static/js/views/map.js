@@ -251,7 +251,9 @@ async function environmentLens(body, ctx) {
     } else {
       content.push(h('div.lm-listbox', h('p.small.muted', st.sentence), structureList(st, pick, selected)));
     }
-    tools.append(...[pz ? h('button.btn.sm.icon', { title: 'Zoom in', 'aria-label': 'Zoom in', onclick: () => pz.zoom(1.2) }, icon('plus')) : null,
+    const several = (data.map?.objects || []).filter((o) => o.kind !== 'excluded').length > 1;
+    tools.append(...[several ? h('button.btn.sm', { title: 'Back to the objects around the workspace', onclick: () => { wanted = null; selected = null; mode = null; expanded.clear(); load(); } }, icon('left'), 'All objects') : null,
+      pz ? h('button.btn.sm.icon', { title: 'Zoom in', 'aria-label': 'Zoom in', onclick: () => pz.zoom(1.2) }, icon('plus')) : null,
       pz ? h('button.btn.sm.icon', { title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => pz.zoom(1 / 1.2) }, icon('minus')) : null,
       pz ? h('button.btn.sm.icon', { title: 'Reset view', 'aria-label': 'Reset the view', onclick: () => pz.reset() }, icon('crosshair')) : null,
       h('div.seg.lm-mode', { role: 'group', 'aria-label': 'How to show the parts' }, [['graph', 'Graph', 'branch'], ['list', 'List', 'menu']].map(([id, label, ic]) => h('button', { class: mode === id ? 'on' : '',
@@ -296,7 +298,9 @@ async function environmentLens(body, ctx) {
     }).catch((error) => toast(error.message || String(error), 'warn'));
   };
   await load();
-  offs.push(bus.on('map', debounce(load, 300)), bus.on('round', debounce(load, 300)));
+  // a control the owner is using (a field with text in it) is not redrawn under their hand
+  const refresh = debounce(() => { if (document.activeElement?.closest?.('.lm-ctl input, .lm-ctl select')) return; load(); }, 300);
+  offs.push(bus.on('map', refresh), bus.on('round', refresh));
   return () => offs.forEach((f) => f());
 }
 
