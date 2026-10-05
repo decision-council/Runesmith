@@ -522,7 +522,11 @@ class Router:
         self.backoff_s, self._sleep, self._on_call = tuple(backoff_s), sleep, on_call
 
     def call(self, role: str, *, prompt: str, system: str, schema: dict | None, max_tokens: int,
-             key: str, reasoning_effort: str | None = None) -> CallOutcome:
+             key: str, reasoning_effort: str | None = None, own_effort_first: bool = False) -> CallOutcome:
+        """``reasoning_effort`` is what the caller asks for; an instrument's own setting (its model's needs, journey
+        J11-B8) is used when the call names none. With ``own_effort_first`` the order is the other way round: the
+        call's effort is only the fallback for an instrument that has no setting of its own (a Kaizen campaign asks
+        for high effort, but must not override a model the owner set to low)."""
         names = self.roles.get(role)
         if not names:
             raise KeyError(f"no instrument serves role {role!r}")
@@ -533,7 +537,8 @@ class Router:
             if delay:
                 self._sleep(delay)
             outcome = self._attempt(role, names, attempt, prompt=prompt, system=system, schema=schema,
-                                    max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort, gone=gone)
+                                    max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort, gone=gone,
+                                    own_effort_first=own_effort_first)
             attempt = outcome.attempts
             if not outcome.ok and (outcome.receipt.get('not_admitted') or outcome.receipt.get('no_route_accepted')):
                 # Every model turned the request away before generating: nothing ran, so this is no answer, never an
@@ -549,7 +554,8 @@ class Router:
         raise TransportCensored(f"role {role!r}: no response after {attempt} attempts; last: {errors[-1] if errors else ''}"
                                 + (f"; {refusals}" if refusals else ''))
 
-    def _attempt(self, role, names, attempt, *, prompt, system, schema, max_tokens, key, reasoning_effort, gone=None):
+    def _attempt(self, role, names, attempt, *, prompt, system, schema, max_tokens, key, reasoning_effort, gone=None,
+                 own_effort_first=False):
         refused = set()
         gone = {} if gone is None else gone
         while True:
@@ -558,9 +564,11 @@ class Router:
                 return next(iter(gone.values()))
             name = live[attempt % len(live)]            # rotate over declared fallbacks
             instrument = self.instruments[name]
+            own = getattr(instrument, 'default_reasoning', None)
             outcome = instrument.complete(prompt=prompt, system=system, schema=schema, max_tokens=max_tokens,
                                           key=f"{key}-a{attempt}",
-                                          reasoning_effort=reasoning_effort or getattr(instrument, 'default_reasoning', None))
+                                          reasoning_effort=(own or reasoning_effort) if own_effort_first
+                                          else (reasoning_effort or own))
             attempt += 1
             outcome.attempts = attempt
             identity = instrument.identity()

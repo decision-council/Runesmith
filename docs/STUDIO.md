@@ -78,6 +78,7 @@ Replay the sequence any time from **Settings → Behaviour → Introduction**. *
 - **Draft a plan:** milestones on named tracks, first steps, and the questions only you can answer. For each milestone, **Draft first files**.
 
 **Self-improvement.**
+- The **improvement plan**: a summary of Runesmith's map of itself, the scored plan (the top ten, each with its reason), the next item and why, and the struggles it sees in the work. An item that has no gate is only planned; a change is made only through the repair organ's campaign and trial.
 - Generations, and the open trial with its counts and looks.
 - The **library**. **C7** is the generation that won SR7's sealed test. Adopting it checks and freezes it, then opens a trial against your active generation. It becomes active only if it wins on your work.
 - Kaizen campaigns, and capabilities.
@@ -107,7 +108,7 @@ Give each model one or more roles: **Worker**, **Improver**, **Planner**. The fi
 - **Mapping:** measuring by running tests on throwaway copies, the most objects to map, and folders never to touch.
 - **Notes:** whether models read them.
 - **RUNESMITH.md:** Runesmith's own log of what it did in the folder, one line for each event, names and counts only. On by default; off means the file is never created or changed.
-- **Self-improvement:** on or off, and how much experience it needs first.
+- **Self-improvement:** on or off, how much of your work turns go to it (the share: 10 to 90 percent, 20 by default), and how much experience it needs first.
 - **Theme.**
 - **Health checks.**
 - **The folder:** switch folders, open it in your file manager, or export a snapshot (keys are left out).

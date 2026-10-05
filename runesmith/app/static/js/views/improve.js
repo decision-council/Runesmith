@@ -3,6 +3,49 @@ import { h, icon, get, post, bus, toast, commentable, openNotes, clear, ago, plu
   empty, debounce } from '../core.js';
 import { bandPosition, fmtCap } from './home.js';
 
+// Runesmith's plan for improving itself: the summary of its map, the owner's share, the scored plan (the top ten), the next item
+// and why (and the struggle it is linked to), and the struggles it sees in the work. Nothing here changes Runesmith itself: an item
+// without a gate is only planned.
+function selfPlanCard(plan, navigate) {
+  if (!plan) return null;
+  const map = plan.map || {};
+  const struggles = plan.struggles || [];
+  const next = plan.next || null;
+  const turnWords = plan.next_self_turn_in === 1 ? 'the very next work turn' : `${plan.next_self_turn_in} work turns from now`;
+  const bandWords = Object.entries(map.bands || {}).map(([k, v]) => `${humanize(k)}: ${v}`).join(' · ');
+  const statusClass = (status) => String(status || '').startsWith('campaign') || String(status || '').startsWith('a campaign') ? 'good'
+    : String(status || '').startsWith('planned') ? 'violet' : String(status || '').startsWith('waits') ? 'warn' : '';
+  const item = (x, i) => h('div.item', { 'data-item': x.id },
+    h('div', { class: `ico ${x.kind === 'kaizen_target' ? 'accent' : 'warn'}` }, icon(x.kind === 'kaizen_target' ? 'spark' : 'crosshair')),
+    h('div.body', h('div.title', `${i + 1}. ${x.title} `, h('span.badge', { title: `benefit ${x.score.benefit} + recency ${x.score.recency} + gate ${x.score.gate}` }, `score ${x.score.total}`), ' ',
+      h('span', { class: `badge ${statusClass(x.status)}` }, x.status || ''), x.priority ? ' ' : null, x.priority ? h('span.badge.warn', 'answers a struggle') : null),
+      h('div.small.muted', x.reason), h('div.tiny.faint', x.what)));
+  const struggle = (x) => h('div.item', { 'data-struggle': x.id },
+    h('div', { class: `ico ${x.current ? 'warn' : ''}` }, icon('alert')),
+    h('div.body', h('div.title', `${x.milestone_title ? `“${x.milestone_title}”` : x.scope === 'repairs' ? 'The repair organ' : 'The project'}: ${x.words}`,
+      ' ', x.current ? h('span.badge.warn', 'struggling now') : null, x.id === (next && next.struggle) ? h('span.badge.violet', 'the next item answers this') : null),
+      h('div.meta', `${plural(x.count, 'time')}${x.since ? ` since ${String(x.since).slice(0, 16).replace('T', ' ')}Z` : ''}`)));
+  const rule = plan.rule || {};
+  return h('section.card', { 'aria-label': 'Improvement plan', 'data-self-plan': '' },
+    h('div.card-head', h('h3', icon('target'), 'Improvement plan'),
+      h('div.actions', h('span', { class: `badge ${plan.kaizen_on ? 'good' : ''}` }, plan.kaizen_on ? 'self-improvement on' : 'self-improvement off'),
+        h('button.btn.sm', { onclick: () => navigate('settings') }, icon('sliders'), 'Share'))),
+    h('p.small', `Its map of itself: ${plural(map.components || 0, 'component')}, ${plural(map.targets || 0, 'repair target')} from its own records, `
+      + `${plural(map.struggles || 0, 'struggle')} seen in the work (${map.current_struggles || 0} now).${bandWords ? ` ${bandWords}.` : ''}`),
+    h('p.small', { 'data-share': '' }, `Self-improvement share: ${plan.share}%. ${plan.sentence}. The next self-improvement turn is ${turnWords}.`,
+      plan.kaizen_on ? null : ' Self-improvement is off in Settings, so none will run.'),
+    next ? h('div.callout.mt-8', { 'data-next': '' }, icon('info'), h('div', h('b', next.action === 'none' ? 'Nothing can run at the next self-improvement turn. ' : `Next: ${next.title}. `),
+      next.why)) : null,
+    (plan.blockers || []).length ? h('p.tiny.faint.mt-8', `A campaign on the repair organ cannot start now: ${plan.blockers.join('; ')}.`) : null,
+    h('div.label-text.mt-16', 'The plan, first item first'),
+    (plan.items || []).length ? h('div.list', (plan.items || []).map(item)) : h('p.muted', 'No item yet: the plan fills as Runesmith sees where it can do better.'),
+    struggles.length ? h('div.label-text.mt-16', 'Where the work struggles') : null,
+    struggles.length ? h('div.list', struggles.map(struggle)) : null,
+    h('details.mt-16', h('summary', 'How the score is worked out'),
+      h('ul.small', ['score', 'benefit', 'recency', 'gate', 'turns', 'priority'].filter((k) => rule[k]).map((k) => h('li', h('b', `${humanize(k)}: `), rule[k]))),
+      h('p.small.muted', 'A change to Runesmith is only ever made through a gate: a campaign on the repair organ, held-out replay, and an online trial on your own work. Every other item stays planned: needs a gate.')));
+}
+
 export default async function render(root, ctx) {
   const offs = [];
   const head = h('div.page-head', h('div', h('h2', 'Self-improvement'),
@@ -93,7 +136,7 @@ export default async function render(root, ctx) {
           c.attempts.length ? h('div.pillbox.mt-8', c.attempts.map((a) => h('span', { class: `badge ${a.accepted ? 'good' : ''}`, title: a.mechanism || '' }, `#${a.iteration} ${humanize(a.stage || '')}`))) : null))))
         : h('p.muted', `No campaign yet. One starts when Runesmith has at least ${settings.min_experience || 8} eligible stored attempts and enough new ones since the last campaign, and only while no trial is open.`),
       h('button.btn.sm.mt-8', { onclick: () => openNotes('self', 'runesmith', 'Runesmith itself') }, icon('note'), 'Tell the Improver something'));
-    body.append(h('div.grid.two', h('div.col.gap-16', lineage, trial), h('div.col.gap-16', lib, caps, camp)));
+    body.append(...[selfPlanCard(d.plan, ctx.navigate), h('div.grid.two.mt-24', h('div.col.gap-16', lineage, trial), h('div.col.gap-16', lib, caps, camp))].filter(Boolean));
   };
   await load();
   offs.push(bus.on('improve', debounce(load, 300)), bus.on('round', debounce(load, 500)));

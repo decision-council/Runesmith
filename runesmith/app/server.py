@@ -743,6 +743,11 @@ def api_improve(s: Studio, q, body):
     view = ws.generations_view()
     view["campaigns"] = ws.development_view()["campaigns"]
     view["self"] = {k: v for k, v in ws.self_view().items() if k in ("capabilities", "open_targets", "identity")}
+    from runesmith.app import self_plan
+    try:
+        view["plan"] = self_plan.view(ws)                # the map's summary, the scored plan, the next item and why
+    except Exception:                                    # the page never fails for the plan
+        view["plan"] = None
     return view
 
 

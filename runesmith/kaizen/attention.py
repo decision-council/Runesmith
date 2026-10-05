@@ -1,5 +1,12 @@
 """Attention allocation between object work and self-improvement.
 
+In the Studio the baseline share is no longer this module's: the owner sets it (``self_improvement_share``: 10 to 90
+percent of work turns, default 20; see ``runesmith.app.self_plan``), and the run loop is given that rule instead of
+``next_lane``. What stays here is the module's health signals: it still watches every outcome and says healthy,
+suspected, blocked, recovering or capacity-constrained, and it detects yield drift; a failure that keeps recurring is shown
+as a struggle in the improvement plan. The shares below are what ``next_lane`` still applies to callers that give the
+loop no policy of their own (the command line, the steward, the demos).
+
 Runesmith spends most opportunities on objects and keeps a standing share for
 improving itself (Kaizen: there is always a next level). When the same failure
 signature keeps recurring, it is *struggling*: the subject share rises so the

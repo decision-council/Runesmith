@@ -581,12 +581,12 @@ async function operationsLens(body, ctx) {
       roles.append(row);
     }
     const att = d.attention;
-    const modeText = { HEALTHY: 'Healthy: most attention goes to your work', SUSPECTED_BLOCKAGE: 'A failure keeps recurring: more attention to self-improvement',
-      SUBJECT_BLOCKED: 'Blocked by a recurring failure: self-improvement gets priority', RECOVERING: 'Recovering after an improvement',
+    const modeText = { HEALTHY: 'Healthy: most attention goes to your work', SUSPECTED_BLOCKAGE: 'A failure keeps recurring: the repairs may be struggling',
+      SUBJECT_BLOCKED: 'Blocked by a recurring failure: the improvement plan treats it as a struggle', RECOVERING: 'Recovering after an improvement',
       CAPACITY_CONSTRAINED: 'Models are short of capacity: work waits, nothing is scored' };
     const attention = h('div.card', h('div.card-head', h('h3', icon('gauge'), 'Attention')),
       att ? h('div', h('div.kpi', h('div.v', `${Math.round(att.share * 100)}%`, h('small', 'self')), h('div.k', modeText[att.mode] || att.mode)),
-        h('div.bar.rune.mt-8', h('i', { style: { width: `${att.share * 100}%` } })), h('p.tiny.faint.mt-8', 'The share of steps Runesmith gives to improving itself. It rises when the same failure keeps recurring.'))
+        h('div.bar.rune.mt-8', h('i', { style: { width: `${att.share * 100}%` } })), h('p.tiny.faint.mt-8', 'Your share of work turns that go to improving Runesmith itself (Settings, Self-improvement). The line above is only a health signal: it shows when the same failure keeps recurring, and it no longer changes the share.'))
         : h('p.muted', 'Attention starts once Runesmith has worked on something.'));
     const t = d.trial;
     const trial = h('div.card', h('div.card-head', h('h3', icon('scale'), 'Trial')),

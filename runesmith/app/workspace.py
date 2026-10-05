@@ -66,6 +66,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "policy_chosen": False,         # the owner has made the three choices above
     "min_experience": 8,
     "kaizen_every": 8,
+    # How many of every 10 work turns go to improving Runesmith itself (10 to 90, in steps of 10): the owner's share
+    # (self_plan). It replaces the automatic attention share as the baseline.
+    "self_improvement_share": 20,
     "theme": "auto",
     "build_steps": False,          # executable build checks are explicitly enabled per workspace
     "build_apply": False,          # only owner acceptance + unchanged source + a root-bound grant can apply
@@ -87,7 +90,8 @@ LEGACY_ONBOARDED: dict[str, Any] = {"auto_work": True, "probe_tests": True, "kai
 SETTING_TYPES: dict[str, Any] = {
     "onboarded": bool, "workspace_name": str, "use_type": str, "autonomy": str, "auto_work": bool,
     "interval_minutes": (int, float), "probe_tests": bool, "exclude": list, "max_objects": int, "read_notes": bool,
-    "kaizen": bool, "min_experience": int, "kaizen_every": int, "theme": str, "policy_chosen": bool,
+    "kaizen": bool, "min_experience": int, "kaizen_every": int, "self_improvement_share": int, "theme": str,
+    "policy_chosen": bool,
     "build_steps": bool, "build_apply": bool, "build_paths": list, "checks_autopilot": bool, "full_speed": bool,
     "recovery_policy": str, "stuck_policy": str, "recheck_policy": str, "runesmith_md": bool,
 }
@@ -95,7 +99,7 @@ CHOICES = {"autonomy": {"observe", "propose"}, "theme": {"auto", "light", "dark"
            "recovery_policy": {"wait", "keep"}, "stuck_policy": {"wait", "retry", "retry_split"},
            "recheck_policy": {"wait", "recheck"}, "use_type": {"", "improve", "build", "docs", "explore", "numbers"}}
 RANGES = {"interval_minutes": (1, 7 * 24 * 60), "max_objects": (1, 500), "min_experience": (2, 10_000),
-          "kaizen_every": (1, 10_000)}
+          "kaizen_every": (1, 10_000), "self_improvement_share": (10, 90)}
 MILESTONE_STATES = ("open", "doing", "done", "dropped")
 # The most an owner may write in a milestone; every Checker and builder request carries it (journey J11-F22: longer
 # text was cut silently mid-sentence, so the owner's exact numbers could vanish).
@@ -298,6 +302,8 @@ class Workspace:
                 raise WorkspaceError(f"{key} must be one of {sorted(CHOICES[key])}")
             if key in RANGES and not RANGES[key][0] <= value <= RANGES[key][1]:
                 raise WorkspaceError(f"{key} must be between {RANGES[key][0]} and {RANGES[key][1]}")
+            if key == "self_improvement_share" and value % 10:
+                raise WorkspaceError("self_improvement_share is 10 to 90 percent, in steps of 10")
             if key == "exclude":
                 value = sorted({str(v).strip() for v in value if str(v).strip()})
             if key == "build_paths":
@@ -734,8 +740,13 @@ class Workspace:
         cached = None if refresh else _read_json(self.home / "SELF_MAP.json", None)
         if cached and cached.get("identity", {}).get("active_generation") == generations.active(self.home):
             return cached
+        from runesmith.app.self_plan import collect_struggles
         from runesmith.selfmap import write_self_map
-        return write_self_map(self.home / "SELF_MAP.json", home=self.home, records=self.sessions())
+        try:
+            struggles = collect_struggles(self)               # from cheap records only; the map never fails for them
+        except Exception:
+            struggles = []
+        return write_self_map(self.home / "SELF_MAP.json", home=self.home, records=self.sessions(), struggles=struggles)
 
     def self_view(self) -> dict[str, Any]:
         self_map = self.self_map()
@@ -744,6 +755,7 @@ class Workspace:
         return {"identity": self_map["identity"], "regions": self_map["regions"], "affordances": self_map["affordances"],
                 "envelope": self_map["default_envelope"], "capabilities": self_map["capabilities"],
                 "open_targets": self_map["open_targets"][:6], "improvement_options": self_map["improvement_options"],
+                "struggles": self_map.get("struggles", []),
                 "lineage": self_map["lineage"], "unknowns": self_map["unknowns"],
                 "kernel": [{k: c.get(k) for k in ("path", "purpose", "lines", "public_symbols")} for c in kernel],
                 "organs": [{k: c.get(k) for k in ("path", "purpose", "lines", "public_symbols")} for c in organs],
@@ -1690,7 +1702,10 @@ class Workspace:
             "proposals": work["counts"], "drafts": work["draft_counts"], "opportunities": len(work["opportunities"]),
             "last_round": work["last_round"], "round_utc": work["round_utc"],
             "repairs": {"judged": len(judged), "accepted": sum(1 for s in judged if s.get("strict_success"))},
-            "attention": {"mode": attention.mode, "share": SHARE_BP[attention.mode] / 10000} if attention else None,
+            # The owner's share is the baseline (self_plan); attention's mode stays as a health signal, and its own
+            # automatic share is shown only as what it would have been.
+            "attention": ({"mode": attention.mode, "share": settings["self_improvement_share"] / 100,
+                           "automatic_share": SHARE_BP[attention.mode] / 10000} if attention else None),
             "goals": [g for g in self.goals() if g["status"] == "active"],
             "plan": {"milestones": len(plan.get("milestones", [])),
                      "done": sum(1 for m in plan.get("milestones", []) if m.get("status") == "done"),
