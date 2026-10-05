@@ -138,11 +138,12 @@ def test_a_module_changed_after_the_run_is_unknown_not_a_stale_color(tmp_path):
     ws, root = shop(tmp_path)
     age(root)
     round_record(ws, "green", when_utc=utc(-3600))                          # the round finished an hour ago
-    write(root, "src/shop/prices.py", "def price():\n    return 2\n")        # changed now, after it
+    write(root, "src/shop/checkout.py", "from shop.prices import price\n\nVALUE = 2\n")   # changed now, after it
     by = nodes(living_map.structure_view(ws))
-    assert by["src/shop/prices.py"]["state"]["band"] == "unknown"
-    assert by["src/shop/prices.py"]["state"]["reason"].startswith("Changed since the last test run: src/shop/prices.py")
-    assert by["src/shop/cart.py"]["state"]["band"] == "optimal"             # cart did not change, nor did its test
+    assert by["src/shop/checkout.py"]["state"]["band"] == "unknown"
+    assert by["src/shop/checkout.py"]["state"]["reason"].startswith("Changed since the last test run: src/shop/checkout.py")
+    assert by["src/shop/cart.py"]["state"]["band"] == "optimal"             # cart did not change, nor did its test, nor what it imports
+    assert by["src/shop/prices.py"]["state"]["band"] == "optimal"           # checkout imports prices, not the other way round
     # a test file changed after the run makes the modules it reaches unknown too
     round_record(ws, "green", when_utc=utc(60))
     assert nodes(living_map.structure_view(ws))["src/shop/cart.py"]["state"]["band"] == "optimal"
@@ -555,6 +556,369 @@ def test_metrics_carry_their_sample_and_say_few_sessions_under_ten(tmp_path):
         (ws.home / "sessions" / f"s{i:02d}.json").unlink()
     ws.__dict__.pop("_session_cache", None)
     assert living_map.metrics_view(ws)["metrics"]["repair_yield"]["few"] is True
+
+
+# ------------------------------------------------------------------------- what the adversarial review found --
+
+def mapped(tmp_path: Path, files: dict[str, str], name: str = "proj", *, python: bool = True) -> tuple[Workspace, Path]:
+    """A project made of exactly these files (and a pyproject.toml, unless ``python`` is off), mapped."""
+    root = tmp_path / name
+    files = ({"pyproject.toml": '[project]\nname = "proj"\n'} if python else {}) | files
+    for rel, text in files.items():
+        write(root, rel, text)
+    ws = Workspace(root, tmp_path / (name + "-home"))
+    ws.map_environment(probe=False)
+    return ws, root
+
+
+def test_a_milestone_that_names_a_url_a_network_path_or_a_drive_path_gets_no_badge_and_touches_no_disk(tmp_path, monkeypatch):
+    ws, root = shop(tmp_path)
+    for name in ("guide.md", "notes.md", "todo.md"):
+        write(root, name, "# " + name + "\n")
+    ws.add_milestone("Follow the guide", "See https://example.com/guide.md, \\\\fileserver\\share\\notes.md and C:\\work\\todo.md "
+                     "for the format; then fix src/shop/cart.py and (README.md).", "Plan", "done when it matches")
+    asked: list[str] = []
+    real = Path.resolve
+
+    def spy(self, *args, **kwargs):
+        if any(word in str(self) for word in ("example.com", "fileserver", "todo.md")):
+            asked.append(str(self))
+            raise AssertionError("resolve() was handed text taken from a milestone: " + str(self))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", spy)
+    by = nodes(living_map.structure_view(ws))
+    assert not asked
+    for name in ("guide.md", "notes.md", "todo.md"):                        # the last word of a URL or a network path is not a file here
+        assert not [b for b in by[name]["badges"] if b["kind"] == "milestone"], name
+    for name in ("src/shop/cart.py", "README.md"):                          # a plain relative name still is
+        assert [b for b in by[name]["badges"] if b["kind"] == "milestone"], name
+
+
+def test_the_path_helper_is_lexical_and_refuses_what_leaves_the_folder(tmp_path, monkeypatch):
+    calls: list[str] = []
+    real = Path.resolve
+    monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: calls.append(str(self)) or real(self, *a, **k))
+    root, under = tmp_path / "proj", living_map._under
+    assert under(root, root, "src/a.py") == "src/a.py"
+    assert under(root, root, "src\\a.py") == "src/a.py"
+    assert under(root, root, "./src/a.py") == "src/a.py"
+    assert under(root, root / "sub", "x.py") == "sub/x.py"
+    for bad in ("../x.py", "src/../../x.py", "/etc/x.py", "\\\\host\\share\\x.py", "//host/share/x.py", "C:\\x.py", "C:x.py", "", ".", "a\x00b.py"):
+        assert under(root, root, bad) is None, bad
+    assert under(root / "sub", root, "x.py") is None                        # outside the object's folder
+    if os.name == "nt":                                                      # a drive's case is not a different folder
+        assert under(root, Path(str(root).upper()), "src/a.py") == "src/a.py"
+    assert not calls                                                         # nothing here asked the disk or the network
+
+
+def test_imports_are_read_for_the_test_files_first_so_the_cap_never_hides_a_test(tmp_path, monkeypatch):
+    files = {f"src/pkg/m{i}.py": "X = 1\n" for i in range(6)}
+    files |= {"src/pkg/__init__.py": "", "tests/test_one.py": "from pkg.m0 import X\n"}
+    ws, _ = mapped(tmp_path, files)
+    monkeypatch.setattr(living_map, "PARSE_CAP", 2)
+    view = living_map.structure_view(ws)
+    by, edges = nodes(view), {(e["from"], e["to"], e["type"]) for e in view["edges"]}
+    assert ("tests/test_one.py", "src/pkg/m0.py", "tests") in edges           # the test sorts last, and is read first
+    assert view["imports_not_read"] == 6 and "6 code files" in view["sentence"] and "past the first 2" in view["sentence"]
+    assert by["src/pkg/m1.py"]["state"]["band"] == "minimal"                 # every test file was read: none reaches it
+
+
+def test_a_test_file_that_cannot_be_read_makes_untested_modules_unknown_not_minimal(tmp_path):
+    ws, root = shop(tmp_path)
+    write(root, "tests/test_values.py", "from shop.lonely import VALUE\nprint 'a syntax error in Python 3'\n")
+    view = living_map.structure_view(ws)
+    by = nodes(view)
+    lonely = by["src/shop/lonely.py"]["state"]
+    assert lonely["band"] == "unknown"
+    assert "Some test files could not be read, so it cannot say that no test reaches this module." in lonely["reason"]
+    assert "tests/test_values.py" in lonely["reason"] and "could not parse" in lonely["reason"]
+    assert view["parse_errors"] == ["tests/test_values.py"] and view["imports_not_read"] == 1
+    assert "1 with a syntax error" in view["sentence"]
+    imports = {row["label"]: row for row in by["tests/test_values.py"]["evidence"]}["Imports"]
+    assert imports["value"].startswith("not read") and not imports["items"]    # never "no project file" for a file that was not read
+    assert by["src/shop/cart.py"]["state"]["band"] == "unknown" and "No test run is recorded" in by["src/shop/cart.py"]["state"]["reason"]
+
+
+def test_test_files_past_the_cap_or_too_large_also_make_untested_modules_unknown(tmp_path, monkeypatch):
+    ws, root = shop(tmp_path)
+    monkeypatch.setattr(living_map, "PARSE_CAP", 2)                          # three test files: the last in order is not read
+    view = living_map.structure_view(ws)
+    state = nodes(view)["src/shop/lonely.py"]["state"]
+    assert state["band"] == "unknown" and "tests/test_prices.py (past the first 2 code files read)" in state["reason"]
+    monkeypatch.setattr(living_map, "PARSE_CAP", 2500)
+    write(root, "tests/test_big.py", "from shop.lonely import VALUE\n" + "# padding\n" * 150_000)      # a little over 1.5 MB
+    view = living_map.structure_view(ws)
+    state = nodes(view)["src/shop/lonely.py"]["state"]
+    assert state["band"] == "unknown" and "larger than 1.5 MB" in state["reason"] and "tests/test_big.py" in state["reason"]
+    assert view["imports_not_read"] >= 1
+
+
+def test_a_test_named_for_a_module_links_to_the_nearest_module_of_that_name_or_to_none(tmp_path):
+    files = {"pkg_a/models.py": "A = 1\n", "pkg_b/models.py": "B = 1\n", "pkg_a/utils.py": "U = 1\n", "pkg_b/utils.py": "V = 1\n",
+             "pkg_c/core.py": "C = 1\n", "other/core.py": "O = 1\n", "pkg_d/flow.py": "F = 1\n", "pkg_e/flow.py": "G = 1\n",
+             "tests/pkg_a/test_models.py": "def test_a():\n    pass\n",            # mirrors pkg_a
+             "tests/test_utils.py": "from pkg_a.utils import U\n\n\ndef test_u():\n    assert U\n",   # the name fits two, the import says one
+             "pkg_c/tests/test_core.py": "def test_c():\n    pass\n",              # inside the package
+             "pkg_d/test_flow.py": "def test_f():\n    pass\n"}                   # next to the module
+    ws, root = mapped(tmp_path, files)
+    age(root)
+    round_record(ws, "green", when_utc=utc(60))
+    view = living_map.structure_view(ws)
+    reach = {(e["from"], e["to"]): e["how"] for e in view["edges"] if e["type"] == "tests"}
+    assert set(reach) == {("tests/pkg_a/test_models.py", "pkg_a/models.py"), ("tests/test_utils.py", "pkg_a/utils.py"),
+                          ("pkg_c/tests/test_core.py", "pkg_c/core.py"), ("pkg_d/test_flow.py", "pkg_d/flow.py")}
+    assert all(h.startswith("named for it") for h in reach[("tests/pkg_a/test_models.py", "pkg_a/models.py")])
+    assert not any(h.startswith("named for it") for h in reach[("tests/test_utils.py", "pkg_a/utils.py")])   # the name was ambiguous: dropped
+    by = nodes(view)
+    assert by["pkg_a/models.py"]["state"]["band"] == "optimal"
+    assert by["pkg_b/models.py"]["state"]["band"] == "minimal"               # a test of another package's models does not bless this one
+
+
+def test_a_module_is_stale_when_anything_it_imports_changed_after_the_run(tmp_path):
+    ws, root = shop(tmp_path)
+    write(root, "src/shop/summary.py", "from shop import cart\n")             # summary imports cart, which imports prices
+    write(root, "tests/test_summary.py", "from shop.summary import cart\n")
+    age(root)
+    round_record(ws, "green", when_utc=utc(-3600))
+    assert nodes(living_map.structure_view(ws))["src/shop/summary.py"]["state"]["band"] == "optimal"
+    write(root, "src/shop/prices.py", "def price():\n    return 2\n")
+    by = nodes(living_map.structure_view(ws))
+    own = by["src/shop/prices.py"]["state"]
+    assert own["band"] == "unknown" and own["reason"].startswith("Changed since the last test run: src/shop/prices.py changed at")
+    for name in ("cart", "checkout", "summary"):                              # cart and checkout import it; summary does so through cart
+        state = by[f"src/shop/{name}.py"]["state"]
+        assert state["band"] == "unknown", name
+        assert "src/shop/prices.py changed at" in state["reason"] and f"src/shop/{name}.py imports it, directly or through other files" in state["reason"]
+    assert by["src/shop/lonely.py"]["state"]["band"] == "minimal"             # nothing tests it, run or no run
+    words = by["tests/test_cart.py"]["test"]["words"]                         # its result was of the old prices.py too
+    assert by["tests/test_cart.py"]["test"]["result"] == "unknown" and "src/shop/prices.py changed since the last test run" in words
+
+
+SHARED = [("tests/test_extra.py", "def test_extra():\n    pass\n", False), ("tests/conftest.py", "import pytest\n", True),
+          ("pytest.ini", "[pytest]\naddopts = -q\n", True),
+          ("pyproject.toml", '[project]\nname = "shop"\n\n[tool.pytest.ini_options]\naddopts = "-q"\n', True),
+          ("setup.cfg", "[tool:pytest]\naddopts = -q\n", True), ("tox.ini", "[pytest]\naddopts = -q\n", True)]
+
+
+@pytest.mark.parametrize("rel,text,shared", SHARED, ids=[row[0] for row in SHARED])
+def test_a_changed_test_file_conftest_or_pytest_configuration_makes_every_tested_module_unknown(tmp_path, rel, text, shared):
+    ws, root = shop(tmp_path)
+    age(root)
+    round_record(ws, "green", when_utc=utc(-3600))
+    assert nodes(living_map.structure_view(ws))["src/shop/cart.py"]["state"]["band"] == "optimal"
+    write(root, rel, text)
+    by = nodes(living_map.structure_view(ws))
+    for name in ("cart", "prices", "checkout"):                               # none of them imports the changed file
+        state = by[f"src/shop/{name}.py"]["state"]
+        assert state["band"] == "unknown", (rel, name)
+        assert f"{rel} changed at" in state["reason"]
+        assert "a test file, conftest or pytest configuration changed after the run" in state["reason"]
+    assert by["src/shop/lonely.py"]["state"]["band"] == "minimal"
+    other = by["tests/test_cart.py"]["test"]                                  # a configuration or a conftest touches every test's result
+    assert (other["result"] == "unknown") is shared and (other["result"] == "passed") is (not shared)
+
+
+def test_a_change_to_a_file_that_is_neither_a_test_nor_pytest_configuration_keeps_the_results(tmp_path):
+    ws, root = shop(tmp_path)
+    age(root)
+    round_record(ws, "green", when_utc=utc(-3600))
+    write(root, "pyproject.toml", '[project]\nname = "shop"\nversion = "2"\n')   # no pytest section
+    write(root, "README.md", "# shop, again\n")
+    write(root, "src/shop/lonely.py", "VALUE = 2\n")
+    by = nodes(living_map.structure_view(ws))
+    for name in ("cart", "prices", "checkout"):
+        assert by[f"src/shop/{name}.py"]["state"]["band"] == "optimal", name
+    assert by["tests/test_cart.py"]["test"]["result"] == "passed"
+
+
+def test_the_list_cut_keeps_what_is_drawn_and_what_matters_most_and_stays_in_id_order(tmp_path, monkeypatch):
+    monkeypatch.setattr(living_map, "NODE_CAP", 12)
+    monkeypatch.setattr(living_map, "LIST_CAP", 30)
+    files = {f"pkg/m{i:02d}.py": "X = 1\n" * (1 + i % 5) for i in range(60)}
+    files |= {"zz/last.py": "VALUE = 1\n", "tests/test_zlast.py": "from zz.last import VALUE\n\n\ndef test_x():\n    assert VALUE == 2\n"}
+    ws, root = mapped(tmp_path, files)
+    age(root)
+    round_record(ws, "failing", failing=["tests/test_zlast.py::test_x"])
+    view = living_map.structure_view(ws)
+    ids = [n["id"] for n in view["nodes"]]
+    assert len(ids) == 30 and ids == sorted(ids) and view["counts"]["listed"] == 30 and view["counts"]["files"] == 63
+    by = nodes(view)
+    assert by["tests/test_zlast.py"]["state"]["band"] == "bad" and by["zz/last.py"]["state"]["band"] == "bad"
+    assert by["tests/test_zlast.py"]["drawn"] and by["zz/last.py"]["drawn"]  # failing parts sort last by name, and are listed all the same
+    assert view["counts"]["drawn"] == sum(g["drawn"] for g in view["groups"])  # everything a folder says it draws is in the list
+    listed = set(ids)
+    assert all(i in listed for g in view["groups"] for i in g["more_ids"])    # no folder points at a part the list does not carry
+
+
+def test_evidence_is_built_for_the_listed_nodes_only_and_the_folder_is_scanned_once(tmp_path, monkeypatch):
+    files = {"src/pkg/__init__.py": "", "src/pkg/core.py": "def f():\n    return 1\n"}
+    for i in range(70):
+        files[f"src/pkg/m{i:02d}.py"] = "from pkg import core\n"
+        files[f"tests/test_m{i:02d}.py"] = f"from pkg.m{i:02d} import core\n"
+    ws, _ = mapped(tmp_path, files)
+    monkeypatch.setattr(living_map, "LIST_CAP", 40)
+    built: list[str] = []
+    scans: list[str] = []
+    real_evidence, real_scan = living_map._evidence, living_map._scan
+    monkeypatch.setattr(living_map, "_evidence", lambda ws_, node, *a, **k: built.append(node["id"]) or real_evidence(ws_, node, *a, **k))
+    monkeypatch.setattr(living_map, "_scan", lambda root: scans.append(str(root)) or real_scan(root))
+    started = time.perf_counter()
+    view = living_map.structure_view(ws)
+    took = time.perf_counter() - started
+    assert len(view["nodes"]) == 40 and view["counts"]["files"] == 143
+    assert sorted(built) == sorted(n["id"] for n in view["nodes"])            # no part nobody can open has its facts built
+    assert all(n["evidence"] for n in view["nodes"])
+    assert len(scans) == 1                                                    # the folder is read from disk once
+    assert took < 30
+
+
+def test_a_long_adversarial_javascript_file_parses_fast_and_real_imports_still_resolve(tmp_path):
+    names = ", ".join(f"name{i}" for i in range(80))                         # a list of names longer than 300 characters
+    text = f"import {{ {names} }} from './util.js';\nexport * from './more';\nimport './side';\nconst a = require('./req');\n"
+    text += ("import " * 4000) + ("export " * 4000) + ("import\n" * 4000)       # words with no path after them, for the rest of the file
+    started = time.perf_counter()
+    specs = living_map._js_specs(text)
+    took = time.perf_counter() - started
+    assert took < 1.0, took
+    assert specs == [("./util.js", 1), ("./more", 2), ("./side", 3), ("./req", 4)]
+    ws, _ = mapped(tmp_path, {"package.json": '{"name": "w"}', "src/util.js": "export const x = 1;\n", "src/main.js": text}, python=False)
+    edges = {(e["from"], e["to"]) for e in living_map.structure_view(ws)["edges"]}
+    assert ("src/main.js", "src/util.js") in edges
+
+
+def test_a_probe_and_a_round_with_the_same_second_follow_the_rule_the_ring_uses(tmp_path):
+    ws, root = shop(tmp_path)
+    age(root)
+    stamp = utc(-300)
+    round_record(ws, "failing", when_utc=stamp, failing=["tests/test_checkout.py::test_checkout"])
+
+    def probe(measured: str = stamp, **fields) -> dict:
+        env = ws.environment_map()
+        env["objects"][0]["probe"], env["objects"][0]["measured_utc"] = fields, measured
+        _write_json(ws.home / "ENVIRONMENT.json", env)
+        return ws.environment_map()["objects"][0]
+
+    obj = probe(runner="pytest", collected=3, passed=3, failed=0, errors=0, exit_code=0)
+    assert ws.object_statuses()[obj["name"]] == "failing"                    # at a tie a green probe never overrides the round
+    run = living_map.latest_run(ws, obj)
+    assert run["source"] == "round" and run["outcome"] == "failed" and run["status"] == "failing"
+    assert nodes(living_map.structure_view(ws))["src/shop/checkout.py"]["state"]["band"] == "bad"
+    obj = probe(runner="pytest", collected=3, passed=2, failed=1, errors=0, exit_code=1)       # a failing probe does win a tie
+    assert ws.object_statuses()[obj["name"]] == "failing" and living_map.latest_run(ws, obj)["source"] == "probe"
+    obj = probe(runner="unittest", collected=3, passed=3, failed=0, errors=0, exit_code=0)     # so does a unittest probe
+    assert living_map.latest_run(ws, obj)["source"] == "probe" and living_map.latest_run(ws, obj)["scope"] == "subset"
+    obj = probe(runner="pytest", error="timed out after 60 s")                                  # and one that could not finish
+    assert ws.object_statuses()[obj["name"]] == "timed_out" and living_map.latest_run(ws, obj)["source"] == "probe"
+    obj = probe(utc(-100), runner="pytest", collected=3, passed=3, failed=0, errors=0, exit_code=0)   # a green probe a later second wins
+    run = living_map.latest_run(ws, obj)
+    assert ws.object_statuses()[obj["name"]] == "green" and run["source"] == "probe" and run["outcome"] == "passed"
+
+
+def test_discover_says_a_failing_probe_was_found_by_the_probe_not_in_a_round(tmp_path):
+    ws, _ = shop(tmp_path)
+    env = ws.environment_map()
+    env["objects"][0]["probe"] = {"runner": "pytest", "collected": 3, "passed": 2, "failed": 1, "errors": 0, "exit_code": 1}
+    env["objects"][0]["measured_utc"] = "2026-10-05T13:11:00Z"
+    _write_json(ws.home / "ENVIRONMENT.json", env)
+    assert not (ws.home / "WORK.json").exists()
+    stage = {s["id"]: s for s in living_map.stages_view(ws)}["discover"]
+    assert stage["count"] == 1 and stage["unit"] == "objects with failing tests"
+    assert "latest round" not in stage["window"] and stage["window"] == "the map's test probe, 2026-10-05 13:11Z; no round has run yet"
+    assert stage["source"].startswith("ENVIRONMENT.json") and "WORK.json" not in stage["source"] and stage["utc"] == "2026-10-05T13:11:00Z"
+    assert stage["extra"] == "failing: shop (found by the map's test probe)"
+    assert "map's own test probe" in stage["definition"]
+    # a round that found the same object keeps the older words
+    round_record(ws, "failing", when_utc="2026-10-05T13:00:00Z", failing=["tests/test_checkout.py::test_checkout"])
+    newer = {s["id"]: s for s in living_map.stages_view(ws)}["discover"]      # the probe is the newer evidence, and says so
+    assert newer["count"] == 1 and newer["window"] == "the map's test probe, 2026-10-05 13:11Z, newer than the latest round (13:00Z)"
+    assert newer["source"] == "ENVIRONMENT.json (the map's test probe)"
+    round_record(ws, "failing", when_utc="2026-10-05T14:00:00Z", failing=["tests/test_checkout.py::test_checkout"])
+    only_round = {s["id"]: s for s in living_map.stages_view(ws)}["discover"]
+    assert only_round["window"] == "the latest round, 2026-10-05 14:00Z" and only_round["extra"] == "failing: shop"
+    assert only_round["definition"].startswith("objects whose tests failed in the latest round") and only_round["unit"] == "objects with work found"
+
+
+def test_an_object_put_on_the_never_touch_list_is_not_read_even_before_the_next_map(tmp_path, monkeypatch):
+    ws, _ = shop(tmp_path)
+    name = ws.environment_map()["objects"][0]["name"]
+    assert living_map.structure_view(ws, name)["counts"]["files"] == 10
+    ws.update_settings({"exclude": [name]})
+    assert ws.environment_map()["objects"][0]["kind"] != "excluded"          # the map file still lists it as mapped
+    monkeypatch.setattr(living_map, "_scan", lambda root: (_ for _ in ()).throw(AssertionError("an excluded object was read")))
+    for ask in (name, None):
+        view = living_map.structure_view(ws, ask)
+        assert view["empty"] and view["nodes"] == [] and "never-touch" in view["sentence"]
+
+
+def test_the_never_touch_list_matches_an_object_by_its_name_its_folder_or_the_folder_above_it(tmp_path):
+    files = {}
+    for project in ("billing", "web"):
+        files |= {f"services/{project}/src/{project}/core.py": "X = 1\n", f"services/{project}/tests/test_core.py": "def test_x():\n    pass\n",
+                  f"services/{project}/pyproject.toml": '[project]\nname = "x"\n'}
+    ws, _ = mapped(tmp_path, files, "park", python=False)
+    names = sorted(o["name"] for o in ws.environment_map()["objects"])
+    assert names == ["services/billing", "services/web"], names
+    assert living_map.structure_view(ws, "services/billing")["counts"]["files"] == 3
+    ws.update_settings({"exclude": ["billing"]})                              # the folder's own name, as the mapper matches it
+    assert living_map.structure_view(ws, "services/billing")["empty"] and living_map.structure_view(ws, "services/web")["counts"]["files"] == 3
+    assert living_map.structure_view(ws)["counts"]["files"] == 3              # one object left that is not on the list: it is the one
+    ws.update_settings({"exclude": ["services"]})                             # or a folder above it
+    assert living_map.structure_view(ws, "services/web")["empty"]
+
+
+def test_metrics_show_no_band_under_ten_sessions_and_the_trial_arms_name_their_window(tmp_path):
+    ws, _ = shop(tmp_path)
+    (ws.home / "sessions").mkdir(exist_ok=True)
+    for i in range(3):
+        _write_json(ws.home / "sessions" / f"s{i}.json", {"key": f"s{i}", "status": "public_pass", "strict_success": True, "cycle_seconds": 10,
+                                                          "calls": [{}] * 2, "utc_start": f"2026-10-05T09:0{i}:00Z"})
+    row = living_map.metrics_view(ws)["metrics"]["repair_yield"]
+    assert row["few"] and row["value"] == 1.0 and row["band"] == "unknown"   # three sessions colour nothing
+    ws.__dict__.pop("_session_cache", None)
+    g0 = generations.active(ws.home)
+    child = candidate(ws, g0, "arm")
+    Trial(incumbent=g0, candidate=child["id"], seed="s", opened_utc="2026-10-05T08:00:00Z").save(ws.home / "TRIAL.json")
+    for i, arm in enumerate(("incumbent", "candidate")):
+        _write_json(ws.home / "sessions" / f"a{i}.json", {"key": f"a{i}", "status": "public_pass", "strict_success": True, "cycle_seconds": 10,
+                                                          "calls": [{}] * 2, "utc_start": f"2026-10-05T10:0{i}:00Z", "trial_arm": arm})
+    ws.__dict__.pop("_session_cache", None)
+    arms = living_map.metrics_view(ws)["metrics"]["repair_yield"]["arms"]
+    assert arms["candidate"]["since"] == "2026-10-05T08:00:00Z" and arms["candidate"]["n"] == 1 and arms["candidate"]["few"]
+    assert arms["candidate"]["window"] == "1 judged session since 2026-10-05 08:00Z"
+
+
+def test_made_active_shows_the_latest_activation_of_a_generation(tmp_path, monkeypatch):
+    ws, _ = shop(tmp_path)
+    g0 = generations.active(ws.home)
+    events = [{"kind": "generation.activated", "utc": "2026-10-01T10:00:00Z", "data": {"id": g0, "previous": None}},
+              {"kind": "generation.activated", "utc": "2026-10-03T11:30:00Z", "data": {"id": g0, "previous": "someone", "evidence": "owner's choice"}}]
+    monkeypatch.setattr(living_map, "ledger_events", lambda ws_, *kinds: events)
+    station = next(s for s in living_map.lineage_view(ws)["stations"] if s["id"] == g0)
+    assert station["activated_utc"] == "2026-10-03T11:30:00Z"
+
+
+def test_a_hub_module_carries_capped_lists_and_the_true_counts(tmp_path, monkeypatch):
+    monkeypatch.setattr(living_map, "DETAIL_CAP", 3)
+    files = {"core.py": "def f():\n    return 1\n", "README.md": "# hub\n"}
+    for i in range(8):
+        files[f"m{i}.py"] = "from core import f\n"
+        files[f"tests/test_hub{i}.py"] = "from core import f\n"
+    ws, _ = mapped(tmp_path, files)
+    by = nodes(living_map.structure_view(ws))
+    hub = by["core.py"]
+    assert hub["imported_by"] == [f"m{i}.py" for i in range(3)] and hub["imported_by_count"] == 8
+    assert [t["id"] for t in hub["tests"]] == [f"tests/test_hub{i}.py" for i in range(3)] and hub["tests_count"] == 8
+    rows = {row["label"]: row for row in hub["evidence"]}
+    assert rows["Imported by"]["items"] == [f"m{i}.py" for i in range(3)] + ["… and 5 more"]
+    assert rows["Tests that reach it"]["items"][-1] == "… and 5 more" and len(rows["Tests that reach it"]["items"]) == 4
+    assert not any("more" in x for x in hub["imported_by"] + [t["id"] for t in hub["tests"]])      # the id lists hold ids only
+    small = by["m0.py"]
+    assert small["imports"] == ["core.py"] and small["imports_count"] == 1 and small["imported_by_count"] == 0 and small["tests_count"] == 0
+    assert "reaches_count" not in small and "tests_count" not in by["tests/test_hub0.py"]
+    test = by["tests/test_hub0.py"]
+    assert test["reaches"] == ["core.py"] and test["reaches_count"] == 1 and test["imports_count"] == 0
+    assert by["README.md"]["imports_count"] == 0 and by["README.md"]["imported_by_count"] == 0
 
 
 # ----------------------------------------------------------------------------------------------- endpoints --

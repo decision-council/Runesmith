@@ -155,7 +155,8 @@ const REG = {
     now: (S.settings.exclude || []).length ? `Never touched: ${S.settings.exclude.join(', ')}.` : 'Nothing is on the never-touch list.',
     effect: 'An object on the list is listed on the map but never read, probed or worked on. It takes effect when the folder is mapped again, which this starts.',
     chips: { items: (extra?.objects || []).map((name) => ({ name, on: (S.settings.exclude || []).includes(name) })), toggle: async (name) => {
-      const ex = new Set(S.settings.exclude || []);
+      const fresh = await get('/api/settings');                 // the list as it is now: another tab or Settings may have changed it
+      const ex = new Set(fresh.exclude || []);
       ex.has(name) ? ex.delete(name) : ex.add(name);
       afterSave(S, ctx, await post('/api/settings', { exclude: [...ex] }));
       await post('/api/worker/run', { job: 'map' });

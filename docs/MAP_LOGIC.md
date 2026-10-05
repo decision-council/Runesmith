@@ -43,6 +43,8 @@ in an object's panel expands it. If the structure cannot be read, the objects ar
 
 - Files are those the mapper itself reads: no version-control or tool folders, nothing hidden, never through a link or junction,
   at most 20,000; a container workspace reads only its own loose files (its subfolders are objects of their own).
+- An object on your never-touch list (`exclude`) is not read: the structure answers with the never-touch sentence from the list as
+  it is now, even before the next map is written (it matches the object's name, the name of its folder, or a folder above it).
 - Kinds, from the file's name and place: *module* (source code in a language the map knows), *test* (a file named `test_*`,
   `*_test`, `*.test.*`, `*.spec.*`, `conftest`, or any code under a `tests`, `test` or `__tests__` folder), *doc* (Markdown, text,
   reStructuredText), *config* (toml, ini, json, yaml, requirements, package.json, Makefile and the like), *data* (everything else).
@@ -55,15 +57,31 @@ in an object's panel expands it. If the structure cannot be read, the objects ar
     dotted name from the top of the project, from `src`, from the folder above a package, relative imports by their package, and
     a neighbour in the same folder); JavaScript and TypeScript by a pattern match on `import`, `export ... from`, `require` and
     `import()` of relative paths (the edge says "found by pattern, not by a parser"); other languages: none. Imports are read for
-    the first 2,500 code files; the rest are counted, never guessed.
+    the first 2,500 code files, **the test files first**, then the source files in path order, so a cap never hides a test. A file
+    whose imports were not read (past the cap, a syntax error, over 1.5 MB, not opened) is counted (`imports_not_read`; the
+    syntax errors are listed in `parse_errors`), its own panel says "not read" with the reason instead of "no project file", and
+    the summary sentence says how many: never guessed. The JavaScript pattern looks at most 3,000 characters from `import` to its
+    path (a longer list of names is not found) and takes time in proportion to the file.
   - `tests` (test to module): the test file imports the module, or is named for it (`test_foo.py` and `foo_test.py` and
     `foo.test.js` all say `foo`). Both reasons are kept on the edge. *Reach is direct:* a test reaches the modules it imports or is
-    named for, not what those import in turn.
+    named for, not what those import in turn. When several modules answer to the name (`pkg_a/models.py` and `pkg_b/models.py`),
+    the name picks the one in the test's own folder, else the one in the folder the test's folder mirrors (`tests/pkg_a` and
+    `src/pkg_a`), else the nearest folder above or below it; when none is nearer than the rest the name gives no edge (an import
+    still does). A name that only one module in the project answers to is the answer wherever that module sits.
 - **State of a module** (the existing bands, Bad / Minimal / Optimal / Unknown; World-class is never assigned here):
-  - **Minimal**: no test reaches it. This is a fact about the files, so it holds whether or not a run is recorded.
-  - Otherwise it follows the **latest recorded test run** (below), and only if neither the module nor any test that reaches it
-    changed on disk after that run (a changed file makes it **Unknown**: "Changed since the last test run: FILE changed at
-    HH:MMZ, after the latest test run ...").
+  - **Minimal**: no test reaches it. This is a fact about the files, so it holds whether or not a run is recorded, as long as
+    every test file could be read. If a test file could not be read (past the cap, a syntax error, over 1.5 MB, not opened), a
+    module that no read test reaches is **Unknown**, not Minimal: "Some test files could not be read, so it cannot say that no
+    test reaches this module. Not read: ...", naming up to three of them with the reason.
+  - Otherwise it follows the **latest recorded test run** (below), and only if nothing it depends on changed on disk after that
+    run. What it depends on is the module itself, every file it imports (directly or through other files), every test that
+    reaches it, and what such a test imports or reaches. A change in any of them makes it **Unknown**: "Changed since the last
+    test run: FILE changed at HH:MMZ, after the latest test run ...", and, when FILE is not the module or a test that reaches
+    it, how it matters ("... and this file imports it, directly or through other files"). A changed test file, a `conftest.py` or
+    pytest's configuration (`pytest.ini`, or a `pyproject.toml`, `tox.ini` or `setup.cfg` that has a pytest section) is wider: it
+    can change every test's outcome without being imported, so any of them changed after the run makes every tested module
+    **Unknown** ("a test file, conftest or pytest configuration changed after the run, so the earlier result may not hold for any
+    module"). A change to another file (a document, another kind of configuration) changes nothing.
   - **Bad**: a test file that reaches it is *named as failing* by that run.
   - **Optimal**: at least one test reaches it, and the run was a **whole-suite pytest run that passed** (a green round, or a probe
     with exit code 0).
@@ -71,9 +89,10 @@ in an object's panel expands it. If the structure cannot be read, the objects ar
     every test passed); the run failed but did not record which test files; a fix was applied after the run; the project is a Node
     project (Runesmith does not run npm test).
 - **The latest recorded test run, whatever ran it.** Chosen by the same rule as `Workspace.object_statuses` (so the node, the ring
-  and the ladder never disagree): the map's probe (`ENVIRONMENT.json`) if it is newer than the round and conclusive, else the
-  repair round's own discovery run (`WORK.json`), else a measuring round (`fix-tests/MEASURED.json`); a fix applied after the
-  round supersedes it as "tests not run since the fix". What each records:
+  and the ladder never disagree): the map's probe (`ENVIRONMENT.json`) if it is newer than the round and conclusive (made at the
+  same second as the round, an error, an unavailable runner, a failing run and a unittest run still win; a passing pytest probe
+  does not override the round's record), else the repair round's own discovery run (`WORK.json`), else a measuring round
+  (`fix-tests/MEASURED.json`); a fix applied after the round supersedes it as "tests not run since the fix". What each records:
   - *Probe*: pytest runs the whole suite; the unittest fallback is a subset. It records counts, never which files failed, so a
     failing probe blames no file.
   - *Repair round* (`WORK.json`, pytest, the whole suite; `utc` is when the round **finished**, so a file changed during the round
@@ -84,18 +103,27 @@ in an object's panel expands it. If the structure cannot be read, the objects ar
   - Not evidence: the repair organ's "signal runs" in session records (they run a candidate's edits on a work copy, not the
     project as it is) and the build's draft checks (they run a draft, not the project).
 - **State of a test file:** its last result from that run: *passed* (whole-suite green), *failed* (named, with its failing tests),
-  *changed since the last test run*, *not run* (no run recorded), or *no result of its own is recorded* (stated plainly).
+  *changed since the last test run* (it changed, or something it imports or reaches changed, or a conftest or pytest
+  configuration changed), *not run* (no run recorded), or *no result of its own is recorded* (stated plainly).
 - **Badges** (read from existing state; nothing is written): a fix or draft waiting for the owner that touches the file (Work &
   proposals); last changed by Runesmith (ledger and draft/proposal records: applied by you, applied automatically by a checked
   build, or a fix applied; time and author model); in an open milestone (a draft for it touches the file, or its own words name the
   file); failing tests count. If the file changed on disk after Runesmith's change, the panel says so and says who is not
-  recorded.
+  recorded. A milestone's words name a file only as the exact relative path of a file the scan found: a web address, a network
+  or drive path, an absolute path or one that climbs out of the folder names nothing, whatever its last part is called. No path
+  from a milestone, a draft or a proposal is ever resolved on the disk (on Windows that would reach out to a network path); it is
+  joined and checked as text, and only used to find a file the scan already listed, which never follows a link.
 - **Detail panel:** path, kind, lines, imports, imported by, tests that reach it and their last results, last change and by whom
   (ledger where known, else file time), open work, and the state's reason, each with its source and time.
 - **Scale:** at most about 60 nodes drawn; over that, each folder keeps its most important parts (a failing one, one with work
   waiting, then the largest) and shows one "+N more" part; "Show all" for a folder draws up to 60 of its files. The list view
-  and the panel reach every file (the list carries at most 500; a folder that large is read in part and says so). The layout is
-  a function of the structure alone: folders in path order take sectors of a circle, parts fill rings in name order.
+  and the panel reach every file the list carries, and the list carries at most 500 (a folder that large is read in part and says
+  so): every part that is drawn first, then the most important of the rest by the same order, returned in path order. A part
+  carries at most 50 entries of each of its lists (`imports`, `imported_by`, `tests` on a module, `reaches` on a test file),
+  sorted by path; `imports_count`, `imported_by_count`, `tests_count` (modules) and `reaches_count` (test files) hold the true
+  totals, and the panel's list ends "… and N more". The facts of a part (its evidence) are built only for the parts the list
+  carries. The layout is a function of the structure alone: folders in path order take sectors of a circle, parts fill rings in
+  name order.
 - **Empty folder / non-code folder:** an object with no files shows a plain sentence and the objects as before; documents are
   grouped with no edges and the sentence says there is no code to link.
 
@@ -103,7 +131,8 @@ in an object's panel expands it. If the structure cannot be read, the objects ar
 Settings switch's own warning that the project's code runs on a throwaway copy); "Fix the failing tests" (the Overview action,
 offered only when the Overview offers it; it works on the whole project and the button says so); "Make a milestone for this
 file" (a small form; nothing is saved until Save); "Keep Runesmith out of an object" (`exclude`, only for objects, with the same
-immediate request Settings and the object panel send). **Test file:** "Watch its tests" and a link to Activity. **Doc:** a link
+immediate request Settings and the object panel send; the control reads the list again just before it writes, so a panel that
+was open while the list changed elsewhere cannot overwrite that change). **Test file:** "Watch its tests" and a link to Activity. **Doc:** a link
 to the brief's blueprints in Goals & plan. **Config and data, and a folder inside a project:** none, and why (the never-touch
 list works on whole objects; automatic apply is limited to the folders allowed in Goals & plan).
 
@@ -259,3 +288,30 @@ A control with no row above is not offered. A change to a row is a change to the
 9. **A "won" and a "superseded" state** were added to the lineage vocabulary, for a generation that won its trial and was replaced,
    and one that was replaced by a winner.
 10. **World-class** is never assigned: no evidence rule earns it here.
+11. **A probe and a round at the same second** are chosen by the rule `Workspace.object_statuses` uses (a passing pytest probe never
+    overrides the round's record at a tie), so the node and the ring cannot show different runs. The first draft let the probe win
+    every tie.
+12. **A change reaches what depends on it.** A module is no longer Optimal when a file it imports changed after the run, directly or
+    through other files, or when a test that reaches it depends on a changed file; and a changed test file, `conftest.py` or pytest
+    configuration makes every tested module Unknown, because it can change any test's outcome without being imported. The first
+    draft only looked at the module and the tests that reach it, so a green run stayed Optimal over code that had changed under it.
+13. **Minimal needs every test file read.** Imports are read for test files first; a test file that could not be read (past the cap, a
+    syntax error, over 1.5 MB, not opened) leaves a module that no read test reaches Unknown, not Minimal, with the reason. The first
+    draft read the files in path order, so a long project's tests, which sort after its source, were the ones skipped.
+14. **A test name shared by several modules** links to the nearest one, or to none when none is nearer than the rest. The first draft
+    linked a name to every module in the project that carried it, so one package's test blessed another package's module.
+15. **No path from a record or a milestone's words is resolved on the disk.** A web address, a network path or a drive path in a
+    milestone gave a file badge by its last name, and resolving it would reach out to the network on Windows. The words now count only
+    as the exact relative path of a scanned file; draft and proposal paths are joined and checked as text.
+16. **The never-touch list applies at once.** An object added to it is not read by the structure view before the next map is written;
+    the first draft trusted the map file until then. The control that edits the list reads it again before writing.
+17. **The list keeps what is drawn.** Over 500 files the list carries every drawn part first, then the most important of the rest, in
+    path order (the first draft cut the list at 500 in path order, so a failing test late in the alphabet was drawn by no list and
+    could not be opened). A part carries at most 50 entries per list with the true total beside it; the facts of a part are built only
+    for the parts the list carries, which is what keeps a 20,000-file project fast.
+18. **Discover says how it found a failure** (this changes the Discover sentence in section 4): a failing probe the round has not
+    seen is counted as found by the map's test probe, with the probe's time, and the unit, definition and window say so; a round
+    alone keeps its older words.
+19. **Self-knowledge metrics** (this changes the sentences in section 2): under 10 judged sessions a metric has no band, only its value
+    and "few sessions"; each arm of a trial names its window ("N judged sessions since the trial opened"); a generation's "made
+    active" time is its latest activation, not its first.

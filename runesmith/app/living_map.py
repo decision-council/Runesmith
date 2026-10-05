@@ -9,13 +9,15 @@ map shows the older view and says what it could not read (MAP_LOGIC.md, principl
 from __future__ import annotations
 
 import ast
+import bisect
 import calendar
+import functools
 import math
 import os
 import posixpath
 import re
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,7 @@ LIST_CAP = 500                # nodes carried at all; a folder of 20,000 files i
 GROUP_CAP = 12                # folders drawn as groups; the smaller ones share one "other folders" group
 PARSE_CAP = 2500              # code files whose imports are read; the rest are counted, never guessed
 LINES_CAP = 4000              # files whose lines are counted
+DETAIL_CAP = 50               # entries of one list (imports, imported by, tests, reaches) a part carries; a count says the rest
 READ_CAP = 1_500_000          # bytes read from one file
 TOP = ""                      # the group of files that sit at the top of the project
 
@@ -133,7 +136,13 @@ def named_test_target(rel: str) -> str | None:
 # per file: lines and the imports it makes, kept while the file's size and time stay the same
 _FILE_CACHE: dict[tuple[str, int, int], dict[str, Any]] = {}
 
-_JS_IMPORT = re.compile(r"""(?:^|[\s;])(?:import|export)\s+(?:[^'"`;]*?\s+from\s+)?['"]([^'"\n]+)['"]""")
+# ``import`` or ``export``, then (at most _JS_CLAUSE characters further, up to the first quote, backtick or semicolon) the quoted
+# path. Found by hand, not by one lazy pattern: a pattern that may run to the end of the text for every ``import`` in it is
+# quadratic (or worse) on a long file that repeats the word.
+_JS_KEYWORD = re.compile(r"(?:^|[\s;])(?:import|export)(?=\s)")
+_JS_STOP = re.compile(r"""['"`;]""")
+_JS_QUOTED = re.compile(r"""['"]([^'"\n]+)['"]""")
+_JS_CLAUSE = 3000
 _JS_REQUIRE = re.compile(r"""\brequire\(\s*['"]([^'"\n]+)['"]\s*\)""")
 _JS_DYNAMIC = re.compile(r"""\bimport\(\s*['"]([^'"\n]+)['"]\s*\)""")
 
@@ -150,11 +159,40 @@ def _py_imports(text: str) -> list[tuple[str, str, list[str], int, int]]:
     return sorted(rows, key=lambda r: (r[4], r[1]))
 
 
+def _ends_with_from(clause: str) -> bool:
+    body = clause.rstrip()
+    return len(body) < len(clause) and body.endswith("from") and (len(body) == 4 or body[-5].isspace())
+
+
+def _js_static(text: str) -> list[tuple[int, str]]:
+    """(place, path) of every ``import ... from 'x'``, ``import 'x'`` and ``export ... from 'x'``."""
+    out = []
+    stops = [m.start() for m in _JS_STOP.finditer(text)]     # where a quote, a backtick or a semicolon is, found once
+    for m in _JS_KEYWORD.finditer(text):
+        start = m.end()
+        i = bisect.bisect_left(stops, start)
+        if i == len(stops) or stops[i] - start > _JS_CLAUSE or text[stops[i]] not in "'\"":
+            continue
+        clause = text[start:stops[i]]
+        if clause.strip() and not _ends_with_from(clause):
+            continue                                            # a quote that belongs to something else (``export default 'x'``)
+        quoted = _JS_QUOTED.match(text, stops[i])
+        if quoted:
+            out.append((quoted.start(1), quoted.group(1)))
+    return out
+
+
 def _js_specs(text: str) -> list[tuple[str, int]]:
+    hits = _js_static(text)
+    for pattern in (_JS_REQUIRE, _JS_DYNAMIC):
+        hits += [(m.start(1), m.group(1)) for m in pattern.finditer(text)]
+    hits.sort()
     found: dict[tuple[str, int], None] = {}
-    for pattern in (_JS_IMPORT, _JS_REQUIRE, _JS_DYNAMIC):
-        for m in pattern.finditer(text):
-            found[(m.group(1), text.count("\n", 0, m.start(1)) + 1)] = None
+    line, last = 1, 0
+    for place, spec in hits:                                    # lines are counted once along the text, never from the top again
+        line += text.count("\n", last, place)
+        last = place
+        found[(spec, line)] = None
     return sorted(found, key=lambda r: (r[1], r[0]))
 
 
@@ -333,6 +371,18 @@ def _node_ids_to_files(ids: list[str], test_files: list[str], dotted: dict[str, 
     return dict(out)
 
 
+def probe_wins(probe: dict[str, Any], measured_utc: str, round_utc: str) -> bool:
+    """Whether the map's probe, not the repair round, is the latest test run of an object. The same rule as
+    ``Workspace.object_statuses`` (so the ring, the node and the Discover counter cannot disagree): a probe made after the
+    round wins; at the same second an error, an unavailable runner, a failing probe and a unittest probe still win (a stronger
+    claim is never kept over incomplete evidence), but a passing pytest probe does not override the round's record."""
+    if not measured_utc or measured_utc < round_utc:
+        return False
+    if probe.get("error") or probe.get("unavailable"):
+        return True
+    return "exit_code" in probe and (measured_utc > round_utc or probe["exit_code"] != 0 or probe.get("runner") == "unittest")
+
+
 def latest_run(ws, obj: dict[str, Any], *, work: dict[str, Any] | None = None, env_map: dict[str, Any] | None = None,
                statuses: dict[str, str] | None = None) -> dict[str, Any] | None:
     """The latest recorded test run of a code object, whatever ran it, or None when no run is recorded.
@@ -378,8 +428,7 @@ def latest_run(ws, obj: dict[str, Any], *, work: dict[str, Any] | None = None, e
                    superseded="a fix was applied after this run; measure the tests again to confirm")
         run["underlying"] = (work.get("objects") or {}).get(name)
         return run
-    probe_terminal = "exit_code" in probe or probe.get("error") or probe.get("unavailable")
-    if probe_terminal and measured_utc and measured_utc >= round_utc and status in (
+    if probe_wins(probe, measured_utc, round_utc) and status in (
             "green", "failing", "unittest_passed", "timed_out", "error_without_failures", "probe_unavailable"):
         from_probe()
         return run
@@ -476,14 +525,28 @@ def ladder_overlay(ws, obj: dict[str, Any], *, run: dict[str, Any] | None = None
 
 # --------------------------------------------------------------------------------------------- the structure --
 
-def _object_entry(ws, name: str | None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+def _is_excluded(obj: dict[str, Any], excluded: set[str]) -> bool:
+    """Whether the owner's never-touch list names this object: by its name, by the name of its folder, or by a folder above
+    it (the mapper keys the list by the first two; a folder above it has taken the object out of the map altogether)."""
+    if not excluded:
+        return False
+    parts = str(obj.get("name") or "").split("/")
+    return (any("/".join(parts[:n]) in excluded for n in range(1, len(parts) + 1))
+            or Path(str(obj.get("path") or "")).name in excluded)
+
+
+def _object_entry(ws, name: str | None) -> tuple[dict[str, Any] | None, dict[str, Any], set[str]]:
+    """The mapped object asked for (or the only one that is not excluded), the map, and the never-touch list as it is now:
+    the owner may have added to it since the map was written."""
     env_map = ws.environment_map() or {}
-    objects = [o for o in env_map.get("objects", []) if o.get("kind") != "excluded"]
+    excluded = set(ws.settings()["exclude"])
+    mapped = [o for o in env_map.get("objects", []) if o.get("kind") != "excluded"]
     if name:
         found = next((o for o in env_map.get("objects", []) if o["name"] == name), None)
     else:
-        found = objects[0] if len(objects) == 1 else None
-    return found, env_map
+        live = [o for o in mapped if not _is_excluded(o, excluded)]
+        found = live[0] if len(live) == 1 else (mapped[0] if len(mapped) == 1 else None)
+    return found, env_map, excluded
 
 
 def _recursive(obj: dict[str, Any]) -> bool:
@@ -502,24 +565,175 @@ def _group_of(rel: str, direct: dict[str, int]) -> str:
     return TOP
 
 
+@functools.lru_cache(maxsize=100_000)
+def _folder(rel: str) -> tuple[str, ...]:
+    return tuple(rel.split("/")[:-1])
+
+
+@functools.lru_cache(maxsize=100_000)
+def _mirror(folder: tuple[str, ...]) -> tuple[str, ...]:
+    """A folder with the marks of where tests sit taken out: ``tests/pkg`` and ``src/pkg`` are both ``pkg``."""
+    kept = tuple(p for p in folder if p.lower() not in TEST_DIRS)
+    return kept[1:] if kept and kept[0].lower() == "src" else kept
+
+
+def _nearest_modules(test: str, candidates: list[str]) -> list[str]:
+    """The module a test's name points at when several modules share that name (``pkg_a/models.py`` and ``pkg_b/models.py``
+    both answer to ``test_models.py``): the one in the test's own folder, else the one in the folder the test's folder
+    mirrors, else the nearest one above or below it, and none when no module is nearer than the rest. A name that only one
+    module in the project answers to is the answer, however far away that module is."""
+    if len(candidates) < 2:
+        return list(candidates)
+    here = _folder(test)
+    there = _mirror(here)
+
+    def distance(module: str) -> tuple[int, int]:
+        folder = _folder(module)
+        other = _mirror(folder)
+        if folder == here:
+            return (0, 0)
+        if other == there:
+            return (1, 0)
+        if other[:len(there)] == there or there[:len(other)] == other:       # the one folder holds the other
+            return (2, abs(len(other) - len(there)))
+        return (3, 0)
+
+    ranked = {c: distance(c) for c in candidates}
+    best = min(ranked.values())
+    nearest = [c for c in candidates if ranked[c] == best]
+    return nearest if len(nearest) == 1 else []
+
+
+PYTEST_SECTIONS = {"pyproject.toml": ("[tool.pytest",), "tox.ini": ("[pytest]",), "setup.cfg": ("[tool:pytest]", "[pytest]")}
+
+
+def _is_pytest_config(root: Path, rel: str, size: int) -> bool:
+    """Whether a file is pytest's configuration: ``pytest.ini``, or a ``pyproject.toml``, ``tox.ini`` or ``setup.cfg`` that
+    has a pytest section (read only when the file changed after the run)."""
+    name = rel.rsplit("/", 1)[-1].lower()
+    if name == "pytest.ini":
+        return True
+    sections = PYTEST_SECTIONS.get(name)
+    if not sections or size > READ_CAP:
+        return False
+    try:
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(section in text for section in sections)
+
+
+class Staleness:
+    """What changed on disk after the latest test run, and so what that run no longer says about a file.
+
+    A file is stale when it changed, or when anything it imports (directly or through other files) changed; a test file is
+    also stale when a module it reaches changed. A changed test file, conftest or pytest configuration is wider than that:
+    a conftest or a configuration reaches every test without being imported, and a changed test file means the suite is no
+    longer the one that ran, so none of them leaves the run's word standing for a module a test reaches."""
+
+    def __init__(self, root: Path, rels: list[str], info: dict[str, tuple[int, int]], kinds: dict[str, str],
+                 nexts: dict[str, list[str]], run_epoch: float | None) -> None:
+        self.info = info
+        self.changed = {r for r in rels if run_epoch is not None and info[r][1] / 1e9 > run_epoch + 1}
+        reverse: dict[str, list[str]] = defaultdict(list)
+        for source, targets in nexts.items():
+            for target in targets:
+                reverse[target].append(source)
+        self.cause = {r: r for r in self.changed}                # file -> the changed file it depends on (itself, if it changed)
+        queue = deque(sorted(self.changed))
+        while queue:
+            node = queue.popleft()
+            for dependent in reverse.get(node, ()):
+                if dependent not in self.cause:
+                    self.cause[dependent] = self.cause[node]
+                    queue.append(dependent)
+        shared = {r for r in self.changed if r.rsplit("/", 1)[-1].lower() == "conftest.py"}
+        shared |= {r for r in self.changed if _is_pytest_config(root, r, info[r][0])}
+        self.shared = sorted(shared)                             # a conftest or pytest configuration that changed
+        self.tests = sorted(r for r in self.changed if kinds[r] == "test" and r not in shared)
+
+    def at(self, rel: str) -> str:
+        return hhmm(stamp(self.info[rel][1] / 1e9))
+
+    def module(self, rel: str, reaching: list[str]) -> tuple[str, str, str | None] | None:
+        """(the changed file, how it matters, the test it comes through) for a module the run no longer speaks for."""
+        if rel in self.changed:
+            return rel, "itself", None
+        tests = sorted(reaching)
+        for test in tests:
+            if test in self.changed:
+                return test, "test", None
+        if rel in self.cause:
+            return self.cause[rel], "imports", None
+        for test in tests:
+            if test in self.cause:
+                return self.cause[test], "through", test
+        wide = self.shared + self.tests
+        return (wide[0], "any", None) if wide else None
+
+    def test(self, rel: str) -> tuple[str, str] | None:
+        """(the changed file, how it matters) for a test file whose result the run no longer speaks for."""
+        if rel in self.changed:
+            return rel, "itself"
+        if rel in self.cause:
+            return self.cause[rel], "imports"
+        return (self.shared[0], "shared") if self.shared else None
+
+
+def _why_unread(rel: str, size: int, f: dict[str, Any], parse_set: set[str]) -> tuple[str, str] | None:
+    """(kind, words) when the imports of a Python or JavaScript file were not read, else None."""
+    if rel not in parse_set:
+        return "cap", f"past the first {PARSE_CAP:,} code files read"
+    if size > READ_CAP:
+        return "large", "larger than 1.5 MB"
+    if f.get("parse_error"):
+        return "syntax", f"Python could not parse it ({f['parse_error']})"
+    if not f.get("parsed"):
+        return "unopened", "it could not be opened"
+    return None
+
+
+def _unread_words(counts: dict[str, int]) -> str:
+    parts = [text.format(n=counts[key]) for key, text in (
+        ("syntax", "{n} with a syntax error"), ("cap", "{n} past the first " + f"{PARSE_CAP:,}" + " code files read"),
+        ("large", "{n} larger than 1.5 MB"), ("unopened", "{n} that could not be opened")) if counts.get(key)]
+    return f"Imports were not read in {plural(sum(counts.values()), 'code file')} ({', '.join(parts)}), so some links from them may be missing."
+
+
+def _weight(n: dict[str, Any]) -> tuple:
+    """The order of importance within a folder: a failing part, one with work waiting, then the largest."""
+    return (0 if n["state"]["band"] == "bad" else 1, 0 if n["badges"] else 1, -(n["lines"] or 0), n["id"])
+
+
+def _list_cut(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The parts the list carries (at most LIST_CAP): every part that is drawn first, then the most important of the rest,
+    returned in the order they came in (by path)."""
+    if len(nodes) <= LIST_CAP:
+        return nodes
+    keep = {n["id"] for n in sorted((n for n in nodes if n["drawn"]), key=_weight)[:LIST_CAP]}
+    keep |= {n["id"] for n in sorted((n for n in nodes if not n["drawn"]), key=_weight)[:LIST_CAP - len(keep)]}
+    return [n for n in nodes if n["id"] in keep]
+
+
 def structure_view(ws, name: str | None = None, expand: tuple[str, ...] = ()) -> dict[str, Any]:
     """The structure graph of one mapped object (docs/MAP_LOGIC.md section 1)."""
-    obj, env_map = _object_entry(ws, name)
+    obj, env_map, excluded = _object_entry(ws, name)
     if obj is None:
         raise KeyError(name or "no single object")
     base = {"schema": "runesmith.map.structure.v1", "object": {k: obj.get(k) for k in ("name", "path", "kind", "root")},
             "built_utc": _now(), "nodes": [], "edges": [], "groups": [], "list_cap": LIST_CAP, "run": None}
-    if obj.get("kind") == "excluded":
+    if obj.get("kind") == "excluded" or _is_excluded(obj, excluded):
         return dict(base, empty=True, sentence=f"{obj['name']} is on your never-touch list, so Runesmith has not read it.")
     root = Path(obj["path"])
     if not root.is_dir():
         return dict(base, empty=True, sentence="This folder is not on disk now. Map again to refresh.")
-    scanned = [(p, s, m) for p, s, m in _scan(root) if not p.name.startswith(".")]
-    if not _recursive(obj):
-        scanned = [(p, s, m) for p, s, m in scanned if p.parent == root]
-    scanned.sort(key=lambda row: row[0].relative_to(root).as_posix())
-    truncated = len(scanned) >= 20_000
-    rels = [p.relative_to(root).as_posix() for p, _, _ in scanned]
+    top_level_only = not _recursive(obj)
+    rows = [(p.relative_to(root).as_posix(), p, s, m) for p, s, m in _scan(root) if not p.name.startswith(".")]
+    rows = [row for row in rows if "/" not in row[0]] if top_level_only else rows
+    rows.sort(key=lambda row: row[0])
+    truncated = len(rows) >= 20_000
+    rels = [row[0] for row in rows]
+    scanned = [(p, s, m) for _, p, s, m in rows]
     if not rels:
         return dict(base, empty=True, truncated_scan=False, counts={"files": 0},
                     sentence="There are no files here yet. When there are, they appear around the folder, each with what is "
@@ -527,11 +741,18 @@ def structure_view(ws, name: str | None = None, expand: tuple[str, ...] = ()) ->
     kinds = {rel: classify(rel) for rel in rels}
     info = {rel: (size, mtime) for rel, (_, size, mtime) in zip(rels, scanned)}
     code_rels = [r for r in rels if os.path.splitext(r)[1].lower() in CODE_SUFFIXES]
-    parse_set = set([r for r in code_rels if os.path.splitext(r)[1].lower() == ".py" or os.path.splitext(r)[1].lower() in JS_SUFFIXES][:PARSE_CAP])
+    parseable = [r for r in code_rels if os.path.splitext(r)[1].lower() == ".py" or os.path.splitext(r)[1].lower() in JS_SUFFIXES]
+    # imports are read for the test files first, then the modules, each in path order: a cap must never hide a test
+    parse_set = set(sorted(parseable, key=lambda r: kinds[r] != "test")[:PARSE_CAP])
     facts: dict[str, dict[str, Any]] = {}
     for index, (path, size, mtime) in enumerate(scanned):
         rel = rels[index]
-        facts[rel] = _file_facts(path, rel, size, mtime, count_lines=index < LINES_CAP, parse=rel in parse_set)
+        f = _file_facts(path, rel, size, mtime, count_lines=index < LINES_CAP, parse=rel in parse_set)
+        if rel not in parse_set and (f["py"] is not None or f["js"] is not None or f["parse_error"]):
+            f = {**f, "py": None, "js": None, "parse_error": None, "parsed": False}       # a cached read is not used past the cap
+        facts[rel] = f
+    unread = {r: why for r in parseable if (why := _why_unread(r, info[r][0], facts[r], parse_set))}
+    unread_tests = [(r, why[1]) for r, why in sorted(unread.items()) if kinds[r] == "test"]
     py_files = [r for r in rels if r.endswith(".py")]
     pindex = _python_index(py_files)
     own_name = _own_names(pindex)
@@ -568,15 +789,16 @@ def structure_view(ws, name: str | None = None, expand: tuple[str, ...] = ()) ->
     for rel in rels:
         if kinds[rel] == "test":
             wanted = named_test_target(rel)
-            for target in stems.get(wanted.lower(), []) if wanted else []:
-                if target not in ("__init__.py",):
-                    add_edge(rel, target, "tests", f"named for it: {rel.rsplit('/', 1)[-1]} says {target.rsplit('/', 1)[-1]}")
+            for target in _nearest_modules(rel, [t for t in stems.get(wanted.lower(), []) if t != "__init__.py"]) if wanted else []:
+                add_edge(rel, target, "tests", f"named for it: {rel.rsplit('/', 1)[-1]} says {target.rsplit('/', 1)[-1]}")
     edges = sorted(found.values(), key=lambda e: (e["type"], e["from"], e["to"]))
     imports_of: dict[str, list[str]] = defaultdict(list)
     imported_by: dict[str, list[str]] = defaultdict(list)
     reaches: dict[str, list[str]] = defaultdict(list)           # module -> tests that reach it
     reached: dict[str, list[str]] = defaultdict(list)           # test -> modules it reaches
+    nexts: dict[str, list[str]] = defaultdict(list)             # file -> the files it depends on
     for e in edges:
+        nexts[e["from"]].append(e["to"])
         if e["type"] == "imports":
             imports_of[e["from"]].append(e["to"])
             imported_by[e["to"]].append(e["from"])
@@ -586,77 +808,83 @@ def structure_view(ws, name: str | None = None, expand: tuple[str, ...] = ()) ->
 
     run = latest_run(ws, obj, env_map=env_map) if obj.get("kind") == "python_repository" else None
     test_files = [r for r in rels if kinds[r] == "test"]
+    test_set = set(test_files)
     dotted_tests = {}
     for dotted, rel in pindex.items():
-        if rel in set(test_files):
+        if rel in test_set:
             dotted_tests.setdefault(dotted, rel)
     if run and run.get("named_ids"):
         run["failing"] = _node_ids_to_files(run["named_ids"], test_files, dotted_tests)
-    run_epoch = epoch(run.get("utc")) if run else None
-    work_badges = file_badges(ws, root)
+    stale = Staleness(root, rels, info, kinds, nexts, epoch(run.get("utc")) if run else None)
+    work_badges = file_badges(ws, root, have)
     ledger_changes = last_changes(ws, root)
     direct: dict[str, int] = defaultdict(int)
     for rel in rels:
         direct[rel.rsplit("/", 1)[0] if "/" in rel else TOP] += 1
 
-    def mtime_utc(rel: str) -> str:
-        return stamp(info[rel][1] / 1e9) or ""
-
-    def stale(rel: str) -> bool:
-        return run_epoch is not None and info[rel][1] / 1e9 > run_epoch + 1
-
     nodes: list[dict[str, Any]] = []
     for rel in rels:
         kind = kinds[rel]
         size, mtime = info[rel]
-        f = facts[rel]
         node: dict[str, Any] = {"id": rel, "name": rel.rsplit("/", 1)[-1], "kind": kind, "group": _group_of(rel, direct),
-                                "lines": f["lines"], "bytes": size, "mtime_utc": mtime_utc(rel),
+                                "lines": facts[rel]["lines"], "bytes": size, "mtime_utc": stamp(mtime / 1e9) or "",
                                 "language": LANGUAGE.get(os.path.splitext(rel)[1].lower()),
                                 "badges": work_badges.get(rel, [])}
         change = ledger_changes.get(rel)
         if change:                                                # Runesmith's own record: what it changed here, and when
             node["badges"] = node["badges"] + [{"kind": "changed", "text": f"last changed by Runesmith, {when(change['utc'])}",
                                                 "source": change["source"]}]
-        node["state"] = _state(rel, kind, run, reaches.get(rel, []), info, stale, obj)
+        node["state"] = _state(rel, kind, run, reaches.get(rel, []), stale, obj, unread_tests)
         if kind == "test":
-            node["test"] = _test_result(rel, run, stale, run_epoch)
+            node["test"] = _test_result(rel, run, stale)
             node["state"] = _test_state(node["test"])
             if node["test"].get("failing"):
                 node["badges"] = node["badges"] + [{"kind": "failing", "text": plural(len(node["test"]["failing"]), "failing test"),
                                                      "source": f"{run_words(run)}"}]
-        node["evidence"] = _evidence(ws, node, f, imports_of, imported_by, reaches, reached, run, ledger_changes, obj, scanned_at=base["built_utc"])
         nodes.append(node)
     by_id = {n["id"]: n for n in nodes}
-    for n in nodes:                                             # what the detail panel lists, as names with their results
-        n["imports"] = sorted(imports_of.get(n["id"], []))
-        n["imported_by"] = sorted(imported_by.get(n["id"], []))
-        if n["kind"] == "module":
-            n["tests"] = [{"id": t, "result": by_id[t]["test"]["words"], "band": by_id[t]["state"]["band"]}
-                          for t in sorted(reaches.get(n["id"], [])) if t in by_id]
-        if n["kind"] == "test":
-            n["reaches"] = sorted(reached.get(n["id"], []))
-
     drawn_ids, groups = _select_drawn(nodes, expand)
     for n in nodes:
         n["drawn"] = n["id"] in drawn_ids
-    listed = nodes[:LIST_CAP]
+    listed = _list_cut(nodes)
     listed_ids = {n["id"] for n in listed}
+    for g in groups:
+        g["more_ids"] = [i for i in g["more_ids"] if i in listed_ids]
+    for n in listed:                                            # what the detail panel lists, only for the parts the list carries
+        rel = n["id"]
+        imps, importers = sorted(imports_of.get(rel, [])), sorted(imported_by.get(rel, []))
+        n["imports"], n["imports_count"] = imps[:DETAIL_CAP], len(imps)
+        n["imported_by"], n["imported_by_count"] = importers[:DETAIL_CAP], len(importers)
+        tests, reach = [], []
+        if n["kind"] == "module":
+            tests = sorted(reaches.get(rel, []))
+            n["tests"] = [{"id": t, "result": by_id[t]["test"]["words"], "band": by_id[t]["state"]["band"]}
+                          for t in tests[:DETAIL_CAP] if t in by_id]
+            n["tests_count"] = len(tests)
+        if n["kind"] == "test":
+            reach = sorted(reached.get(rel, []))
+            n["reaches"], n["reaches_count"] = reach[:DETAIL_CAP], len(reach)
+        n["evidence"] = _evidence(ws, n, facts[rel], imps, importers, tests, reach, run, ledger_changes, obj,
+                                  scanned_at=base["built_utc"], unread=(unread.get(rel) or (None, None))[1],
+                                  result_of=lambda t: _result_words(by_id[t]))
     counts = {"files": len(rels), "modules": sum(1 for r in rels if kinds[r] == "module"), "tests": len(test_files),
               "docs": sum(1 for r in rels if kinds[r] == "doc"), "config": sum(1 for r in rels if kinds[r] == "config"),
               "data": sum(1 for r in rels if kinds[r] == "data"), "edges": len(edges),
               "drawn": sum(1 for n in listed if n["drawn"]), "listed": len(listed)}
     languages = sorted({n["language"] for n in nodes if n["language"]})
-    unread = sum(1 for r in code_rels if os.path.splitext(r)[1].lower() in (".py",) + JS_SUFFIXES and r not in parse_set)
+    why_counts: dict[str, int] = defaultdict(int)
+    for kind_of, _words in unread.values():
+        why_counts[kind_of] += 1
     base.update(
-        empty=False, counts=counts, truncated_scan=truncated, imports_not_read=unread, languages=languages,
-        sentence=_sentence(obj, counts, languages, edges),
+        empty=False, counts=counts, truncated_scan=truncated, imports_not_read=len(unread), languages=languages,
+        sentence=_sentence(obj, counts, languages, edges, dict(why_counts)),
         groups=groups, nodes=listed, edges=[e for e in edges if e["from"] in listed_ids and e["to"] in listed_ids],
-        run=_run_summary(run, obj), parse_errors=sorted(r for r in rels if facts[r].get("parse_error")))
+        run=_run_summary(run, obj), parse_errors=sorted(r for r, (kind_of, _words) in unread.items() if kind_of == "syntax"))
     return base
 
 
-def _sentence(obj: dict[str, Any], counts: dict[str, int], languages: list[str], edges: list[dict[str, Any]]) -> str:
+def _sentence(obj: dict[str, Any], counts: dict[str, int], languages: list[str], edges: list[dict[str, Any]],
+              unread: dict[str, int] | None = None) -> str:
     parts = [plural(counts["files"], "file")]
     kinds = [(counts["modules"], "source file"), (counts["tests"], "test file"), (counts["docs"], "document"),
              (counts["config"], "configuration file"), (counts["data"], "other file")]
@@ -669,6 +897,8 @@ def _sentence(obj: dict[str, Any], counts: dict[str, int], languages: list[str],
                  "and nothing for other languages.")
     else:
         text += " There is no code to link, so there are no edges."
+    if unread:
+        text += " " + _unread_words(unread)
     return text
 
 
@@ -684,14 +914,33 @@ def _run_summary(run: dict[str, Any] | None, obj: dict[str, Any]) -> dict[str, A
             "attributed": sorted((run.get("failing") or {}).keys())}
 
 
-def _state(rel: str, kind: str, run: dict[str, Any] | None, reaching: list[str], info: dict[str, tuple[int, int]], stale,
-           obj: dict[str, Any]) -> dict[str, Any]:
+def _changed_reason(rel: str, hit: tuple[str, str, str | None], stale: Staleness, ph: str) -> str:
+    file, how, via = hit
+    text = f"Changed since the last test run: {file} changed at {stale.at(file)}, after {ph}"
+    if how == "imports":
+        text += f", and {rel} imports it, directly or through other files"
+    elif how == "through":
+        text += f", and {via}, a test that reaches this module, depends on it"
+    elif how == "any":
+        text += (", and a test file, conftest or pytest configuration changed after the run, so the earlier result may not hold "
+                 "for any module")
+    return text + "."
+
+
+def _state(rel: str, kind: str, run: dict[str, Any] | None, reaching: list[str], stale: Staleness, obj: dict[str, Any],
+           unread_tests: list[tuple[str, str]]) -> dict[str, Any]:
     """A node's band, and why. Bad, Optimal, Minimal and Unknown only: nothing here earns World-class."""
     if kind != "module":
         return {"band": "unknown", "reason": ("Not measured: tests are about code, and nothing is recorded for a "
                                               f"{KIND_WORDS.get(kind, 'file')}."),
                 "source": "file name and place, read from disk"}
     if not reaching:
+        if unread_tests:                                        # a test that could not be read may be the one that reaches it
+            names = ", ".join(f"{r} ({why})" for r, why in unread_tests[:3]) + (
+                f", and {len(unread_tests) - 3} more" if len(unread_tests) > 3 else "")
+            return {"band": "unknown", "source": "imports and file names, read from disk",
+                    "reason": "Some test files could not be read, so it cannot say that no test reaches this module. "
+                              f"Not read: {names}."}
         return {"band": "minimal", "reason": "No test file imports this module or is named for it, so nothing here tests it.",
                 "source": "imports and file names, read from disk"}
     if obj.get("kind") != "python_repository":
@@ -700,11 +949,9 @@ def _state(rel: str, kind: str, run: dict[str, Any] | None, reaching: list[str],
     if run is None:
         return {"band": "unknown", "reason": "No test run is recorded for this project.", "source": "no recorded run"}
     where, ph = run_words(run), run_phrase(run)
-    changed = [r for r in [rel] + sorted(reaching) if stale(r)]
-    if changed:
-        return {"band": "unknown", "source": where,
-                "reason": f"Changed since the last test run: {changed[0]} changed at {hhmm(stamp(info[changed[0]][1] / 1e9))}, "
-                          f"after {ph}."}
+    hit = stale.module(rel, reaching)
+    if hit:
+        return {"band": "unknown", "source": where, "reason": _changed_reason(rel, hit, stale, ph)}
     if run.get("superseded"):
         return {"band": "unknown", "reason": run["superseded"].capitalize() + ".", "source": where}
     failing = [t for t in sorted(reaching) if t in (run.get("failing") or {})]
@@ -731,12 +978,17 @@ def _state(rel: str, kind: str, run: dict[str, Any] | None, reaching: list[str],
     return {"band": "unknown", "source": where, "reason": f"{ph[0].upper() + ph[1:]} did not establish a result: {run_outcome_words(run)}."}
 
 
-def _test_result(rel: str, run: dict[str, Any] | None, stale, run_epoch: float | None) -> dict[str, Any]:
+def _test_result(rel: str, run: dict[str, Any] | None, stale: Staleness) -> dict[str, Any]:
     if run is None:
         return {"result": "not_run", "words": "not run: no test run is recorded", "failing": []}
     where, ph = run_words(run), run_phrase(run)
-    if stale(rel):
-        return {"result": "unknown", "words": "changed since the last test run", "failing": [], "source": where}
+    hit = stale.test(rel)
+    if hit:
+        file, how = hit
+        words = {"itself": "changed since the last test run",
+                 "imports": f"unknown: {file} changed since the last test run, and this test depends on it",
+                 "shared": f"unknown: {file}, a conftest or pytest configuration, changed since the last test run"}[how]
+        return {"result": "unknown", "words": words, "failing": [], "source": where}
     if run.get("superseded"):
         return {"result": "unknown", "words": "unknown: a fix was applied after the last run", "failing": [], "source": where}
     failing = (run.get("failing") or {}).get(rel) or []
@@ -776,10 +1028,6 @@ def _select_drawn(nodes: list[dict[str, Any]], expand: tuple[str, ...]) -> tuple
     expanded = {g for g in ids if g in expand}
     total = len(nodes)
 
-    def weight(n: dict[str, Any]) -> tuple:
-        bad = n["state"]["band"] == "bad"
-        return (0 if bad else 1, 0 if n["badges"] else 1, -(n["lines"] or 0), n["id"])
-
     budget = NODE_CAP - sum(min(len(by_group[g]), NODE_CAP) for g in expanded)
     rest = [g for g in ids if g not in expanded]
     groups = []
@@ -795,7 +1043,7 @@ def _select_drawn(nodes: list[dict[str, Any]], expand: tuple[str, ...]) -> tuple
         for g in expanded:
             quota[g] = min(len(by_group[g]), NODE_CAP)
     for g in ids:
-        members = sorted(by_group[g], key=weight)
+        members = sorted(by_group[g], key=_weight)
         keep = members[:quota[g]]
         drawn.update(n["id"] for n in keep)
         label = g if g not in (TOP,) else "(top of the project)"
@@ -806,8 +1054,19 @@ def _select_drawn(nodes: list[dict[str, Any]], expand: tuple[str, ...]) -> tuple
 
 # ------------------------------------------------------------------------------------------------ the detail --
 
-def _evidence(ws, node: dict[str, Any], f: dict[str, Any], imports_of, imported_by, reaches, reached, run, changes,
-              obj: dict[str, Any], *, scanned_at: str) -> list[dict[str, Any]]:
+def _capped(items: list[str], total: int | None = None) -> list[str] | None:
+    """The first DETAIL_CAP entries of a list for display, with a last line that says how many more there are."""
+    total = len(items) if total is None else total
+    if not total:
+        return None
+    return items[:DETAIL_CAP] + ([f"… and {total - DETAIL_CAP:,} more"] if total > DETAIL_CAP else [])
+
+
+def _evidence(ws, node: dict[str, Any], f: dict[str, Any], imports: list[str], imported_by: list[str], tests: list[str],
+              reached: list[str], run, changes, obj: dict[str, Any], *, scanned_at: str, unread: str | None = None,
+              result_of=None) -> list[dict[str, Any]]:
+    """The facts of one part with their sources. The lists are sorted; each is shown up to DETAIL_CAP entries, with the true
+    number after them."""
     rel, kind = node["id"], node["kind"]
     disk = f"read from disk at {hhmm(scanned_at)}"
     rows: list[dict[str, Any]] = [{"label": "Path", "value": rel, "source": disk},
@@ -816,20 +1075,19 @@ def _evidence(ws, node: dict[str, Any], f: dict[str, Any], imports_of, imported_
     rows.append({"label": "Lines", "value": f"{node['lines']:,}" if node["lines"] is not None else "not counted (binary, very large, or past the first "
                  f"{LINES_CAP:,} files)", "source": disk})
     if kind in ("module", "test"):
-        imps = sorted(imports_of.get(rel, []))
-        rows.append({"label": "Imports", "items": imps or None, "value": None if imps else "no project file",
+        reads = os.path.splitext(rel)[1].lower() in (".py",) + JS_SUFFIXES
+        shown = _capped(imports)
+        rows.append({"label": "Imports", "items": None if unread else shown,
+                     "value": f"not read: {unread}" if unread else (None if imports else "no project file"),
                      "source": f"imports read from the code ({'python ast' if rel.endswith('.py') else 'a pattern match for JavaScript and TypeScript'}), {disk}"
-                               if os.path.splitext(rel)[1].lower() in (".py",) + JS_SUFFIXES
-                               else "Runesmith reads imports in Python, JavaScript and TypeScript only: nothing is read here"})
-        by = sorted(imported_by.get(rel, []))
-        rows.append({"label": "Imported by", "items": by or None, "value": None if by else "no project file", "source": disk})
+                               if reads else "Runesmith reads imports in Python, JavaScript and TypeScript only: nothing is read here"})
+        rows.append({"label": "Imported by", "items": _capped(imported_by), "value": None if imported_by else "no project file", "source": disk})
     if kind == "module":
-        tests = sorted(reaches.get(rel, []))
-        rows.append({"label": "Tests that reach it", "items": [f"{t}: {_result_of(t, run)}" for t in tests] or None,
+        result_of = result_of or (lambda t: _result_of(t, run))
+        rows.append({"label": "Tests that reach it", "items": _capped([f"{t}: {result_of(t)}" for t in tests[:DETAIL_CAP]], len(tests)),
                      "value": None if tests else "none", "source": "test files that import it or are named for it, " + disk})
     if kind == "test":
-        rs = sorted(reached.get(rel, []))
-        rows.append({"label": "Reaches", "items": rs or None, "value": None if rs else "no module found", "source": disk})
+        rows.append({"label": "Reaches", "items": _capped(reached), "value": None if reached else "no module found", "source": disk})
         t = node.get("test")
         rows.append({"label": "Last result", "value": (t or {}).get("words") or "not run", "source": (t or {}).get("source") or "no recorded run"})
         if (t or {}).get("failing"):
@@ -854,6 +1112,13 @@ def _evidence(ws, node: dict[str, Any], f: dict[str, Any], imports_of, imported_
     return rows
 
 
+def _result_words(test_node: dict[str, Any]) -> str:
+    """A test file's result as one short phrase, from its own node (so a changed file never reads as passed)."""
+    t = test_node["test"]
+    return {"passed": "passed", "failed": "failed", "not_run": "not run"}.get(t["result"]) or (
+        "changed since the last test run" if "changed since the last test run" in t["words"] else "no result of its own")
+
+
 def _result_of(test: str, run: dict[str, Any] | None) -> str:
     if run is None:
         return "not run"
@@ -864,12 +1129,46 @@ def _result_of(test: str, run: dict[str, Any] | None) -> str:
 
 # ----------------------------------------------------------------------- badges from what Runesmith already keeps --
 
+_DRIVE = re.compile(r"^[A-Za-z]:")
+_DRIVE_INSIDE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/]")
+_WORD_EDGES = "\"'`()[]{}<>,;:!?*“”‘’"
+_FILE_NAME = re.compile(r"[\w./-]+\.\w{1,5}")
+
+
 def _under(root: Path, base: Path, rel: str) -> str | None:
-    """``rel`` (relative to ``base``) as a path relative to ``root``, or None when it is outside it."""
-    try:
-        return (Path(base) / rel).resolve().relative_to(root.resolve()).as_posix()
-    except (OSError, ValueError):
+    """``rel`` (relative to ``base``) as a path relative to ``root``, or None when it is outside it.
+
+    Lexical: it never asks the disk. ``Path.resolve`` on a network path is a network access on Windows, and a path taken from
+    a record or from a milestone's words is not one anybody vetted. A path that is absolute, network (UNC),
+    drive-qualified or climbs with ``..`` is refused before it is joined. The result is only used as a key against the files
+    the scan found, and the scan never follows a link or a junction, so a path that goes through one matches nothing."""
+    text = str(rel or "").replace("\\", "/")
+    if not text or "\x00" in text or text.startswith("/") or _DRIVE.match(text) or ".." in text.split("/"):
         return None
+    top = os.path.normpath(str(root)).rstrip("\\/")
+    joined = os.path.normpath(os.path.join(str(base), text))
+    n = len(top)
+    if os.path.normcase(joined[:n]) != os.path.normcase(top) or joined[n:n + 1] not in ("\\", "/"):
+        return None
+    return joined[n + 1:].replace("\\", "/") or None
+
+
+def _named_files(text: str) -> list[str]:
+    """The relative file names a milestone's own words use (``src/cart.py``). A word that is a web address, a network path, a
+    drive path, a path from the top of a disk or one that climbs out of the folder names no file of the project, whatever its
+    last part is called, so it gives nothing. The caller keeps only the names that are files the scan found."""
+    out: list[str] = []
+    for raw in text.split():
+        word = raw.strip(_WORD_EDGES).rstrip(".").strip(_WORD_EDGES)       # ``(src/a.py).`` and ``"src/a.py".`` are src/a.py
+        flat = word.replace("\\", "/")
+        if (not flat or "://" in flat or flat.startswith(("/", "~")) or _DRIVE.match(flat) or _DRIVE_INSIDE.search(flat)
+                or ".." in flat.split("/")):
+            continue
+        for found in _FILE_NAME.findall(flat):
+            candidate = found[2:] if found.startswith("./") else found
+            if candidate not in out:
+                out.append(candidate)
+    return out
 
 
 def _drafts_light(ws) -> list[dict[str, Any]]:
@@ -906,9 +1205,10 @@ def _proposal_rows(ws) -> list[dict[str, Any]]:
     return rows
 
 
-def file_badges(ws, root: Path) -> dict[str, list[dict[str, Any]]]:
+def file_badges(ws, root: Path, known: set[str] | None = None) -> dict[str, list[dict[str, Any]]]:
     """What waits for the owner or touches a file, from the proposals, the drafts and the plan: ``{path: [badge]}``.
-    Read from the records; nothing is written."""
+    Read from the records; nothing is written. ``known`` is the scanned files of ``root`` (paths relative to it); a milestone
+    that names a file by its words is matched against it, never against the disk."""
     out: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for p in _proposal_rows(ws):
         if p["state"] != "waiting" or not p["repo"]:
@@ -942,11 +1242,13 @@ def file_badges(ws, root: Path) -> dict[str, list[dict[str, Any]]]:
                     out[under].append({"kind": "milestone", "id": milestone["id"],
                                        "text": f"in the open milestone “{str(milestone.get('title'))[:70]}”",
                                        "source": f"draft {d.get('id')} for that milestone touches it"})
+    if open_milestones and known is None:
+        known = {p.relative_to(root).as_posix() for p, _, _ in _scan(root) if not p.name.startswith(".")}
     for mid, m in sorted(open_milestones.items()):             # a milestone that names the file itself
         text = " ".join(str(m.get(k) or "") for k in ("title", "detail", "done_when"))
-        for rel in {b for b in re.findall(r"[\w./-]+\.\w{1,5}", text)}:
+        for rel in _named_files(text):
             under = _under(root, ws.root, rel)
-            if under and (root / under).is_file() and not any(b["kind"] == "milestone" and b["id"] == mid for b in out[under]):
+            if under and under in (known or ()) and not any(b["kind"] == "milestone" and b["id"] == mid for b in out[under]):
                 out[under].append({"kind": "milestone", "id": mid, "text": f"in the open milestone “{str(m.get('title'))[:70]}”",
                                    "source": "the milestone's own words name this file"})
     return {k: v for k, v in out.items()}
@@ -1082,7 +1384,7 @@ def lineage_view(ws) -> dict[str, Any]:
     activated_utc: dict[str, str] = {}
     for e in events:
         d = e.get("data") or {}
-        activated_utc.setdefault(str(d.get("id")), e["utc"])
+        activated_utc[str(d.get("id"))] = e["utc"]              # oldest first, so the last one is the latest activation
         previous = d.get("previous")
         if previous and previous != d.get("id"):
             if d.get("evidence") == "owner's choice":
@@ -1404,11 +1706,14 @@ def metrics_view(ws) -> dict[str, Any]:
             arms[arm] = {"sessions": len([r for r in mine if r.get("strict_success") is not None]), "caps": capabilities(mine) if mine else {}}
     for name, definition in METRIC_DEFINITIONS.items():
         cap = caps.get(name) or {}
-        row = {"value": cap.get("value"), "band": cap.get("band", "unknown"), "n": len(judged), "since": since,
-               "few": len(judged) < FEW, "definition": definition,
+        few = len(judged) < FEW
+        row = {"value": cap.get("value"), "band": "unknown" if few else cap.get("band", "unknown"), "n": len(judged), "since": since,
+               "few": few, "definition": definition,
                "source": f"{len(judged)} judged sessions in sessions/ since {hhmm(since) if since else 'this home was created'}"}
         if arms:
-            row["arms"] = {arm: {"n": a["sessions"], "value": (a["caps"].get(name) or {}).get("value"), "few": a["sessions"] < FEW}
+            row["arms"] = {arm: {"n": a["sessions"], "value": (a["caps"].get(name) or {}).get("value"), "few": a["sessions"] < FEW,
+                                 "since": trial.opened_utc,
+                                 "window": f"{plural(a['sessions'], 'judged session')} since {when(trial.opened_utc)}"}
                            for arm, a in arms.items()}
         out["metrics"][name] = row
     out["sessions"] = len(judged)
@@ -1425,6 +1730,27 @@ def _found_work(status: str) -> bool:
         return True
     match = re.match(r"measured: (\d+) of \d+ tests? fail", str(status))
     return bool(match and int(match.group(1)) > 0)
+
+
+def _discover_words(round_utc: str | None, probe_utc: str | None, any_probe: bool, any_round: bool) -> dict[str, Any]:
+    """What the Discover counter counted, said as it was found: by a repair round, by the map's own test probe where that is
+    the newer test run, or both. ``any_probe`` and ``any_round`` say which kinds of evidence the failing objects have."""
+    if not any_probe:
+        return {"unit": "objects with work found",
+                "definition": "objects whose tests failed in the latest round (found by pytest discovery, or by a unittest measurement): the failures a repair can work on",
+                "window": f"the latest round, {when(round_utc)}" if round_utc else "no round has run yet",
+                "source": "WORK.json", "utc": round_utc}
+    probe = f"the map's test probe, {when(probe_utc)}"
+    if any_round:
+        window, source = f"the latest round, {when(round_utc)}, and {probe}, newer than the round", "WORK.json and ENVIRONMENT.json"
+    elif round_utc:
+        window, source = f"{probe}, newer than the latest round ({hhmm(round_utc)})", "ENVIRONMENT.json (the map's test probe)"
+    else:
+        window, source = f"{probe}; no round has run yet", "ENVIRONMENT.json (the map's test probe)"
+    return {"unit": "objects with failing tests",
+            "definition": ("objects whose tests are recorded as failing: in the latest round (found by pytest discovery, or by a unittest "
+                           "measurement), or by the map's own test probe where that is newer than the round: the failures a repair can work on"),
+            "window": window, "source": source, "utc": round_utc if any_round else probe_utc}
 
 
 def stages_view(ws) -> list[dict[str, Any]]:
@@ -1445,6 +1771,12 @@ def stages_view(ws) -> list[dict[str, Any]]:
     mapped = [o for o in env_map.get("objects", [])]
     code = [o for o in mapped if o.get("kind") == "python_repository"]
     failing = [n for n, s in statuses.items() if _found_work(s)]
+    entry = {o.get("name"): o for o in mapped}
+    # the evidence behind each: the latest round, or the map's own probe where that is the newer test run (the same rule the ring uses)
+    by_probe = [n for n in failing if probe_wins((entry.get(n) or {}).get("probe") or {}, (entry.get(n) or {}).get("measured_utc") or "",
+                                                  work.get("utc") or "")]
+    probe_utc = max(((entry.get(n) or {}).get("measured_utc") or "" for n in by_probe), default="") or None
+    discover = _discover_words(work.get("utc"), probe_utc, bool(by_probe), len(by_probe) < len(failing))
     since_words = f"since {when(first or home_since)}" if (first or home_since) else "since this home was created"
     return [
         {"id": "map", "label": "Map", "count": len(mapped), "unit": "objects mapped",
@@ -1452,11 +1784,10 @@ def stages_view(ws) -> list[dict[str, Any]]:
          "window": f"as of the latest map, {when(env_map.get('utc'))}" if env_map.get("utc") else "no map yet",
          "source": "ENVIRONMENT.json", "utc": env_map.get("utc"),
          "extra": f"{len(code)} are Python projects whose tests Runesmith can run"},
-        {"id": "discover", "label": "Discover", "count": len(failing), "unit": "objects with work found",
-         "definition": "objects whose tests failed in the latest round (found by pytest discovery, or by a unittest measurement): the failures a repair can work on",
-         "window": f"the latest round, {when(work.get('utc'))}" if work.get("utc") else "no round has run yet",
-         "source": "WORK.json", "utc": work.get("utc"),
-         "extra": ("failing: " + ", ".join(sorted(failing))) if failing else "none failing in that round"},
+        {"id": "discover", "label": "Discover", "count": len(failing), "unit": discover["unit"], "definition": discover["definition"],
+         "window": discover["window"], "source": discover["source"], "utc": discover["utc"],
+         "extra": ("failing: " + ", ".join(n + (" (found by the map's test probe)" if n in by_probe else "") for n in sorted(failing))
+                   if failing else "none failing in that round")},
         {"id": "repair", "label": "Repair", "count": len(judged), "unit": "attempts judged",
          "definition": "repair attempts that got the held-out judge's verdict (attempts censored by a transport failure are not counted)",
          "window": since_words, "source": "sessions/, one record per attempt",
