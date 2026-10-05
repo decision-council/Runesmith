@@ -1,0 +1,16 @@
+{
+ "files": {
+  "make_manifest.py": "7651f215b741fc217d7d11b1a29056c4b27e70dbcb784ba528c471f35c1f4d56",
+  "si_audit.py": "0630a190115d5a2aaaddb4a5b1afb646b35afc7e884549c2b617db86d0a0fc69",
+  "si_controls.py": "93bfb6605b1022ee4417a34ad28f95359c408bbfa28cae67b0698ce2530d6c83",
+  "si_core.py": "75de080b7f4db29a21cd221b4f2445f944340bf8dfd6ce614365c56dd3ef6b1e",
+  "si_fixtures.py": "b70f3b2b3405afff801ed47887b429594a1b56d00482e4b1923586e09739a092",
+  "si_report.py": "2bec0fa8167f69d171baf0cb01820921d9ff359b5023c1e20b081b86bc6f70f9",
+  "si_run.py": "b50b1299bcfa4105e4952e8da08d616fc9a5ddaf674738e94c88c82b72442a7d",
+  "si_setup.py": "4519dd502ea1d5b48258c5dacdbf54aca49e7a6433c5ff23ae5b6fb43b163d27",
+  "si_stats.py": "8e968b2dfbf4c536bd04b81aa80f8df396fce49232681a90a17e7880c2759926",
+  "si_window.py": "79bfcccd8aca5a2f9d10eb7d9b4aa989cc0109403330f627f44d169205b509e2",
+  "sitecustomize.py": "5248f8a5a40e2e0ef5a4609ff59fc86875b9cfca011f7f8cfee0495d2203ab11"
+ },
+ "tree_sha256": "41eb8caa806595e115a3e1a75ad2b5d28dca41d15624ae032e401c30fee894ab"
+}

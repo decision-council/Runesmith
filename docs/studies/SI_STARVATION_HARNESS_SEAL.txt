@@ -1,0 +1,5 @@
+harness tree sha256 41eb8caa806595e115a3e1a75ad2b5d28dca41d15624ae032e401c30fee894ab
+sealed_utc 2026-10-05T18:08:07Z
+files 11
+AMENDMENT_1.md sha256 05a188160ece2ae73f360023994964921bf91da43c590ba87294b9f5e6278079
+no counted opportunity had run when this manifest was written

@@ -1,0 +1,5 @@
+AMENDMENT_1.md sha256 05a188160ece2ae73f360023994964921bf91da43c590ba87294b9f5e6278079
+sealed_utc 2026-10-05T18:08:06Z
+amends PROTOCOL.md sha256 7b52348e8cac982c94766206b01f145d21e60445176d7913d67986a67e58ba60
+no counted opportunity (Tnn-X-vk) has run; setup dry runs, SMOKE-0 harness runs and the detector controls are listed in the amendment
+published as docs/studies/SI_STARVATION_AMENDMENT_1.md on branch u1-protocol
