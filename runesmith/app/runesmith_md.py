@@ -386,6 +386,19 @@ def no_improver(ws: Any) -> None:
                "Repair work goes on. Choose an Improver under Thinking power.")
 
 
+@_safe
+def self_plan_first(ws: Any, title: str, score: int) -> None:
+    """The first item of Runesmith's plan for improving itself changed (names and a score, never a record's contents)."""
+    record(ws, f"Self-improvement plan: the first item is now \"{title}\" (score {score}). Nothing changes without its gate.")
+
+
+@_safe
+def self_campaign_started(ws: Any, title: str) -> None:
+    """A self-improvement turn started a campaign (the repair organ's gate: held-out replay, then an online trial)."""
+    record(ws, f"Self-improvement: Runesmith started a campaign on its repair organ ({title}). A change is used only "
+               "if it wins a trial on your work.")
+
+
 # What the owner asked for when he pressed a button that tries something again (the jobs the Studio's route queues).
 RETRIES = {
     "escalate": "You asked for one more try, with another model, for the milestones whose tries were used up.",

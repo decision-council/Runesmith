@@ -38,6 +38,12 @@ async function behaviour(body, ctx) {
   const exChips = h('div.pillbox', objects.length ? objects.map((n) => h('button', { class: `chip${exclude.has(n) ? ' on' : ''}`, 'aria-pressed': String(exclude.has(n)), onclick: async (e) => {
     exclude.has(n) ? exclude.delete(n) : exclude.add(n); e.currentTarget.classList.toggle('on'); e.currentTarget.setAttribute('aria-pressed', String(exclude.has(n))); await save({ exclude: [...exclude] }, exclude.has(n) ? `${n} will never be touched` : `${n} is included`);
     post('/api/worker/run', { job: 'map' }); } }, exclude.has(n) ? icon('lock') : null, n)) : h('span.small.faint', 'No sub-folders mapped yet.'));
+  // The owner's share of work turns that go to improving Runesmith itself (self_plan): 10 to 90 percent, in steps of ten.
+  const shareWords = (n) => `${n / 10} of every 10 work turns ${n === 10 ? 'goes' : 'go'} to improving Runesmith itself`;
+  const shareNote = h('b', { 'data-share-sentence': '' }, shareWords(Number(s.self_improvement_share)));
+  const shareSelect = h('select.select', { style: { width: '110px' }, 'aria-label': 'Self-improvement share',
+    onchange: async () => { await save({ self_improvement_share: Number(shareSelect.value) }); shareNote.textContent = shareWords(Number(shareSelect.value)); } },
+    [10, 20, 30, 40, 50, 60, 70, 80, 90].map((v) => h('option', { value: v, selected: Number(s.self_improvement_share) === v }, `${v}%`)));
   const num = (key, label, text, min, max) => {
     const input = h('input.input', { type: 'number', min, max, value: s[key], 'aria-label': label, style: { width: '100px' } });
     input.addEventListener('change', () => save({ [key]: Number(input.value) }));
@@ -71,6 +77,7 @@ async function behaviour(body, ctx) {
         toggle('read_notes', 'Give notes to the model', 'Your open notes travel with the work they are about, labelled as your guidance.')),
       h('div.card', h('h3', icon('spark'), 'Self-improvement'),
         toggle('kaizen', 'Let Runesmith improve itself', 'Kaizen campaigns rewrite its repair organ from its own experience. A candidate is only ever activated by winning a trial on your work.'),
+        h('div.setting', h('div.text', h('b', 'Self-improvement share'), h('span', shareNote, '. Spread evenly through every 10. It takes the first item of its plan, or, while your project is struggling, the best one that helps with that. A change is only made through its gate.')), shareSelect),
         num('min_experience', 'Experience before the first campaign', 'Stored repair attempts needed.', 2, 10000),
         num('kaizen_every', 'New attempts between campaigns', 'So every campaign works from fresh evidence.', 1, 10000)),
       h('div.card', h('h3', icon('sun'), 'Appearance'),

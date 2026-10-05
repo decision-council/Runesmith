@@ -10,7 +10,9 @@ from its own bytes and its own telemetry:
 * **capabilities** — measured performance placed in bands (bad / minimal /
   optimal / world-class), where missing evidence is ``unknown``, never a
   guess; and
-* **open targets** — the ranked Kaizen targets from the latest diagnosis.
+* **open targets** — the ranked Kaizen targets from the latest diagnosis; and
+* **struggles** — the milestones the work is stuck on or fails again and again, each with what keeps failing, how
+  often and since when (derived by the Studio from the object-side records it keeps; empty without them).
 
 It is a projection: rebuilding it from the same bytes and records gives the
 same map. Facts are ``observed``; purposes read from docstrings are
@@ -64,15 +66,23 @@ def _module_facts(path: Path, root: Path) -> dict[str, Any]:
             "public_symbols": public, "lines": text.count("\n") + 1}
 
 
+_FACTS: dict[tuple, dict[str, Any]] = {}      # (path, size, mtime) -> the module's facts: parsing every module took a second
+
+
 def components(root: Path = PACKAGE_ROOT) -> list[dict[str, Any]]:
     rows = []
     for path in sorted(root.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        facts = _module_facts(path, root)
-        facts["region"] = ("organ (mutable)" if facts["path"].startswith("organs/") else
-                           "studio (interface)" if facts["path"].startswith("app/") else "kernel (fixed)")
-        rows.append(facts)
+        stat = path.stat()
+        stamp = (str(path), stat.st_size, stat.st_mtime_ns)       # a changed file is read again; an unchanged one is not
+        facts = _FACTS.get(stamp)
+        if facts is None:
+            facts = _module_facts(path, root)
+            facts["region"] = ("organ (mutable)" if facts["path"].startswith("organs/") else
+                               "studio (interface)" if facts["path"].startswith("app/") else "kernel (fixed)")
+            _FACTS[stamp] = facts
+        rows.append(dict(facts))
     return rows
 
 
@@ -112,7 +122,8 @@ def capabilities(records: list[dict]) -> dict[str, Any]:
     return out
 
 
-def build_self_map(*, home: Path | None = None, records: Iterable[dict] | None = None) -> dict[str, Any]:
+def build_self_map(*, home: Path | None = None, records: Iterable[dict] | None = None,
+                   struggles: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     records = list(records or [])
     rows = components()
     lineage = []
@@ -148,6 +159,9 @@ def build_self_map(*, home: Path | None = None, records: Iterable[dict] | None =
         {name: {"value": None, "band": "unknown", **ladder} for name, ladder in CAPABILITY_LADDERS.items()},
         "open_targets": diagnosis["targets"] if diagnosis else [],
         "improvement_options": options,
+        # Where the work Runesmith does for others struggles: each milestone that is stuck or fails again and again, with
+        # what keeps failing, how often and since when (the Studio derives them from its own records; none elsewhere).
+        "struggles": list(struggles or []),
         "lineage": lineage,
         "unknowns": unknowns,
     }
@@ -157,5 +171,11 @@ def build_self_map(*, home: Path | None = None, records: Iterable[dict] | None =
 
 def write_self_map(path: Path, **kwargs) -> dict[str, Any]:
     self_map = build_self_map(**kwargs)
-    Path(path).write_text(json.dumps(self_map, indent=1, default=str) + "\n", encoding="utf-8")
+    text = (json.dumps(self_map, indent=1, default=str) + "\n").encode("utf-8")       # LF on every platform
+    try:
+        if Path(path).read_bytes() == text:                  # unchanged (the map has no clock): not written again
+            return self_map
+    except OSError:
+        pass
+    Path(path).write_bytes(text)
     return self_map

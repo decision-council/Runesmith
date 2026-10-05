@@ -86,6 +86,8 @@ opportunities -> telemetry (calls, runs, marks, statuses, cycle time)
 
 **Drift.** Attention also watches for drift: yield sliding although no single failure recurs. A Bernoulli CUSUM against Runesmith's own baseline yield (the Wilson lower bound of its first 30 outcomes) moves attention to blocked when the evidence for "yield has halved" reaches the threshold. The simulated operating characteristics are in `docs/simulations/drift_cusum.py`. Attention state persists in `ATTENTION.json`.
 
+**In the Studio the baseline is the owner's.** `self_improvement_share` (10 to 90 percent of work turns, default 20) decides which work turns go to self-improvement; the run loop is given that rule (`lane_policy`) instead of `next_lane`, and a counter in the home (`SELF_TURNS.json`) keeps the position exact across restarts. Attention keeps its health signals; a failure that keeps recurring is a struggle in the plan. `runesmith/app/self_plan.py` holds the plan (`SELF_PLAN.json`): a score of benefit, recency and gate from the self map's struggles (derived from the Studio's object-side records), Kaizen's ranked targets and a declared catalogue; at a self-improvement turn the first item is taken, or, while a milestone struggles, the best-scored item linked to that struggle. Only the repair organ's campaign has a gate (held-out replay, then an online trial); every other item is recorded as planned: needs a gate.
+
 Credit carries remainders, so shares are met exactly. Credit is capped while self-work is unavailable, so object work is never starved by a backlog. These are commissioning defaults from the Astra subject-cognition architecture (§5), not tuned optima.
 
 ## 5b. Online trials: how a candidate earns activation

@@ -64,6 +64,19 @@ ATTEMPT_WORDS = {
 }
 
 
+# How a Kaizen campaign ended, in the owner's words.
+DECISION_WORDS = {
+    "frozen_candidate": "a candidate won on held-out work and now faces a trial on your work",
+    "no_improvement": "no candidate beat the current organ",
+    "within_noise": "a candidate looked better, but not by more than the organ's own run-to-run difference",
+    "not_enough_experience": "not enough stored attempts to split into a development half and a held-out half yet",
+    "no_target": "nothing in its own records was worth changing",
+    "no_improver": "no Improver model is set up",
+    "improver_unreachable": "the Improver model did not answer, so the campaign was given up until there are new attempts",
+    "campaign_failed": "the campaign could not finish and was given up; the repairs went on",
+}
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -663,6 +676,8 @@ class Worker:
             self._jobs = deque(remaining)
             self.current = current
             self._stop_after_step = False
+        if job.get('by') == 'schedule' and job['kind'] != 'round':
+            self._count_work_turn()
         started = time.monotonic()
         outcome: dict[str, Any] = {}
         calls_before = dict(getattr(self.ws, "call_tally", None) or {})
@@ -719,6 +734,9 @@ class Worker:
                 self.current = None
             self._set("idle", "")
             self.bus.publish("job", done)
+            if job.get('by') == 'schedule' and job['kind'] != 'round':
+                from runesmith.app import self_plan
+                self_plan.refresh(self.ws)               # the map and the plan follow what the step left behind; no model
             if job['kind'] in ('escalate', 'split'):    # the owner is told at once when this left a milestone with nothing to try
                 from runesmith.app import stuck
                 stuck.refresh_notices(self.ws)
@@ -743,6 +761,13 @@ class Worker:
         return dict(done, outcome=outcome)
 
     # --------------------------------------------------------------------- jobs --
+
+    def _count_work_turn(self) -> None:
+        """A scheduled step of the build work is one work turn. When it is a self-improvement turn (the owner's share), the
+        plan's next item is taken and recorded here; a campaign needs the repair loop's experience, so none starts from a
+        build step, and the step itself always runs. Never raises."""
+        from runesmith.app import self_plan
+        self_plan.turn(self.ws, campaign_ready=False, say=self.say)
 
     def _stuck_setting_first(self, milestone: str) -> bool:
         """The owner's setting for used-up tries (J11-G43) goes before the proposal of smaller steps: it makes the one
@@ -804,7 +829,8 @@ class Worker:
         self.say("Mapping the folder" + (" and measuring code objects (tests run on throwaway copies)" if probing else ""))
         t0 = time.monotonic()
         env_map = self.ws.map_environment(probe=probing)
-        self.ws.self_map(refresh=True)
+        from runesmith.app import self_plan
+        self_plan.refresh(self.ws)
         kinds: dict[str, int] = {}
         for o in env_map["objects"]:
             kinds[o["kind"]] = kinds.get(o["kind"], 0) + 1
@@ -1192,19 +1218,27 @@ class Worker:
                 if step.get("lane") in ("object", "skipped"):
                     consumed += 1
                 self._report_step(step)
+                if step.get("lane") == "subject":
+                    from runesmith.app import self_plan
+                    self_plan.campaign_finished(ws, step)
                 self.bus.publish("step", {k: v for k, v in step.items() if isinstance(v, (str, int, float, bool))
                                           or v is None})
                 self._work_checkpoint()
 
             # No Improver model, no campaign: said once, plainly, and the repairs go on (a campaign's first author call
             # used to die with a KeyError after minutes of replays, in every round from then on).
-            from runesmith.app import self_notices
+            from runesmith.app import self_notices, self_plan
             said = self_notices.improver_check(ws, kaizen_on=bool(settings["kaizen"]), improver_ready=bool(ready["kaizen"]))
             if said:
                 self.say(said, "warn")
             campaigns = bool(settings["kaizen"]) and bool(ready["kaizen"])
             loop_settings = {"min_experience": int(settings["min_experience"]) if campaigns else 10**9,
                              "kaizen_every": int(settings["kaizen_every"]),
+                             # The owner's share decides which turns are self-improvement turns (self_plan); attention
+                             # stays a health signal. Off, or in Observe, there are none.
+                             "lane_policy": ((lambda campaign_ready: self_plan.turn(ws, campaign_ready=campaign_ready,
+                                                                                    say=self.say))
+                                             if settings["kaizen"] and settings["autonomy"] != "observe" else None),
                              "trial_settings": {"look_every": 10, "min_per_arm": 10, "max_per_arm": 40}}
             try:
                 summary = run_loop(home=ws.home, opportunities=fresh, seed=ws.seed(),
@@ -1228,7 +1262,7 @@ class Worker:
             arm = f" (trial arm: {step['trial_arm']})" if step.get("trial_arm") else ""
             self.say(f"Repair attempt {step.get('key')}: {status}{arm}", "success" if step.get("status") == "public_pass" else "info")
         elif lane == "subject":
-            decision = str(step.get("decision") or "").replace("_", " ")
+            decision = DECISION_WORDS.get(step.get("decision"), str(step.get("decision") or "").replace("_", " "))
             self.say(f"Kaizen step: Runesmith tried to improve its own repair organ: {decision}",
                      "success" if step.get("generation") else "info")
         elif lane == "skipped":
@@ -1245,7 +1279,8 @@ class Worker:
                             "skipped_environment": summary.get("skipped_environment", 0),
                             "frozen": summary.get("frozen", []), "trials": len(summary.get("trials", []))}}
         _write_json(ws.home / "WORK.json", work)
-        ws.self_map(refresh=True)
+        from runesmith.app import self_plan
+        self_plan.refresh(ws)                 # the map (with its struggles) and the scored plan, every round; no model
         ws.ledger.append("studio.round", work["summary"])
         waiting = ws.work()["counts"].get("waiting", 0)
         if served:
