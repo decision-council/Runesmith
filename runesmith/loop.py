@@ -25,6 +25,7 @@ Splits and trial arms are assigned by HMAC, so neither can be chosen after the f
 
 from __future__ import annotations
 
+import copy
 import gzip
 import hashlib
 import hmac
@@ -34,14 +35,21 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from runesmith import generations
-from runesmith.config import envelope_from, load_config
+from runesmith import atomic, generations
+from runesmith.config import build_router, envelope_from, load_config
 from runesmith.kaizen.attention import Attention
 from runesmith.kaizen.diagnose import signature
 from runesmith.kaizen.improve import KaizenRun, dev_score, mean_score
 from runesmith.kaizen.trial import Trial
 from runesmith.ledger import Ledger
 from runesmith.local import run_local_task
+
+# A campaign asks the Improver on a short leash: a few seconds between tries, and one failed call gives the campaign up
+# (the next one waits for new attempts), instead of the router's default 15 to 180 seconds between eight tries, six times
+# over, which kept a round busy for nearly an hour when the Improver's route was down.
+CAMPAIGN_BACKOFF_S = (5, 15, 30)
+CAMPAIGN_MAX_TRANSPORT = 1
+KAIZEN_STATE = "KAIZEN_STATE.json"
 
 
 class ExperienceStore:
@@ -136,6 +144,40 @@ def _replay(home: Path, store: ExperienceStore, tasks: list[dict], organ_dir: Pa
     return records
 
 
+def improver_available(router) -> bool:
+    """Whether the router has an instrument for the Improver's role. A campaign needs one before it replays anything:
+    without it the first author call raised ``KeyError`` after minutes of replays, in every round from then on."""
+    roles = getattr(router, "roles", None)
+    return bool(isinstance(roles, dict) and roles.get("kaizen"))
+
+
+def campaign_router(router):
+    """The router a campaign asks the Improver through: the same instruments and receipts, a short backoff."""
+    if getattr(router, "backoff_s", None) is None or not hasattr(router, "instruments"):
+        return router
+    short = copy.copy(router)
+    short.backoff_s = CAMPAIGN_BACKOFF_S
+    return short
+
+
+def load_campaign_state(home: Path) -> int | None:
+    """How many learning tasks were stored when the last campaign began (None before the first), kept in the home so
+    ``kaizen_every`` (new attempts between campaigns) holds from one round to the next."""
+    try:
+        value = json.loads((Path(home) / KAIZEN_STATE).read_text(encoding="utf-8")).get("experience_at_last_campaign")
+        return value if type(value) is int else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def save_campaign_state(home: Path, stored: int) -> None:
+    path = Path(home) / KAIZEN_STATE
+    tmp = Path(str(path) + ".tmp")
+    state = {"experience_at_last_campaign": stored, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    tmp.write_bytes((json.dumps(state, indent=1) + "\n").encode("utf-8"))
+    atomic.replace(tmp, path)
+
+
 def freeze_rule(best_strict: float, incumbent_strict: list[float], bar: int) -> dict[str, Any]:
     """Freeze only a gain larger than the incumbent's own replay-to-replay difference.
 
@@ -158,6 +200,8 @@ def subject_step(*, home: Path, store: ExperienceStore, seed: str, router, max_a
     With ``noise_replay`` (the default) the incumbent is replayed twice on the validation split, so the
     freeze decision can require a gain larger than the incumbent's own replay noise (``freeze_rule``).
     """
+    if not improver_available(router):
+        return {"decision": "no_improver", "reason": "no instrument serves the Improver role"}
     active = generations.active(home)
     organ_dir = Path(home) / "generations" / active / "organs"
     experience, validation = store.split(seed)
@@ -176,7 +220,8 @@ def subject_step(*, home: Path, store: ExperienceStore, seed: str, router, max_a
     if noise_replay:
         replays.append(dev_score(_replay(home, store, validation, organ_dir, f"validate-incumbent2-{stamp}", router)))
         baseline = mean_score(replays)
-    run = KaizenRun(incumbent_organs=organ_dir, module="repair", router=router, baseline_records=experience_records,
+    run = KaizenRun(incumbent_organs=organ_dir, module="repair", router=campaign_router(router),
+                    baseline_records=experience_records, max_transport=CAMPAIGN_MAX_TRANSPORT,
                     baseline_score=baseline,
                     dev_evaluate=lambda candidate_dir, label: _replay(home, store, validation, candidate_dir,
                                                                       f"validate-{label}-{stamp}", router),
@@ -207,15 +252,24 @@ def subject_step(*, home: Path, store: ExperienceStore, seed: str, router, max_a
 def run_loop(*, home: Path, opportunities: list[dict], seed: str, router=None, min_experience: int = 8,
              kaizen_every: int = 8, max_answered: int = 2, bar: int = 1, attention: Attention | None = None,
              trial_settings: dict | None = None, owner_notes: str = "",
-             on_step: Callable[[dict], None] | None = None) -> dict[str, Any]:
+             on_step: Callable[[dict], None] | None = None,
+             lane_policy: Callable[[bool], str] | None = None) -> dict[str, Any]:
     """Serve ``opportunities`` in order, interleaving Kaizen steps as attention dictates.
 
     A Kaizen campaign needs ``min_experience`` stored tasks and at least
-    ``kaizen_every`` new ones since the previous campaign, so self-improvement
-    always works from fresh evidence and never loops on the same records.
+    ``kaizen_every`` new ones since the previous campaign (counted across calls: the count is kept in the home), an
+    Improver model, and no open trial, so self-improvement always works from fresh evidence and never loops on the
+    same records. A campaign that cannot finish ends the campaign, never the loop.
     ``owner_notes`` (the owner's comments on Runesmith itself) reach the Kaizen author, labelled as such.
+
+    Who decides when a step goes to self-improvement: ``attention`` by default (its standing share, raised while one
+    failure recurs). The Studio passes ``lane_policy`` instead: it is asked once for every opportunity (one work turn),
+    told whether a campaign could run now, and answers ``"subject"`` or ``"object"``; the owner's share is its rule, and
+    ``attention`` stays what it was meant to be, a health signal that watches outcomes.
     """
     home = Path(home)
+    if router is None:
+        router = build_router(load_config(home), home=home)
     ledger = Ledger(home / "ledger.jsonl")
     store = ExperienceStore(home / "experience")
     attention_path = home / "ATTENTION.json"
@@ -225,7 +279,8 @@ def run_loop(*, home: Path, opportunities: list[dict], seed: str, router=None, m
                                "trials": [], "skipped_environment": 0}
     trial_path = home / "TRIAL.json"
     trial = Trial.load(trial_path)
-    experience_at_last_campaign = -kaizen_every
+    last_campaign = load_campaign_state(home)
+    experience_at_last_campaign = -kaizen_every if last_campaign is None else last_campaign
     while queue:
         triage = queue[0].get("triage") or {}
         if triage.get("kind") == "environment":          # no source edit can fix it: spend nothing
@@ -238,13 +293,21 @@ def run_loop(*, home: Path, opportunities: list[dict], seed: str, router=None, m
             continue
         stored = len(store.learning_tasks())
         trial_open = trial is not None and trial.decision is None
-        ready = (not trial_open and stored >= min_experience
+        ready = (not trial_open and improver_available(router) and stored >= min_experience
                  and stored - experience_at_last_campaign >= kaizen_every)
-        lane = attention.next_lane(subject_available=ready)
+        if lane_policy is not None:
+            lane = "subject" if lane_policy(ready) == "subject" and ready else "object"
+        else:
+            lane = attention.next_lane(subject_available=ready)
         if lane == "subject":
             experience_at_last_campaign = stored
-            result = subject_step(home=home, store=store, seed=seed, router=router, max_answered=max_answered,
-                                  bar=bar, ledger=ledger, owner_notes=owner_notes)
+            save_campaign_state(home, stored)               # before it runs: a crash must not repeat it every round
+            try:
+                result = subject_step(home=home, store=store, seed=seed, router=router, max_answered=max_answered,
+                                      bar=bar, ledger=ledger, owner_notes=owner_notes)
+            except Exception as error:                      # whatever goes wrong ends the campaign, not the round
+                result = {"decision": "campaign_failed", "error": f"{type(error).__name__}: {error}"[:300]}
+                ledger.append("loop.subject_step", result)
             summary["subject_steps"] += 1
             if result.get("generation") and result["generation"] != generations.active(home):
                 summary["frozen"].append(result["generation"])

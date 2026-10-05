@@ -399,7 +399,7 @@ class KaizenRun:
             try:
                 outcome = self.router.call(self.author_role, prompt=prompt, system=AUTHOR_SYSTEM, schema=AUTHOR_SCHEMA,
                                            max_tokens=self.author_max_tokens, key=f"kaizen-{self.out_dir.name}-{iteration}",
-                                           reasoning_effort=self.reasoning_effort)
+                                           reasoning_effort=self.reasoning_effort, own_effort_first=True)
             except TransportCensored as error:
                 transport += 1
                 self._log("kaizen.author_transport", {"iteration": iteration, "error": str(error)[:300]})
@@ -420,7 +420,10 @@ class KaizenRun:
                 stale = 0
             else:
                 stale += 1
-        result = {"decision": "candidate" if best["iteration"] > 0 else "no_improvement", "target": target,
+        decision = "candidate" if best["iteration"] > 0 else "no_improvement"
+        if best["iteration"] == 0 and answered == 0 and transport:
+            decision = "improver_unreachable"          # no answer at all: said so, never mistaken for "nothing to improve"
+        result = {"decision": decision, "target": target,
                   "best_iteration": best["iteration"], "best_score": best["score"], "baseline_score": self.baseline_score,
                   "answered": answered, "transport_failures": transport, "attempts": attempts,
                   "best_organ_dir": str(best["dir"]), "best_organ_digest": digest_text(best["source"])}

@@ -379,6 +379,13 @@ def stuck_needs_owner(ws: Any, milestone_id: str, kind: str) -> None:
                "or set it aside (Overview, Needs you).")
 
 
+@_safe
+def no_improver(ws: Any) -> None:
+    """Self-improvement is on but no Improver model is set up: said once, so the log shows why no campaign starts."""
+    record(ws, "Self-improvement is on, but no Improver model is set up, so Runesmith cannot try to improve itself yet. "
+               "Repair work goes on. Choose an Improver under Thinking power.")
+
+
 # What the owner asked for when he pressed a button that tries something again (the jobs the Studio's route queues).
 RETRIES = {
     "escalate": "You asked for one more try, with another model, for the milestones whose tries were used up.",

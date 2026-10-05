@@ -1196,7 +1196,14 @@ class Worker:
                                           or v is None})
                 self._work_checkpoint()
 
-            loop_settings = {"min_experience": int(settings["min_experience"]) if settings["kaizen"] else 10**9,
+            # No Improver model, no campaign: said once, plainly, and the repairs go on (a campaign's first author call
+            # used to die with a KeyError after minutes of replays, in every round from then on).
+            from runesmith.app import self_notices
+            said = self_notices.improver_check(ws, kaizen_on=bool(settings["kaizen"]), improver_ready=bool(ready["kaizen"]))
+            if said:
+                self.say(said, "warn")
+            campaigns = bool(settings["kaizen"]) and bool(ready["kaizen"])
+            loop_settings = {"min_experience": int(settings["min_experience"]) if campaigns else 10**9,
                              "kaizen_every": int(settings["kaizen_every"]),
                              "trial_settings": {"look_every": 10, "min_per_arm": 10, "max_per_arm": 40}}
             try:
