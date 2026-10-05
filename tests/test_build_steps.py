@@ -746,3 +746,71 @@ def test_an_edit_whose_first_line_alone_is_indented_is_matched():
     twice = "if (a) {\n  b();\n}\n  if (a) {\n  b();\n}\n"
     with pytest.raises(ValueError):                  # two places: never a guess
         _apply_one_edit(twice + "x", {'old_text': "    if (a) {\n  b();", 'new_text': "    if (a) {\n  c();"}, 'm.js')
+
+
+# The project's own tests are found where the draft put them (the newcomer path: an empty-folder draft kept its test in
+# the folder root, and every check ended in "Start directory is not importable: 'tests'").
+ROOT_TEST = 'import unittest\nfrom app import answer\nclass Tests(unittest.TestCase):\n    def test_answer(self): self.assertEqual(answer(),42)\n'
+
+
+def draft_with(tmp_path, files, *, acceptance=False):
+    ws = Workspace(tmp_path)
+    ws.save_plan({'summary':'Tiny calculation service', 'milestones':[{'title':'Answer', 'done_when':'answer() returns 42'}]})
+    scripted(ws, [{'title':'Implementation', 'files':files}], roles=('plan',))
+    if acceptance:
+        path=ws.home/'acceptance'/'m1.py'
+        path.parent.mkdir(parents=True)
+        path.write_text('import unittest\nfrom app import answer\nclass Acceptance(unittest.TestCase):\n    def test_contract(self): self.assertEqual(answer(),42)\n')
+    enable(ws)
+    return ws
+
+
+APP = {'path':'app.py','content':'def answer():\n    return 42\n'}
+
+
+@pytest.mark.parametrize('layout,ran', [
+    ([APP, {'path':'test_app.py','content':ROOT_TEST}], 1),
+    ([APP, {'path':'tests/test_app.py','content':ROOT_TEST}], 1),
+    ([APP, {'path':'tests/__init__.py','content':''}, {'path':'tests/test_app.py','content':ROOT_TEST}], 1),
+    ([APP, {'path':'test_app.py','content':ROOT_TEST}, {'path':'tests/test_more.py','content':ROOT_TEST.replace('Tests','More')}], 2),
+    ([APP, {'path':'test_app.py','content':ROOT_TEST}, {'path':'tests/test_app.py','content':ROOT_TEST.replace('Tests','More')}], 2)],
+    ids=['root', 'tests-without-init', 'tests-with-init', 'both', 'same-name-in-both'])
+def test_project_tests_are_found_where_the_draft_put_them(tmp_path, layout, ran):
+    ws = draft_with(tmp_path, layout, acceptance=True)
+    result = build_step(ws, ws.router())
+    checks = result['verification']['project_checks']
+    assert checks['ok'] and checks['ran'] == ran, checks['output']
+    assert 'not importable' not in checks['output']
+    # The owner's acceptance runs behind the project checks, instead of never starting.
+    assert result['verification']['status'] == 'acceptance_passed'
+    assert result['verification']['acceptance']['ran'] == 1
+
+
+def test_a_failing_test_in_the_folder_root_is_reported_not_hidden(tmp_path):
+    ws = draft_with(tmp_path, [{'path':'app.py','content':'def answer():\n    return 41\n'},
+                               {'path':'test_app.py','content':ROOT_TEST}])
+    checks = build_step(ws, ws.router())['verification']['project_checks']
+    assert not checks['ok'] and checks['failures'] == 1 and checks['ran'] == 1
+
+
+def test_a_root_test_that_cannot_be_imported_fails_its_check(tmp_path):
+    ws = draft_with(tmp_path, [{'path':'app.py','content':'def answer():\n    return 42\n'},
+                               {'path':'test_app.py','content':'import unittest\nfrom nothing_here import x\n'}])
+    checks = build_step(ws, ws.router())['verification']['project_checks']
+    assert not checks['ok'] and 'nothing_here' in checks['output']
+
+
+def test_code_without_any_test_says_where_tests_belong(tmp_path):
+    ws = draft_with(tmp_path, [{'path':'app.py','content':'def answer():\n    return 42\n'}])
+    checks = build_step(ws, ws.router())['verification']['project_checks']
+    assert not checks['ok'] and checks['ran'] == 0
+    assert 'tests folder' in checks['output'] and 'test_*.py' in checks['output']
+
+
+def test_the_author_is_told_where_the_tests_belong(tmp_path):
+    from runesmith.app.planner import draft_prompt, source_context
+    ws = draft_with(tmp_path, [APP])
+    milestone = ws.plan()['milestones'][0]
+    prompt = json.loads(draft_prompt(ws, milestone, source_context(ws, milestone=milestone)))
+    rule = next(r for r in prompt['rules'] if 'unittest tests' in r)
+    assert 'tests/ folder' in rule and 'tests/__init__.py' in rule and 'test_*.py' in rule
