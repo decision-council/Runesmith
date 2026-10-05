@@ -1,0 +1,4 @@
+PROTOCOL.md sha256 7b52348e8cac982c94766206b01f145d21e60445176d7913d67986a67e58ba60
+sealed_utc 2026-10-05T16:31:30Z
+no SI opportunity has run; no harness code and no Runesmith process of this study exists; the SUT is the archive of main d07ae14 (tree sha256 ce186294acfc578009c299e71e7cb34edf7fcdc6095f11a465d0cac699dda329)
+published as docs/studies/SI_STARVATION_PROTOCOL.md on branch u1-protocol
