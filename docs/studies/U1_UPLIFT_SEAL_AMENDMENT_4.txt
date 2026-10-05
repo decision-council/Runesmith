@@ -1,0 +1,3 @@
+AMENDMENT_4.md sha256 5af043b140b6774b0294b5baf2093e9751e42403f748baa8731be51b84dbee16
+sealed_utc 2026-10-05T16:01:03Z
+no U1 evaluation session exists; U3 withdrawn unrun
