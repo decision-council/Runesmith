@@ -72,4 +72,19 @@ assert(text(two).includes('2 milestones'));
 const retry = find(two, (n) => n.props && n.props['data-choice'] === 'escalate')[0];
 await retry.props.onclick({ currentTarget: {} });
 same(calls.at(-1), ['/api/worker/run', { job: 'escalate' }]);
+
+// A one more try that was interrupted and that Runesmith could not settle: plain words and a one-click "Close the interrupted call".
+const interrupted = { milestone: 'm3', title: 'Styles for the page', utc: '2026-10-05T00:27:00Z', kind: 'interrupted', code: 'interrupted',
+  receipt: 'e355ea61a7ec2',
+  what: '“Styles for the page” cannot go on by itself: its one more try, with another model, was interrupted (the Studio was closed or stopped while it worked), and what is saved does not say how it ended.',
+  choices: [{ id: 'close_interrupted', label: 'Close the interrupted call', detail: 'Counts its one more try as used and sends nothing.' },
+            { id: 'edit', label: 'Edit the milestone', detail: 'New wording gives it fresh tries.' },
+            { id: 'set_aside', label: 'Set it aside', detail: 'The plan goes on without it.' }] };
+const cut = context.needsYouCard({ needs_you: [interrupted] }, () => {}, () => { redrawn += 1; });
+for (const expected of ['Styles for the page', 'was interrupted', 'Close the interrupted call']) assert(text(cut).includes(expected), expected);
+assert(!/null|undefined/.test(text(cut)));
+const redrawnBefore = redrawn;
+await find(cut, (n) => n.props && n.props['data-choice'] === 'close_interrupted')[0].props.onclick({ currentTarget: {} });
+same(calls.at(-1), ['/api/build/escalations/e355ea61a7ec2/close', {}]);
+assert.equal(redrawn, redrawnBefore + 1, 'the card is redrawn once the call is closed');
 console.log('needs-you view: ok');

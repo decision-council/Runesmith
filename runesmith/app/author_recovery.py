@@ -5,6 +5,7 @@ trainer-attested exception. That exception is not an automatic binding rule.
 """
 from __future__ import annotations
 
+import glob
 import hashlib
 import re
 
@@ -27,7 +28,7 @@ def acceptance_identity(ws, milestone):
 
 def prepare_packet(ws, key, *, milestone, context, contract, public_digest, exposure,
                    revision=None, explicit_revision=False, attempt_id=None, binding='before_submission', revision_view=None,
-                   revision_operation=None, candidate_view=None):
+                   revision_operation=None, candidate_view=None, escalation_id=None):
     from runesmith.app.source_focus import recorded_excerpts
     packet={'request_key':_key(key), 'root':str(ws.root), 'milestone':milestone['id'],
             'contract':contract, 'context_digest':context['digest'], 'snapshot_digest':context['snapshot_digest'],
@@ -45,6 +46,10 @@ def prepare_packet(ws, key, *, milestone, context, contract, public_digest, expo
         packet['revision_operation'] = revision_operation
     if revision_view is not None:
         packet.update(revision_view=revision_view, bound_source_files=sorted(context['files']), shown_files=[])
+    if escalation_id is not None:
+        # The one more try this call belongs to, so that its late answer settles that receipt (an ordinary try is reached
+        # by `attempt_id`). Only when there is one: every other packet keeps the bytes and digest it had.
+        packet['escalation_id'] = _escalation_key(escalation_id)
     path=ws.home/'build-author-packets'/(key+'.json')
     if path.exists():
         raise WorkspaceError('Author packet already exists; do not replace its context')
@@ -196,6 +201,7 @@ def resume_author(ws, request_id, *, checkpoint=lambda:None):
     if prior.get('state') in ('admitted','rejected','remote_failed'):
         _settle_attempt(ws,packet,request_id,'answered' if prior['state']=='admitted' else prior.get('settled') or 'failed',
                         **({'draft':prior['draft']} if prior.get('draft') else {}))
+        _settle_escalation_from(ws,packet,request_id,prior)
         return {'summary':'Recovery already recorded. No inference, checks or writes repeated.',
                 'draft':prior.get('draft'),'already_used':True}
     spec=ws.config()['instruments'].get(record['instrument'])
@@ -212,6 +218,10 @@ def resume_author(ws, request_id, *, checkpoint=lambda:None):
     if not outcome.ok:
         _write_json(path,dict(receipt,state='remote_failed',error=outcome.error))
         _settle_attempt(ws,packet,request_id,'failed',error=outcome.error)
+        # A call no route took up and that cost nothing used no try (the same rule as when it was first made).
+        _settle_escalation(ws,packet,request_id,
+                           'transport_failed' if outcome.receipt.get('no_route_accepted') or outcome.receipt.get('not_admitted') else 'failed',
+                           error=outcome.error)
         # Plain words for the owner (journey J11-F8: "Saved gateway job failed. Failure retained; no automatic
         # resubmission."); the next round asks again under the usual limits.
         return {'summary':'The late answer never came: the model’s job failed, so this try ended without an answer.'}
@@ -228,9 +238,11 @@ def resume_author(ws, request_id, *, checkpoint=lambda:None):
                              feedback=getattr(error,'feedback',None)))
         _settle_attempt(ws,packet,request_id,settled,error=str(error)[:500],
                         feedback=getattr(error,'feedback',None))
+        _settle_escalation(ws,packet,request_id,settled,error=str(error)[:500],feedback=getattr(error,'feedback',None))
         raise
     _write_json(path,dict(receipt,state='admitted',draft=draft['id']))
     _settle_attempt(ws,packet,request_id,'answered',draft=draft['id'])
+    _settle_escalation(ws,packet,request_id,'answered',draft=draft['id'],author=author)
     ws.ledger.append('build.answer_recovered',dict(receipt,draft=draft['id'],author=author))
     # Deliberately only admission. Normal Build/Recheck owns execution/application.
     return {'summary':'Late answer retained as an unverified draft. Check it through the normal build gates; no new inference.',
@@ -250,3 +262,162 @@ def _settle_attempt(ws,packet,request_id,state,**extra):
         return
     _write_json(path,dict(original,state=state,prior_receipt=original,
                          reconciled_by=request_id,reconciled_utc=_now(),**extra))
+
+
+# ---- the one more try ----------------------------------------------------------------------------------------------------
+# An escalation's receipt is written "started" before its call and settled when the call ends. A restart or a crash in
+# between used to leave it started for good: every build of that milestone then ended "Unresolved author allowance
+# receipt ...; reconcile it before another call", and nothing told the owner. Its saved answer is retrieved by
+# `resume_author` like an ordinary try's (the packet names the receipt); what cannot be retrieved is closed here.
+
+INTERRUPTED = 'interrupted by a restart'
+
+
+def _escalation_key(key):
+    if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', key):
+        raise WorkspaceError('Invalid build escalation ID.')
+    return key
+
+
+def _settled(receipt):
+    from runesmith.app.author_allowance import ESCALATION_SETTLED, NOTHING_USED
+    return receipt.get('state') in ESCALATION_SETTLED or receipt.get('state') in NOTHING_USED
+
+
+def settle_escalation(ws, key, state, *, by, **extra):
+    """Record how a one more try that had no outcome ended. Only a receipt still unresolved is moved: one that is settled
+    is never rewritten (an answer that arrives after the owner closed the call, a second pass after a crash). Returns the
+    receipt as it stands, or None when there is none."""
+    path = ws.home/'build-escalations'/(_escalation_key(key)+'.json')
+    with ws._lock:
+        receipt = _read_json(path, None)
+        if not isinstance(receipt, dict):
+            return None
+        if _settled(receipt):
+            return receipt
+        now = _now()
+        settled = dict(receipt, state=state, finished=now, reconciled_by=by, reconciled_utc=now,
+                       prior_state=receipt.get('state'), **{k: v for k, v in extra.items() if v is not None})
+        _write_json(path, settled)
+        ws.ledger.append('build.escalation_reconciled', {'id': key, 'milestone': receipt.get('milestone'), 'state': state,
+                                                         'by': by, 'draft': extra.get('draft'),
+                                                         'error': str(extra.get('error') or '')[:300]})
+        return settled
+
+
+def _settle_escalation(ws, packet, request_id, state, **extra):
+    """Where `_settle_attempt` settles an ordinary try, this settles the one more try the packet's call belonged to."""
+    if packet.get('escalation_id'):
+        settle_escalation(ws, packet['escalation_id'], state, by=request_id, **extra)
+
+
+def _settle_escalation_from(ws, packet, request_id, record):
+    """The same, from an author recovery record kept before (the call's outcome was recorded, its receipt not yet)."""
+    if not packet.get('escalation_id'):
+        return
+    if record.get('state') == 'admitted':
+        draft = _read_json(ws.home/'drafts'/str(record.get('draft') or '-')/'DRAFT.json', {})
+        _settle_escalation(ws, packet, request_id, 'answered', draft=record.get('draft'), author=draft.get('drafted_by'))
+    elif record.get('state') == 'rejected':
+        _settle_escalation(ws, packet, request_id, record.get('settled') or 'failed', error=record.get('error'),
+                           feedback=record.get('feedback'))
+    else:
+        gateway = record.get('gateway') if isinstance(record.get('gateway'), dict) else {}
+        _settle_escalation(ws, packet, request_id,
+                           'transport_failed' if gateway.get('no_route_accepted') or gateway.get('not_admitted') else 'failed',
+                           error=record.get('error'))
+
+
+def _linked_packets(ws, milestone_id, key):
+    """The saved author packets whose call was the one more try `key` (newer packets name it; older ones do not)."""
+    if not isinstance(milestone_id, str) or not milestone_id:
+        return []
+    rows = []
+    for path in sorted((ws.home/'build-author-packets').glob(glob.escape(f'draft-{milestone_id}-') + '*.json')):
+        try:
+            packet = read_packet(ws, path.stem)
+        except (WorkspaceError, OSError, ValueError, TypeError, KeyError):
+            continue
+        if packet.get('escalation_id') == key and packet.get('milestone') == milestone_id:
+            rows.append(packet)
+    return rows
+
+
+def _kept_outcome(ws, packet):
+    """How the call of this packet ended, as far as what is kept says, as (state, fields), or None when nothing says."""
+    key = packet['request_key']
+    draft = next((d for d in ws.drafts() if d.get('author_request_key') == key and d.get('contract')), None)
+    if draft:
+        return 'answered', {'draft': draft['id'], 'author': draft.get('drafted_by')}
+    for attempt in range(12):
+        request_id = hashlib.sha256(f'{key}-a{attempt}'.encode()).hexdigest()
+        record = _read_json(ws.home/'author-recoveries'/(request_id+'.json'), {})
+        if record.get('state') == 'admitted' and record.get('draft'):
+            return 'answered', {'draft': record['draft']}
+        if record.get('state') == 'rejected':
+            return record.get('settled') or 'failed', {'error': record.get('error'), 'feedback': record.get('feedback')}
+        if record.get('state') == 'remote_failed':
+            return 'failed', {'error': record.get('error')}
+    admission = _read_json(ws.home/'author-admissions'/(key+'.json'), {})
+    if admission.get('state') == 'rejected':
+        return 'failed', {'error': admission.get('error'), 'feedback': admission.get('feedback')}
+    return None
+
+
+def _release_requests(ws, packet, reason):
+    """A saved request of a call that is being closed no longer holds its milestone back, and its answer, if one ever
+    comes, is not used (it is recorded as a remote failure, as when the model's job fails)."""
+    for row in pending_authors(ws, milestone=packet['milestone']):
+        if row['key'] == packet['request_key']:
+            _write_json(ws.home/'author-recoveries'/(row['id']+'.json'),
+                        {'id': row['id'], 'request_key': row['key'], 'utc': _now(), 'inference_calls': 0,
+                         'original_attempt': None, 'binding': 'closed', 'gateway': {}, 'state': 'remote_failed',
+                         'error': reason})
+
+
+def _close(ws, key, linked, *, by, reason):
+    """Settle one unresolved receipt from what is kept: its answer if one was kept, else the one more try is used up."""
+    outcome = next((found for found in (_kept_outcome(ws, packet) for packet in linked) if found), None)
+    state, fields = outcome if outcome else ('failed', {'error': reason})
+    if not outcome:
+        for packet in linked:
+            _release_requests(ws, packet, reason)
+    return settle_escalation(ws, key, state, by=by, **fields)
+
+
+def close_interrupted_escalations(ws, *, contract=None, by='Runesmith'):
+    """Settle the one more try receipts a restart or a crash left started, with no call and no gateway request; of this
+    milestone contract only when one is given. A call whose saved model job can still be retrieved is left: the next build
+    retrieves it (`resume_author` settles the receipt). One whose answer was kept is recorded as answered, or as refused
+    with its answer kept. Any other used its one more try: it is recorded as failed, "interrupted by a restart", and
+    nothing is sent again by itself. A receipt in a state this does not know stays for the owner (Needs you offers to
+    close it). Call it only where no one more try can be running: at start, and in the worker's own job. Returns what it
+    settled."""
+    from runesmith.app.author_allowance import unresolved_escalations
+    closed = []
+    for name, receipt in unresolved_escalations(ws, contract):
+        if receipt.get('state') != 'started':
+            continue
+        key, milestone = name.removesuffix('.json'), receipt.get('milestone')
+        milestone = milestone if isinstance(milestone, str) and milestone else None
+        if any(row['can_resume'] for row in pending_authors(ws, milestone=milestone)):
+            continue
+        settled = _close(ws, key, _linked_packets(ws, milestone, key), by=by, reason=INTERRUPTED)
+        if settled and settled.get('prior_state') == 'started':
+            closed.append({'id': key, 'milestone': milestone, 'state': settled['state'], 'draft': settled.get('draft')})
+    return closed
+
+
+def close_interrupted_escalation(ws, key, *, by='owner'):
+    """The owner's "Close the interrupted call": the one more try is recorded as used (or as answered, when its answer was
+    kept), and a saved request of it is not waited for any more. Nothing is sent."""
+    key = _escalation_key(key)
+    with ws._lock:
+        receipt = _read_json(ws.home/'build-escalations'/(key+'.json'), None)
+        if not isinstance(receipt, dict):
+            raise WorkspaceError('There is no such one more try to close.')
+        if _settled(receipt):
+            raise WorkspaceError('That call is already settled; there is nothing to close.')
+        milestone = receipt.get('milestone')
+        settled = _close(ws, key, _linked_packets(ws, milestone, key), by=by, reason='interrupted; closed by the owner')
+    return {'id': key, 'state': settled['state'], 'milestone': milestone}

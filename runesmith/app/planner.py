@@ -1305,7 +1305,7 @@ def admit_revision_answer(ws,context,raw_files,revision=None,*,allowed_paths=Non
 
 
 def draft_files(ws, router, milestone_id: str | None = None, *, revision=None, attempt_id=None, admission_guard=None,
-                revision_operation=None) -> dict[str, Any]:
+                revision_operation=None, escalation_id=None) -> dict[str, Any]:
     from runesmith.app.author_recovery import pending_authors, prepare_packet, admit_packet
     from runesmith.app.acceptance_contracts import expectation_digest
     plan = ws.plan() or {}
@@ -1367,7 +1367,7 @@ def draft_files(ws, router, milestone_id: str | None = None, *, revision=None, a
     packet=prepare_packet(ws,request_key,milestone=milestone,context=context,contract=contract,
         public_digest=public_digest,exposure=exposure_path.relative_to(ws.home).as_posix(),
         revision=revision,explicit_revision=explicit_revision,attempt_id=attempt_id,revision_view=revision_view,
-        revision_operation=revision_operation,
+        revision_operation=revision_operation, escalation_id=escalation_id,
         candidate_view=candidate_shown(ws,revision,context,milestone)[3] if revision and revision_view is None else None)
     if not explicit_revision:
         _rotate_repeating_author(ws, router, contract)

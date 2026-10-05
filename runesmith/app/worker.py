@@ -205,7 +205,31 @@ class Worker:
             self._recover_records()
         except (OSError, ValueError, WorkspaceError) as error:
             self._block_storage(error)
+        self._settle_interrupted_escalations()
         self._keep_by_setting()
+
+    def _settle_interrupted_escalations(self) -> None:
+        """A one more try the restart cut short left its receipt started, and a started receipt blocks its milestone for
+        good (journey J11: every build of it ended "Unresolved author allowance receipt", and the Overview said nothing).
+        Nothing runs yet, so none of them is live: what can be settled from what is saved is settled (a call whose saved
+        model job can still be retrieved is left for the next build, which retrieves it), no call is made and nothing is
+        replayed. What cannot be settled is shown under Needs you."""
+        if not self._recovered:
+            return
+        try:
+            from runesmith.app.author_recovery import close_interrupted_escalations
+            closed = close_interrupted_escalations(self.ws, by='Runesmith (restart)')
+        except Exception as error:         # the start never fails for it: the build tries again, and Needs you shows what stays
+            self.say(f'An interrupted one more try could not be settled by itself ({str(error)[:200]}). It waits for you under Needs you.',
+                     'warn')
+            return
+        titles = {m.get('id'): m.get('title') for m in (self.ws.plan() or {}).get('milestones', [])}
+        for row in closed:
+            what = f'“{titles[row["milestone"]]}”' if titles.get(row['milestone']) else 'A milestone'
+            ended = {'answered': 'Its saved answer was kept and is checked like any other.',
+                     'failed': 'It is recorded as used, because the saved records do not say it finished; nothing was sent again.'
+                     }.get(row['state'], 'No model had answered, so it used no try.')
+            self.say(f'{what} had a one more try that the restart cut short. {ended}', 'warn')
 
     def _keep_by_setting(self):
         """Journey J11-G42: a project that runs without its owner never gets the review a restart asks for, so the

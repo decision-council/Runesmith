@@ -434,6 +434,9 @@ def build_step(ws, router, *, checkpoint=lambda: None, author_only=False, milest
     if ws.settings()['autonomy'] == 'observe':
         return {'summary':'Observe mode: no build or model call.'}
     from runesmith.app.author_recovery import pending_authors, resume_author
+    # A one more try the restart cut short is settled first: its saved request, if it can no longer be fetched, would
+    # otherwise hold its milestone ("a late answer is still expected") and its receipt would block the allowance for good.
+    _close_interrupted_escalations(ws)
     saved = pending_authors(ws, milestone=milestone_id)
     fetched = {}                        # milestone id -> what fetching its late answer said this round
     unknown = [row for row in saved if row.get('milestone') is None]
@@ -570,6 +573,20 @@ def _context_gap(ws, contract, context):
             and path not in (context.get('excerpts') or {})):
         return path
     return None
+
+
+def _close_interrupted_escalations(ws):
+    """Settle the one more try receipts that were started and never finished (the Studio was closed, or the machine
+    stopped, while another model worked on one). A started receipt blocks its milestone's allowance until it is settled,
+    and a build or a restart is the only time no one more try can be running, since the worker does one job at a time. A
+    call whose saved model job can still be retrieved is left for the retrieval; anything this cannot settle stays, and the
+    owner is offered to close it under Needs you (journey J11: it blocked a milestone for hours and nothing said so).
+    Never raises: the allowance check that follows says what remains."""
+    from runesmith.app.author_recovery import close_interrupted_escalations
+    try:
+        return close_interrupted_escalations(ws)
+    except (WorkspaceError, OSError, ValueError):
+        return []
 
 
 def _build_milestone(ws, router, milestone, context, *, checkpoint, author_only):
@@ -775,6 +792,7 @@ def escalate_build(ws,router,*,checkpoint=lambda:None,milestone_id=None):
     one, else for the first milestone it can be given to)."""
     if ws.settings()['autonomy'] == 'observe':
         return {'summary':'Observe mode: no escalation call or executable checks.'}
+    _close_interrupted_escalations(ws)
     state=build_escalation_status(ws,milestone_id)
     if not state or not state['eligible']:
         raise WorkspaceError('No one-shot build escalation is eligible on the current source and contract.')
@@ -785,7 +803,7 @@ def escalate_build(ws,router,*,checkpoint=lambda:None,milestone_id=None):
              'contract':contract,'snapshot_digest':state['snapshot_digest'],'ordinary_attempts':state['attempts']}
     _write_json(path,receipt);ws.ledger.append('build.escalation_started',{'id':key,'milestone':milestone['id']})
     try:
-        draft=draft_files(ws,router,milestone['id'])
+        draft=draft_files(ws,router,milestone['id'],escalation_id=key)     # the packet names this receipt: a late answer settles it
     except Exception as error:
         from runesmith.app.planner import nothing_ran, settled_state
         # No model answered: the one more try is not used up (journey J2-B9). Nor when it answered for a file it was
