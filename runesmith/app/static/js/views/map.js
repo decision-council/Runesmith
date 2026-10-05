@@ -3,6 +3,8 @@ import { h, icon, get, post, bus, toast, commentable, openNotes, clear, ago, plu
   BAND_LABEL, humanize, cap, bytes, withBusy, clock, debounce, $ } from '../core.js';
 import { iconSvg } from '../icons.js';
 import { bandPosition, fmtCap } from './home.js';
+import { automateSection, whatSection, evidenceSection, section, noAutomation, focusHeading, hhmm, when } from './map-parts.js';
+import { structureSvg, structureList, nodePanel, groupPanel, morePanel } from './map-structure.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hubSize = (name) => { const n = String(name || 'Workspace').length; return n <= 9 ? 15 : n <= 12 ? 13.5 : n <= 15 ? 12 : 10.5; };
@@ -10,6 +12,7 @@ const trunc = (s, n) => (String(s).length > n ? String(s).slice(0, n - 1) + '…
 // Old maps stay on disk until the owner re-maps. Render their retained probe with
 // current evidence semantics, without starting tests or rewriting the receipt.
 function scopedObject(obj) {
+  if (obj._overlaid) return obj;
   const probe = obj.probe || {}, unavailable = !!(probe.unavailable || probe.error);
   if (probe.runner !== 'unittest' && !unavailable) return obj;
   const objectives = (obj.objectives || []).map(row => ['test_pass_rate', 'test_suite_seconds'].includes(row.metric)
@@ -18,6 +21,14 @@ function scopedObject(obj) {
     ? {...row, status: row.rung === 'tests_pass' && !unavailable && probe.exit_code != null && probe.exit_code !== 0
       ? 'not_achieved' : 'unknown'} : row);
   return {...obj, objectives, ladder, next_rung: ladder.find(row => row.status !== 'achieved')?.rung || null};
+}
+// The test rungs of a code object's ladder from the latest recorded test run, whatever ran it (the server names the run and
+// its time on each rung). Without them (an older answer, or no run recorded) the map's own scoped ladder stays.
+function withOverlay(obj, ladders) {
+  const scoped = scopedObject(obj), overlay = ladders && ladders[obj.name];
+  if (!overlay) return scoped;
+  const ladder = (scoped.ladder || []).map((r) => (overlay[r.rung] ? { ...r, status: overlay[r.rung].status, evidence: overlay[r.rung] } : r));
+  return { ...scoped, ladder, next_rung: ladder.find((r) => r.status !== 'achieved')?.rung || null, _overlaid: true };
 }
 // A long workspace name wraps onto two balanced lines inside the hub instead of being cut.
 const hubLines = (name) => {
@@ -130,6 +141,9 @@ async function environmentLens(body, ctx) {
   let data, selected = ctx.params.get('focus') || null;
   let focusAfter = null;                  // after a redraw: 'panel' (details just opened) or a node's name to return to
   let lastNarrow = null;
+  // The structure of one object, when there is one to show: the only object the folder holds, or the one the owner asked for.
+  let structure = null, structureNote = null, wanted = ctx.params.get('object') || null, mode = null, panelToken = 0;
+  const expanded = new Set();             // folders the owner opened up past the drawing's cap
   // the drawing's width, even before the page is on screen (the first draw happens before it is attached)
   const availableWidth = () => wrap.clientWidth || ((document.querySelector('main.content')?.clientWidth || window.innerWidth) - 28);
   const isNarrow = () => availableWidth() < 560;
@@ -137,18 +151,38 @@ async function environmentLens(body, ctx) {
   window.addEventListener('resize', onResize);
   offs.push(() => window.removeEventListener('resize', onResize));
 
+  const currentObjects = () => (data.map?.objects || []).map((o) => withOverlay(o, data.ladders));
+  const targetName = () => {
+    const real = (data.map?.objects || []).filter((o) => o.kind !== 'excluded');
+    if (wanted && real.some((o) => o.name === wanted)) return wanted;
+    return real.length === 1 ? real[0].name : null;
+  };
+  const loadStructure = async () => {
+    structure = null; structureNote = null;
+    const name = targetName();
+    if (!name) return;
+    try {
+      const st = await get(`/api/map/structure?object=${encodeURIComponent(name)}&expand=${encodeURIComponent([...expanded].join('|'))}`);
+      if (st && st.schema === 'runesmith.map.structure.v1') structure = st;
+      else structureNote = `The structure of ${name} could not be read, so its objects are shown as before.`;
+    } catch (error) { structureNote = `The structure of ${name} could not be read (${error.message || error}), so its objects are shown as before.`; }
+  };
   const load = async () => {
     data = await get('/api/map/environment');
+    await loadStructure();
     drawMap();
   };
   const drawMap = () => {
-    const held = document.activeElement?.closest?.('.map-wrap .node')?.dataset.name;   // a live update keeps the focus
+    const held = document.activeElement?.closest?.('.map-wrap .node, .map-wrap .lm-row')?.dataset.name;   // a live update keeps the focus
     if (!focusAfter && held) focusAfter = held;
+    ++panelToken;
     clear(wrap);
     const env = data.map;
     if (!env) { wrap.append(h('div.empty', icon('map', 'big'), h('h4', 'Mapping…'), h('p', 'The first map takes a few seconds.'))); return; }
+    if (structure && !structure.empty) return drawStructure(env);
+    const notice = structure?.empty ? structure.sentence : structureNote;
     const statuses = data.round.objects || {};
-    const objects = (env.objects || []).map(scopedObject);
+    const objects = currentObjects();
     const rootObj = objects.find((o) => o.root);
     const others = objects.filter((o) => !o.root);
     const facts = env.workspace_facts || {};
@@ -215,13 +249,99 @@ async function environmentLens(body, ctx) {
       svg,
       h('div.map-legend', ['bad', 'minimal', 'optimal', 'world_class', 'unknown'].map((b) => h('span', { class: `band ${b}` }, BAND_LABEL[b])),
         h('span.faint', '· drag to pan · scroll to zoom · Tab to an object')));
+    if (notice) wrap.append(h('div.lm-notice.small', { role: 'status' }, icon('info'), notice));
     if (!others.length && facts.empty) wrap.append(h('div', { style: { position: 'absolute', left: '50%', top: '72%', transform: 'translate(-50%,0)', textAlign: 'center' } },
       h('p.muted', 'An empty world. Perfect for something new.'), h('button.btn.primary', { onclick: () => ctx.navigate('goals') }, icon('wand'), 'Tell Runesmith what to build')));
     if (selected) wrap.append(sidePanel(selected === '__hub' ? null : objects.find((o) => o.name === selected), env, data,
-      () => { focusAfter = selected; selected = null; drawMap(); }, ctx, rootObj));
+      () => { focusAfter = selected; selected = null; drawMap(); }, ctx, rootObj, selectionHooks()));
     if (focusAfter === 'panel') $('.map-side h3', wrap)?.focus();
     else if (focusAfter) svg.querySelector(`.node[data-name="${CSS.escape(focusAfter)}"]`)?.focus({ preventScroll: true });
     focusAfter = null;
+  };
+  // What a panel of an object may ask of this lens: open its structure.
+  const selectionHooks = () => ({ showStructure: (name) => { wanted = name; selected = name; mode = null; expanded.clear(); load(); } });
+
+  // ---- the structure of one object: its files around the project, grouped by folder
+  const drawStructure = (env) => {
+    const st = structure, objects = currentObjects();
+    const obj = objects.find((o) => o.name === st.object.name) || { name: st.object.name, root: st.object.root, kind: st.object.kind, objectives: [], ladder: [] };
+    const rootObj = objects.find((o) => o.root);
+    const wsName = ctx.app.state?.workspace?.name || 'Workspace';
+    const narrow = isNarrow();
+    lastNarrow = narrow;
+    if (!mode) mode = narrow ? 'list' : 'graph';
+    const centreId = obj.root ? '__hub' : obj.name;
+    const centreName = obj.root ? wsName : obj.name;
+    const lines = hubLines(centreName), size = hubSize(lines.reduce((a, b) => (b.length > a.length ? b : a), ''));
+    const centre = { id: centreId, name: centreName, note: obj.root ? 'workspace|root' : `object|${obj.name}`,
+      spoken: `${centreName}, ${obj.root ? 'the whole workspace' : 'an object'}: ${st.counts.files} files. ${st.sentence}`,
+      markup: lines.map((line, i) => `<text text-anchor="middle" y="${(lines.length > 1 ? -17 : -6) + i * (size + 2)}" class="svg-text" font-size="${size}" font-weight="750">${esc(line)}</text>`).join('')
+        + `<text text-anchor="middle" y="${lines.length > 1 ? 18 : 14}" class="svg-muted" font-size="11.5">${st.counts.files}${st.truncated_scan ? '+' : ''} files</text>`
+        + `<text text-anchor="middle" y="${lines.length > 1 ? 33 : 30}" class="svg-faint" font-size="10.5">${obj.root ? 'workspace' : 'object'}</text>` };
+    const pick = (name) => { selected = name; focusAfter = 'panel'; drawMap(); };
+    const expand = async (gid) => { expanded.has(gid) ? expanded.delete(gid) : expanded.add(gid); selected = `group:${gid}`; await loadStructure(); drawMap(); };
+    const tools = h('div.map-tools.lm-tools');
+    const content = [];
+    let pz = null;
+    if (mode === 'graph') {
+      const built = structureSvg(st, { selected, centre });
+      const holder = h('div', { html: built.markup });
+      const svg = holder.firstChild;
+      svg.style.height = `${Math.max(420, Math.min(760, Math.round(availableWidth() * built.height / built.width)))}px`;
+      pz = panZoom(svg, svg.querySelector('.pz'));
+      svg.addEventListener('click', (e) => { const n = e.target.closest('.node'); if (n) pick(n.dataset.name); });
+      svg.addEventListener('keydown', (e) => {
+        const n = e.target.closest && e.target.closest('.node');
+        if (!n || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault(); pick(n.dataset.name);
+      });
+      content.push(svg);
+    } else {
+      content.push(h('div.lm-listbox', h('p.small.muted', st.sentence), structureList(st, pick, selected)));
+    }
+    tools.append(...[pz ? h('button.btn.sm.icon', { title: 'Zoom in', 'aria-label': 'Zoom in', onclick: () => pz.zoom(1.2) }, icon('plus')) : null,
+      pz ? h('button.btn.sm.icon', { title: 'Zoom out', 'aria-label': 'Zoom out', onclick: () => pz.zoom(1 / 1.2) }, icon('minus')) : null,
+      pz ? h('button.btn.sm.icon', { title: 'Reset view', 'aria-label': 'Reset the view', onclick: () => pz.reset() }, icon('crosshair')) : null,
+      h('div.seg.lm-mode', { role: 'group', 'aria-label': 'How to show the parts' }, [['graph', 'Graph', 'branch'], ['list', 'List', 'menu']].map(([id, label, ic]) => h('button', { class: mode === id ? 'on' : '',
+        'aria-pressed': String(mode === id), onclick: () => { mode = id; drawMap(); } }, icon(ic), label))),
+      h('button.btn.sm', { title: 'Map again, running each object’s tests on throwaway copies', onclick: (e) => withBusy(e.currentTarget, async () => { await post('/api/worker/run', { job: 'map', params: { probe: true } }); toast('Mapping and measuring… the map updates when done.', 'good'); }) }, icon('refresh'), 'Re-map & measure'),
+      h('span.badge', `mapped ${ago(env.utc)}`),
+      data.outdated ? h('button.btn.sm.primary', { title: 'This map was made by an earlier version of Runesmith, which found less. Map again to see everything.',
+        onclick: (e) => withBusy(e.currentTarget, async () => { await post('/api/worker/run', { job: 'map' }); toast('Mapping… the map updates when done.', 'good'); }) },
+        icon('refresh'), 'Made by an earlier version: map again') : null].filter(Boolean));
+    const runLine = st.run ? h('div.lm-runline.small', { 'data-run': '' }, icon('gauge'), h('span', st.run.words), null) : null;
+    const others = (data.map?.objects || []).filter((o) => o.name !== st.object.name);
+    const outside = others.length ? h('div.lm-runline.small', icon('lock'), h('span', `Not drawn: ${others.map((o) => (o.kind === 'excluded' ? `${o.name} (${o.reason === 'link' ? 'a link, not followed' : 'never touched'})` : o.name)).join(', ')}.`)) : null;
+    wrap.append(tools, ...content, ...[runLine, outside].filter(Boolean),
+      h('div.map-legend.lm-legend', ['bad', 'minimal', 'optimal', 'unknown'].map((b) => h('span', { class: `band ${b}` }, BAND_LABEL[b])),
+        h('span.faint', '● source · ■ test · ▭ document · ▲ config · size grows with lines · dots: gold waits for you, violet changed by Runesmith, blue in an open milestone')));
+    if (structureNote) wrap.append(h('div.lm-notice.small', { role: 'status' }, icon('info'), structureNote));
+    if (selected) showPanel(st, obj, rootObj, env, expand);
+    if (mode === 'graph' && focusAfter && focusAfter !== 'panel') wrap.querySelector(`.node[data-name="${CSS.escape(focusAfter)}"]`)?.focus({ preventScroll: true });
+    else if (mode === 'list' && focusAfter && focusAfter !== 'panel') wrap.querySelector(`.lm-row[data-name="${CSS.escape(focusAfter)}"]`)?.focus({ preventScroll: true });
+    if (focusAfter !== 'panel') focusAfter = null;
+  };
+  const showPanel = (st, obj, rootObj, env, expand) => {
+    const token = panelToken, pick = selected;
+    const close = () => { focusAfter = pick; selected = null; drawMap(); };
+    let build;
+    if (pick === '__hub' || pick === obj.name) build = async () => sidePanel(pick === '__hub' ? null : obj, env, data, close, ctx, rootObj, selectionHooks());
+    else if (pick.startsWith('group:')) {
+      const g = st.groups.find((x) => x.id === pick.slice(6));
+      build = g ? () => groupPanel(g, st, ctx, close, expand) : null;
+    } else if (pick.startsWith('more:')) {
+      const g = st.groups.find((x) => x.id === pick.slice(5));
+      build = g ? async () => morePanel(g, st, ctx, close, expand) : null;
+    } else {
+      const n = st.nodes.find((x) => x.id === pick);
+      build = n ? () => nodePanel(n, st, ctx, close) : null;
+    }
+    if (!build) return;
+    Promise.resolve(build()).then((el) => {
+      if (token !== panelToken || !el) return;                     // the owner moved on while the controls were read
+      wrap.append(el);
+      if (focusAfter === 'panel') { focusAfter = null; focusHeading(el); }
+    }).catch((error) => toast(error.message || String(error), 'warn'));
   };
   await load();
   offs.push(bus.on('map', debounce(load, 300)), bus.on('round', debounce(load, 300)));
@@ -267,7 +387,7 @@ export function nodeMarkup(p, status, sel) {
     <title>${esc(o.name)} — ${esc(k.label)}${ladder.length ? ` — ${done}/${ladder.length} rungs` : ''}</title></g>`;
 }
 
-function sidePanel(obj, env, data, close, ctx, rootObj) {
+function sidePanel(obj, env, data, close, ctx, rootObj, hooks) {
   const panel = h('div.map-side');
   const settings = data.settings;
   const top = h('div.row', h('div.grow', h('div.small.faint', obj ? (KIND[obj.kind]?.label || obj.kind) : 'Workspace'), h('h3', { style: { margin: '2px 0 0', fontSize: '17px' }, tabindex: '-1' }, obj ? obj.name : (ctx.app.state?.workspace?.name || 'Workspace'))),
@@ -277,37 +397,63 @@ function sidePanel(obj, env, data, close, ctx, rootObj) {
   panel.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('.modal-wrap, .drawer, .cmdk')) { e.stopPropagation(); close(); } });
   panel.append(top);
   const target = obj ? ['object', obj.name, obj.name] : ['workspace', 'root', 'the whole workspace'];
-  panel.append(h('div.row.mt-8', h('button.btn.sm', { onclick: () => openNotes(...target) }, icon('note'), 'Comment'),
+  panel.append(h('div.row.mt-8.wrap', h('button.btn.sm', { onclick: () => openNotes(...target) }, icon('note'), 'Comment'),
     obj && obj.kind !== 'excluded' && !obj.root ? h('button.btn.sm', { onclick: async (e) => withBusy(e.currentTarget, async () => {
       const ex = new Set(settings.exclude); ex.add(obj.name); await post('/api/settings', { exclude: [...ex] }); await post('/api/worker/run', { job: 'map' });
       toast(`${obj.name} is excluded: Runesmith will never probe or work on it.`, 'good'); }) }, icon('lock'), 'Exclude') : null,
     obj && obj.kind === 'excluded' ? h('button.btn.sm', { onclick: async (e) => withBusy(e.currentTarget, async () => {
-      await post('/api/settings', { exclude: settings.exclude.filter((x) => x !== obj.name) }); await post('/api/worker/run', { job: 'map' }); toast(`${obj.name} is included again.`, 'good'); }) }, icon('eye'), 'Include') : null));
+      await post('/api/settings', { exclude: settings.exclude.filter((x) => x !== obj.name) }); await post('/api/worker/run', { job: 'map' }); toast(`${obj.name} is included again.`, 'good'); }) }, icon('eye'), 'Include') : null,
+    obj && obj.kind !== 'excluded' && hooks?.showStructure ? h('button.btn.sm', { title: 'Draw this object’s files around it, with the links found in its code', onclick: () => hooks.showStructure(obj.name) }, icon('branch'), 'Show its structure') : null));
+  const f0 = env.workspace_facts || {};
+  panel.append(whatSection(obj ? objectWhat(obj) : `The folder you opened: ${f0.files ?? 0} files in ${plural((env.objects || []).length, 'object')}. The map reads it from disk and from Runesmith’s own records; where it has no evidence it says unknown.`));
+  const ev = section('Evidence');
+  const mapped = `the map written ${when(env.utc)}`;
   if (!obj) {
     const f = env.workspace_facts || {};
     const e = env.environment || {};
-    panel.append(h('div.divider'), h('div.label-text', 'This folder'),
+    ev.append(h('div.label-text', 'This folder'),
       kv([['Path', env.workspace], ['Files', f.files], ['Size', bytes(f.bytes)], ['Top-level entries', f.entries_total], ['Readme', f.readme || 'none'], ['Version control', f.version_control ? 'yes (git)' : 'no']]));
     if (f.top_extensions?.length) {
       const max = f.top_extensions[0][1];
-      panel.append(h('div.label-text.mt-16', 'Kinds of files'), h('div.col.gap-6.mt-8', f.top_extensions.map(([ext, n]) =>
+      ev.append(h('div.label-text.mt-16', 'Kinds of files'), h('div.col.gap-6.mt-8', f.top_extensions.map(([ext, n]) =>
         h('div', h('div.row.small', h('span.mono', ext), h('span.spacer'), h('span.faint', n)), h('div.bar.rune', h('i', { style: { width: `${(n / max) * 100}%` } }))))));
     }
     if (rootObj) {
       const label = KIND[rootObj.kind]?.label || humanize(rootObj.kind);
-      panel.append(h('div.divider'), h('div.row', h('span', { class: 'badge rune' }, label),
+      ev.append(h('div.divider'), h('div.row', h('span', { class: 'badge rune' }, label),
         h('span.small.muted', rootObj.kind === 'folder' ? 'the loose files at the top level' : 'this folder itself')), ...objectDetails(rootObj, env, data));
     }
-    panel.append(h('div.divider'), h('div.label-text', 'This computer'),
+    ev.append(h('div.divider'), h('div.label-text', 'This computer'),
       kv([['System', e.os], ['Python', e.python], ['Processors', e.cpus], ['Free disk', e.disk_free_gb != null ? `${e.disk_free_gb} GB` : '—']]));
-    panel.append(h('div.divider'), h('div.label-text', 'What Runesmith does not know yet'),
-      h('ul.small.muted', { style: { paddingLeft: '18px', margin: '6px 0 0' } }, (env.unknowns || []).map((u) => h('li', u))));
+    ev.append(h('div.divider'), h('div.label-text', 'What Runesmith does not know yet'),
+      h('ul.small.muted', { style: { paddingLeft: '18px', margin: '6px 0 0' } }, (env.unknowns || []).map((u) => h('li', u))),
+      h('div.tiny.faint.lm-src.mt-8', `Source: ${mapped}, from the folder on disk and this computer.`));
+    panel.append(ev);
+    const names = (env.objects || []).filter((o) => !o.root && o.reason !== 'link').map((o) => o.name);
+    automateSection(ctx, ['auto_work', 'interval_minutes', 'probe_tests', 'max_objects', 'read_notes', { id: 'exclude', objects: names }, 'remap'])
+      .then((sec) => panel.append(sec)).catch(() => {});
     return panel;
   }
-  panel.append(...objectDetails(obj, env, data));
-  panel.append(h('div.tiny.faint.mt-16.mono', obj.path));
+  ev.append(...objectDetails(obj, env, data));
+  ev.append(h('div.tiny.faint.mt-16.mono', obj.path),
+    h('div.tiny.faint.lm-src', `Source: ${mapped}${obj.measured_utc ? `; its tests were last measured ${when(obj.measured_utc)}` : '; its tests were not measured by the map'}; each rung names the test run it rests on.`));
+  panel.append(ev);
+  const controls = obj.kind === 'excluded' ? [] : ['watch_tests', { id: 'fix_tests', object: obj.name }, { id: 'exclude', objects: obj.root ? [] : [obj.name] }, 'remap'];
+  if (obj.kind === 'data_reports') controls.push({ id: 'link', label: 'Watch a number in these reports', now: 'A measurement reads the newest report and asks no model.', effect: 'The measurement editor, filled from this map.', button: 'Choose a number to watch', go: ['mission'] });
+  if (obj.kind === 'excluded') panel.append(noAutomation(obj.reason === 'link' ? 'A link to another place is never followed: it can lead out of the folder.' : 'This object is on your never-touch list.',
+    obj.reason === 'link' ? 'the rule that Runesmith never follows a link or junction out of the folder.' : 'Settings → Never touch, or the Include button above.'));
+  else automateSection(ctx, controls).then((sec) => panel.append(sec)).catch(() => {});
   return panel;
 }
+const objectWhat = (o) => ({
+  python_repository: 'A Python project. Its source files and tests can be drawn around it; its tests can be run on a throwaway copy of the folder.',
+  node_repository: 'A Node project. Its source files and tests can be drawn around it; Runesmith does not run npm test, so its tests stay unknown.',
+  document_collection: 'A collection of documents: its pages, the links between them, and whether the links resolve.',
+  website: 'A website: its pages, styles, and whether its links and images resolve.',
+  data_reports: 'A folder of report files (spreadsheets or CSV exports), whose numbers can be watched.',
+  folder: 'A folder Runesmith has no richer template for: it is mapped by what it holds.',
+  excluded: 'A folder on your never-touch list, or a link: it is listed here and never read, probed or worked on.',
+}[o.kind] || 'Something Runesmith found in the folder and could not classify.');
 
 export function objectDetails(obj, env, data) {
   obj = scopedObject(obj);
@@ -382,6 +528,7 @@ function ladderEl(obj) {
     commentable(row, 'rung', `${obj.name}/${r.rung}`, `${obj.name}: ${humanize(r.rung)}`);
     row.querySelector('.note-btn').style.top = '-4px';
     box.append(row);
+    if (r.evidence?.note) box.append(h('div.tiny.faint.lm-src', { style: { marginLeft: '26px' } }, `Source: ${r.evidence.note}`));
   }
   return box;
 }

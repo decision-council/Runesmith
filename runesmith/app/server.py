@@ -679,30 +679,99 @@ def api_models(s: Studio, q, body):
                               key_value=body.get("key"), provider=body.get("provider", ""))
 
 
+def _living(label: str, builder, *args, **kwargs):
+    """One of the living map's builders: (what it built, None), or (None, what could not be read). A builder that fails
+    never takes the older fields of the same answer with it: the map shows them and says what it could not read."""
+    try:
+        return builder(*args, **kwargs), None
+    except Exception as error:                                   # noqa: BLE001 - the page must not fail for a reader
+        return None, f"{label}: {type(error).__name__}: {str(error)[:160]}"
+
+
 @route("GET", r"/api/map/environment")
 def api_map_environment(s: Studio, q, body):
     ws = _ws(s)
     work = _read_json(ws.home / "WORK.json", {})
     env_map = ws.environment_map()
     from runesmith.envmap import MAPPER_REVISION
+    from runesmith.app import living_map
+    statuses = ws.object_statuses(work, env_map or {})
+    ladders, problems = {}, []
+    for obj in (env_map or {}).get("objects", []):
+        if obj.get("kind") == "python_repository":
+            overlay, problem = _living("the test-run ladder of " + obj["name"], living_map.ladder_overlay, ws, obj,
+                                       work=work, env_map=env_map, statuses=statuses)
+            if problem:
+                problems.append(problem)
+            elif overlay:
+                ladders[obj["name"]] = overlay
     return {"map": env_map, "outdated": bool(env_map) and (env_map.get("mapper_revision") or 1) < MAPPER_REVISION,
-            "round": {"utc": work.get("utc"), "objects": ws.object_statuses(work, env_map or {}),
-                                      "details": work.get("details", {})},
-            "settings": {"exclude": ws.settings()["exclude"], "probe_tests": ws.settings()["probe_tests"]}}
+            "round": {"utc": work.get("utc"), "objects": statuses, "details": work.get("details", {})},
+            "settings": {"exclude": ws.settings()["exclude"], "probe_tests": ws.settings()["probe_tests"]},
+            "ladders": ladders, "living_problems": problems}
+
+
+@route("GET", r"/api/map/structure")
+def api_map_structure(s: Studio, q, body):
+    from runesmith.app import living_map
+    expand = tuple(x for x in ((q.get("expand") or [""])[0]).split("|") if x)[:20]
+    return living_map.structure_view(_ws(s), (q.get("object") or [None])[0], expand)
+
+
+@route("GET", r"/api/map/milestone/([A-Za-z0-9_-]+)")
+def api_map_milestone(s: Studio, q, body, milestone_id):
+    from runesmith.app import living_map
+    return living_map.milestone_tries(_ws(s), milestone_id)
 
 
 @route("GET", r"/api/map/self")
 def api_map_self(s: Studio, q, body):
-    return _ws(s).self_view()
+    from runesmith.app import living_map
+    ws = _ws(s)
+    view = ws.self_view()
+    problems = []
+    for key, label, builder in (("lineage_ordered", "the lineage of generations", living_map.lineage_view),
+                                ("metrics", "the self-knowledge metrics", living_map.metrics_view)):
+        built, problem = _living(label, builder, ws)
+        view[key] = built
+        if problem:
+            problems.append(problem)
+    view["living_problems"] = problems
+    return view
 
 
 @route("GET", r"/api/map/development")
 def api_map_development(s: Studio, q, body):
-    return _ws(s).development_view()
+    from runesmith.app import living_map
+    ws = _ws(s)
+    view = ws.development_view()
+    problems = []
+    env_map = ws.environment_map() or {}
+    work = _read_json(ws.home / "WORK.json", {})
+    statuses = ws.object_statuses(work, env_map)
+    ladders = {}
+    for obj in env_map.get("objects", []):
+        if obj.get("kind") == "python_repository":
+            overlay, problem = _living("the test-run ladder of " + obj["name"], living_map.ladder_overlay, ws, obj,
+                                       work=work, env_map=env_map, statuses=statuses)
+            if problem:
+                problems.append(problem)
+            elif overlay:
+                ladders[obj["name"]] = overlay
+    view["ladders"] = ladders
+    for key, label, builder in (("graph", "the plan graph", living_map.plan_graph),
+                                ("lineage_ordered", "the lineage of generations", living_map.lineage_view)):
+        built, problem = _living(label, builder, ws)
+        view[key] = built
+        if problem:
+            problems.append(problem)
+    view["living_problems"] = problems
+    return view
 
 
 @route("GET", r"/api/map/operations")
 def api_map_operations(s: Studio, q, body):
+    from runesmith.app import living_map
     ws = _ws(s)
     inference = ws.inference()
     state = ws.state()
@@ -711,7 +780,7 @@ def api_map_operations(s: Studio, q, body):
     work = {"counts": state["proposals"], "draft_counts": state["drafts"], "opportunities": [None] * state["opportunities"],
             "last_round": state["last_round"], "round_utc": state["round_utc"]}
     judged = state["repairs"]
-    return {"worker": s.worker.snapshot(), "roles": inference["roles"], "role_labels": inference["role_labels"],
+    view = {"worker": s.worker.snapshot(), "roles": inference["roles"], "role_labels": inference["role_labels"],
             "instruments": inference["instruments"], "stats": inference["stats"], "ready": inference["ready"],
             "attention": state["attention"], "trial": gens["trial"], "active_generation": gens["active"],
             "pipeline": {"objects": len(env_map["objects"]),
@@ -720,6 +789,17 @@ def api_map_operations(s: Studio, q, body):
                          "accepted": judged["accepted"], "waiting": work["counts"].get("waiting", 0),
                          "applied": work["counts"].get("applied", 0), "drafts": work["draft_counts"]},
             "last_round": work["last_round"], "round_utc": work["round_utc"], "settings": ws.settings()}
+    problems = []
+    for key, label, builder, args in (("stages", "the stage counters", living_map.stages_view, (ws,)),
+                                      ("roles_evidence", "the model routes' call counters", living_map.roles_evidence,
+                                       (ws, inference["stats"])),
+                                      ("lineage_ordered", "the lineage of generations", living_map.lineage_view, (ws,))):
+        built, problem = _living(label, builder, *args)
+        view[key] = built
+        if problem:
+            problems.append(problem)
+    view["living_problems"] = problems
+    return view
 
 
 @route("GET", r"/api/work")
