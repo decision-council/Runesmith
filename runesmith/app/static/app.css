@@ -659,10 +659,20 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
    band and status tokens, so light and dark both hold. */
 .lm-structure .lm-wedge { fill: var(--bg-3); fill-opacity: .42; stroke: var(--line); stroke-width: 1; }
 .lm-structure .lm-wedge.alt { fill-opacity: .22; }
-.lm-edge { fill: none; stroke: var(--line-2); stroke-width: 1.3; stroke-opacity: .55; transition: stroke-opacity .15s; }
+.lm-structure .lm-subwedge { fill: var(--bg-3); fill-opacity: .4; stroke: var(--text-3); stroke-opacity: .55; stroke-width: 1; stroke-dasharray: 4 4; }
+.lm-leader { fill: none; stroke: var(--line-2); stroke-width: 1; stroke-dasharray: 2 3; }
+.lm-group-label.sub > rect { fill-opacity: .78; }
+/* links: thin and faint until a part is in hand; a failing test's link is the Bad colour; none runs through the hub */
+.lm-edge { fill: none; stroke: var(--text-3); stroke-width: 1.1; stroke-opacity: .42; transition: stroke-opacity .15s; }
 .lm-edge.tests { stroke: var(--sky); stroke-dasharray: 4 4; stroke-opacity: .5; }
-.lm-edge.hot { stroke: var(--accent); stroke-width: 2.4; stroke-opacity: 1; }
-.lm-edge.dim { stroke-opacity: .1; }
+.lm-edge.bad { stroke: var(--band-bad); stroke-opacity: .85; stroke-width: 1.4; }
+.lm-edge.hot { stroke: var(--accent); stroke-width: 2.2; stroke-opacity: 1; }
+.lm-edge.bad.hot { stroke: var(--band-bad); stroke-width: 2.4; }
+.lm-edge.dim { stroke-opacity: .07; }
+.lm-sw { vertical-align: middle; flex: none; }
+.lm-sw-imports, .lm-sw-tests, .lm-sw-bad { fill: none; stroke-width: 1.6; stroke-linecap: round; }
+.lm-sw-imports { stroke: var(--text-3); } .lm-sw-tests { stroke: var(--sky); stroke-dasharray: 4 4; } .lm-sw-bad { stroke: var(--band-bad); stroke-dasharray: 4 4; }
+.lm-key { display: inline-flex; align-items: center; gap: 6px; }
 .lm-part { --c: var(--band-unknown); }
 .lm-part.lm-b-bad { --c: var(--band-bad); } .lm-part.lm-b-minimal { --c: var(--band-minimal); }
 .lm-part.lm-b-optimal { --c: var(--band-optimal); } .lm-part.lm-b-world_class { --c: var(--band-world); }
@@ -680,8 +690,20 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
 .lm-runline svg { width: 15px; height: 15px; color: var(--text-3); flex: none; }
 .lm-mode { margin-left: 4px; } .lm-mode button { padding: 3px 9px; }
 .lm-listbox { max-height: 620px; overflow-y: auto; padding: 56px 388px 56px 14px; }
+/* the structure view keeps its tool bar, notes and legend in the page's flow (nothing sits over the drawing); an open panel
+   takes its own room at the right instead of covering the drawing */
+.map-wrap.lm-flow { display: flex; flex-direction: column; }
+.map-wrap.lm-flow .map-tools { position: static; padding: 12px 14px 6px; flex-wrap: wrap; }
+.map-wrap.lm-flow .lm-notice, .map-wrap.lm-flow .lm-runline, .map-wrap.lm-flow + .lm-runline { position: static; margin: 6px 14px 0; }
+.map-wrap.lm-flow .map-legend { position: static; margin: 8px 14px 12px; gap: 6px 14px; align-items: center; }
+.map-wrap.lm-flow .lm-listbox { padding: 6px 14px 12px; max-height: 640px; }
+.map-wrap.lm-flow.with-panel svg.map { width: calc(100% - 376px); }
+.map-wrap.lm-flow:is(.with-panel, .panel-over) :is(.lm-notice, .lm-runline, .map-legend, .map-tools, .lm-listbox) { margin-right: 388px; }
+.map-wrap.lm-flow.with-panel .lm-listbox { padding-right: 14px; }
 .lm-group { margin-top: 8px; background-color: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; }
 .lm-group > summary { cursor: pointer; padding: 8px 12px; list-style-position: inside; }
+.lm-group > summary .badge { margin-left: 8px; }
+.lm-group > .lm-group { margin: 6px 8px 8px; }
 .lm-rows { list-style: none; margin: 0; padding: 0 6px 6px; }
 .lm-row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; width: 100%; text-align: left; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
 .lm-row:hover, .lm-row.sel { background-color: var(--bg-3); }
@@ -699,6 +721,8 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
 .lm-detail { margin-top: 16px; }
 .lm-detail .map-side { position: static; width: auto; animation: none; }
 @media (max-width: 900px) {
+  .map-wrap.lm-flow.with-panel svg.map { width: 100%; }
+  .map-wrap.lm-flow:is(.with-panel, .panel-over) :is(.lm-notice, .lm-runline, .map-legend, .map-tools, .lm-listbox) { margin-right: 14px; }
   .lm-notice, .lm-runline { position: static; margin: 8px 12px; }
   .lm-listbox { padding: 4px 12px 12px; max-height: none; }
   .map-tools.lm-tools { position: static; padding: 12px 12px 0; flex-wrap: wrap; }
@@ -726,6 +750,9 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
 .lm-state.needs_you i { background: var(--bad); } .lm-state.waiting i { background: transparent; border: 2px dashed var(--text-3); }
 .lm-state.dropped i { background: transparent; border: 2px solid var(--line-2); }
 .lm-track-more { fill: var(--text-2); font-size: 11px; font-family: var(--font); }
+.lm-plan .lm-lane-title { paint-order: stroke; stroke: var(--bg-1); stroke-width: 4px; stroke-linejoin: round; }
+.lm-plan .lm-flag circle { fill: var(--bad); stroke: var(--bg-1); stroke-width: 2; }
+.lm-plan .lm-flag text { fill: #fff; font-family: var(--font); font-size: 12px; font-weight: 800; pointer-events: none; }
 .lm-scroll { overflow-x: auto; max-width: 100%; }
 /* a generation or milestone station in the tracks */
 .lm-station .lm-tick { stroke: #fff; }

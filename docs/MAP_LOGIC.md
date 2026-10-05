@@ -19,8 +19,8 @@ draft and why.
    value and what changes if it is switched ("Scheduled rounds: off. Turning on runs a round every 60 min while the Studio is
    open; each round can spend model calls."). Nothing is sent until the owner presses the control's own button, and Cancel on a
    confirmation sends nothing.
-5. **Stable and bounded.** Deterministic ordering (by folder, then name; by plan order), so a refresh never rearranges the
-   drawing. At most about 60 nodes drawn; beyond that, folders or tracks show "+N more", expandable. Keyboard and screen
+5. **Stable and bounded.** Deterministic placement (section 9: every place has a stated meaning, and no list order, font or chance
+   changes it), so a refresh never rearranges the drawing. At most about 60 nodes drawn; beyond that, folders or tracks show "+N more", expandable. Keyboard and screen
    reader: every node is a Tab stop, Enter opens its panel; a list view carries the same facts. Phone width: one column, the
    list view first. Light and dark.
 6. **Fallback.** If a builder fails, its endpoint still returns the older fields, names what could not be read
@@ -122,8 +122,8 @@ in an object's panel expands it. If the structure cannot be read, the objects ar
   carries at most 50 entries of each of its lists (`imports`, `imported_by`, `tests` on a module, `reaches` on a test file),
   sorted by path; `imports_count`, `imported_by_count`, `tests_count` (modules) and `reaches_count` (test files) hold the true
   totals, and the panel's list ends "… and N more". The facts of a part (its evidence) are built only for the parts the list
-  carries. The layout is a function of the structure alone: folders in path order take sectors of a circle, parts fill rings in
-  name order.
+  carries. The layout is a function of the structure alone and follows section 9: sectors in a fixed order
+  (source, tests beside their source, documents, configuration, data), source files by how central they are.
 - **Empty folder / non-code folder:** an object with no files shows a plain sentence and the objects as before; documents are
   grouped with no edges and the sentence says there is no code to link.
 
@@ -164,7 +164,7 @@ list works on whole objects; automatic apply is limited to the folders allowed i
 
 - **Goals** ("Operating toward"): the owner's goals, as before. Automate: Goals & plan.
 - **Plan graph** (`plan_graph`): milestones as nodes, **prerequisites as edges** (an arrow means "needs this first"; dashed is still
-  open); grouped by track, columns by how many prerequisites deep; color by state: **done**, **ready** (open, nothing it needs is
+  open); grouped by track, columns by how many prerequisites deep (placed as section 9 says); color by state: **done**, **ready** (open, nothing it needs is
   still open), **waiting** (a prerequisite is open; dashed outline), **in progress** (pulse), **needs you** (red outline: its tries
   are used up and it waits, a draft waits for your review, proposed checks wait for your approval, or proposed smaller steps wait
   for your decision), **dropped** (struck through). At most about 60 drawn, in the order needs you, in progress, ready, waiting,
@@ -226,7 +226,12 @@ state, origins from the ledger, the cap), stage counters, metrics samples, the e
 the fixture shape, and this document's Automate table against the code. `tests/studio_use_loops_browser.mjs` series B28 to B31:
 each tab renders; clicking a module, a stage, an organ, a generation and a milestone opens What / Evidence / Automate; every Automate
 control sends exactly its existing request after its existing confirmation, and Cancel sends nothing; the keyboard path, phone
-width, light and dark.
+width, light and dark. The layout of section 9 is checked by `tests/test_map_layout.py` (with the helper `tests/map_layout_dump.mjs`,
+which runs `map-layout.js` under Node): no two names, parts or folder labels overlap, the same layout twice and for any order of the
+lists, the fixed order of the sectors, tests beside the source they reach most and in the order of their modules, parts nearer the
+hub the more they are imported, links that keep out of the hub (including one between opposite sides), the failing test's links in
+the Bad colour, a plan read left to right with even columns and no link behind a milestone; and in the browser by B28.13 to B28.15
+(measured names, hover and focus, the phone list) and B30.07 (the real plan drawing).
 
 ## 7. The Automate mapping
 
@@ -315,3 +320,91 @@ A control with no row above is not offered. A change to a row is a change to the
 19. **Self-knowledge metrics** (this changes the sentences in section 2): under 10 judged sessions a metric has no band, only its value
     and "few sessions"; each arm of a trial names its window ("N judged sessions since the trial opened"); a generation's "made
     active" time is its latest activation, not its first.
+20. **The drawing's layout now carries meaning** (section 9). The first draft ordered folders by path and filled rings in name order,
+    so a tests folder could sit anywhere, a sub-folder was a sector of its own, links curved through the hub, folder names floated
+    away from their sectors and names could touch. Now the sectors have a fixed order (source, the tests beside their source,
+    documents, configuration, data), a sub-folder is inside its parent, source files sit nearer the hub the more they are imported,
+    links never cross the hub and are faint until a part is in hand, names are cut in the middle and never overlap, and the plan
+    graph has even columns, ordered rows, and links that do not run behind a milestone. Nothing was added to what the map says: only
+    where it says it.
+21. **Tests are a sector next to their source, not a band over it.** "Each test file at the angle of the module it reaches" cannot
+    hold for a sector that is next to another (the angles differ), so a test file keeps the *order* of its module, counted from the
+    edge the two sectors share. With source files ordered by how central they are, a tested module is often in an inner ring, so the
+    dashed link is as short as neighbouring sectors allow, not shorter.
+22. **An open panel takes room instead of covering the drawing** (the first draft laid it over the right third of the map, so the
+    selected part, or its links, could be hidden by its own panel). The drawing is smaller while a panel is open; zoom is unchanged.
+
+## 9. Layout: where every part is placed, and why
+
+The geometry is `runesmith/app/static/js/views/map-layout.js`: plain arithmetic, no browser, nothing random and nothing measured, so
+the same project always gives the same drawing and no position depends on the order a list arrives in. Text widths are estimated
+from the letters (generously: a real browser measures 5 to 15 per cent narrower), so the drawing does not depend on a font. It is
+tested by `tests/test_map_layout.py` (the same file run under Node, on fixture projects) and by the browser loops B28.13 to B28.15 and
+B30.07, which measure the real drawing. The purpose of a map is perspective, so the rules below put the same kind of thing in the
+same place every time; none of them adds a fact or a control.
+
+**Environment: hierarchy.** The project is the hub, its folders are sectors (wedges of the circle around it), and its files are the
+parts inside a sector.
+
+- **What a folder is.** The most common kind among the files in it (and in the folders inside it) decides: *source*, *tests*,
+  *documents*, *configuration* or *data and other*; a tie goes in that order. The loose files at the top of the project are one folder
+  ("top level"), sorted the same way. The shared "(other folders)" group always comes last.
+- **Where the sectors go.** Clockwise from 12 o'clock: the source folders, the one with the most files first (the folder's own files
+  and those of the folders inside it count; the path breaks a tie), each followed by the folders of tests that reach it most; then
+  folders of tests that reach no source folder; then documents; then configuration and build; then data and other; then "(other
+  folders)". A sector's width grows with its parts: 60 per cent by its share of the parts and 40 per cent in equal shares, so a small
+  folder is never lost.
+- **Tests beside their source.** A folder of tests sits right after (clockwise) the source sector that holds the most of its test
+  files' main modules, so the two share an edge and the dashed links between them stay as short as neighbours allow. The *main module*
+  of a test file is the one it is named for, else the one it reaches by most reasons, else the first by path; only drawn modules count.
+  (This reconciles "then tests" in the order with "next to the source they reach": the tests come after the source they belong to.)
+- **Inside a source folder: how central.** Files are ordered by how many files import them, most first, then by name; the most
+  imported are nearest the hub, ring by ring outwards, and inside a ring by name. Documents, configuration and data have no links, so
+  they go by name; in a folder that mixes kinds the source files come first.
+- **Inside a folder of tests: the module's place.** Each test file takes its place, in order, by the module it reaches most, counted
+  from the edge the two sectors share (the module nearest that edge gives the first place, so the links nest and do not cross in order);
+  files that reach no module come last, by name. A test file whose module is in its own sector (a folder of tests inside a source
+  folder) counts from that sector's start instead, with no mirroring.
+- **A folder inside a folder.** A folder that sits inside a folder that is itself drawn is a sub-folder: it is drawn inside its
+  parent's wedge with its own share, its own dashed outline and its own label ("ui · 3 files"). One level only: deeper folders join the
+  topmost one. Beyond 12 folders the smallest share one "(other folders)" group, and beyond about 60 parts a folder shows "+N more" as
+  one of its parts (the existing cap; section 1).
+- **Rings and room.** Rings are as far apart as the largest part and its name need, and the parts on a ring are spaced for the boxes
+  their names make (a name is wide at the top and bottom of the circle and narrow at the sides). A last pass moves any part that still
+  touches another, or the hub, outwards along its own line, so no two parts, names, folder labels or the hub's box ever overlap.
+- **Size.** A part's radius is 8 + 4.6 × log10(1 + lines), clamped to 8 to 24 px (a file of about 3,000 lines or more is the largest;
+  a file whose lines are not counted is drawn at 10 px). The legend says so in one line.
+- **Names.** A part's name is drawn at 10 px, at most 16 characters, cut in the middle so that both its beginning and its extension
+  stay ("test_app_en…long_name.py"); the full path is in the part's tooltip and its panel. A folder's label reads "src/bakery · 8
+  files" (a sub-folder by its path inside its parent, a long path cut in the middle); it stands just outside the sector's last ring at
+  the sector's middle angle, and if it would touch a name or another label it moves outwards until clear (a thin dotted line joins it to
+  its sector when it had to move far).
+- **Links.** One thin curve per link: an import is a solid line, a test reaching a module is dashed. All links are faint until a part
+  is in hand: hovering or focusing a part brightens its own links and dims the rest; a selected part keeps its links bright. The links
+  of a failing test file are drawn in the Bad colour, and stay red when bright. No link crosses the hub: a curve bows away from it, as
+  far as it must (so two parts on opposite sides are joined by a curve that goes round). Links are drawn under the parts.
+- **Order for the keyboard and the list.** The drawing lists its parts folder by folder, ring by ring, which is also the Tab order;
+  the list view shows the same folders in the same order (a sub-folder under its parent), the files of a source folder by how central
+  they are.
+- **Around the drawing.** The tool bar, the line naming the test run and the legend are in the page's flow, above and below the
+  drawing, never over it. An open panel takes its own room at the right and the drawing fits in what is left. On a phone the list view
+  is the first view and nothing is wider than the screen.
+
+**Development: the plan graph.**
+
+- **Rows and columns.** One lane per track, in the plan's order; a lane is as tall as its tallest column. A milestone's *depth* is how
+  many prerequisites deep it is (the longest chain behind it). Every depth in use takes one column, so there is no empty column and the
+  columns are evenly spaced; the columns are shared by all lanes, so a milestone sits to the right of everything it needs, even when
+  that is in another lane, and a done milestone sits to the left of what depends on it.
+- **Order inside a column.** By where what it needs sits (the average height of its prerequisites); the plan's own order breaks a tie.
+  Links cross as little as the order allows; the graph never reorders by name.
+- **Links.** Between neighbouring columns a smooth curve; a link that skips a column leaves the right side of its milestone, runs in
+  the space between two rows and enters the left side of the next one, so no link runs behind a milestone. An arrow means "needs this
+  first"; dashed is still open. Track names are drawn over the links, never under them.
+- **Needs you** is marked three ways, never by colour alone: a thick red outline, a red "!" flag on the corner, and the reason on the
+  second line ("1 draft waiting for your review").
+- **Spacing.** Columns are 232 px apart, rows 62 px, lanes 10 px; boxes are 172 by 46 px.
+
+**Self, Operations and the tracks.** Only spacing: the tool bar and the legend sit in the page's flow (the legend no longer covers the
+caption under the ring), and the Self ring is centred in the room left of its panel instead of running under it. The tracks and
+ladders, and Operations, are as they were.

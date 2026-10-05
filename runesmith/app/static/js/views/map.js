@@ -4,7 +4,8 @@ import { h, icon, get, post, bus, toast, commentable, openNotes, clear, ago, plu
 import { iconSvg } from '../icons.js';
 import { bandPosition, fmtCap } from './home.js';
 import { automateSection, whatSection, evidenceSection, section, noAutomation, focusHeading, hhmm, when, panZoom, keyboardNodes, kv, scopedObject, withOverlay } from './map-parts.js';
-import { structureSvg, structureList, nodePanel, groupPanel, morePanel } from './map-structure.js';
+import { structureSvg, structureList, nodePanel, groupPanel, morePanel, wireLinks } from './map-structure.js';
+import { SIZE_NOTE } from './map-layout.js';
 import selfLens from './map-self.js';
 import developmentLens from './map-plan.js';
 import operationsLens from './map-ops.js';
@@ -129,6 +130,7 @@ async function environmentLens(body, ctx) {
     if (!focusAfter && held) focusAfter = held;
     ++panelToken;
     clear(wrap);
+    wrap.classList.remove('lm-flow', 'with-panel');
     const env = data.map;
     if (!env) { wrap.append(h('div.empty', icon('map', 'big'), h('h4', 'Mapping…'), h('p', 'The first map takes a few seconds.'))); return; }
     if (structure && !structure.empty) return drawStructure(env);
@@ -234,13 +236,18 @@ async function environmentLens(body, ctx) {
     const expand = async (gid) => { expanded.has(gid) ? expanded.delete(gid) : expanded.add(gid); selected = `group:${gid}`; await loadStructure(); drawMap(); };
     const tools = h('div.map-tools.lm-tools');
     const content = [];
+    const panelOpen = !!selected && !narrow;
+    wrap.classList.add('lm-flow');
+    wrap.classList.toggle('with-panel', panelOpen);
     let pz = null;
     if (mode === 'graph') {
       const built = structureSvg(st, { selected, centre });
       const holder = h('div', { html: built.markup });
       const svg = holder.firstChild;
-      svg.style.height = `${Math.max(420, Math.min(760, Math.round(availableWidth() * built.height / built.width)))}px`;
+      const room = availableWidth() - (panelOpen ? 372 : 0);          // an open panel takes its own room: nothing is drawn under it
+      svg.style.height = `${Math.max(420, Math.min(820, Math.round(room * built.height / built.width)))}px`;
       pz = panZoom(svg, svg.querySelector('.pz'));
+      wireLinks(svg, selected);
       svg.addEventListener('click', (e) => { const n = e.target.closest('.node'); if (n) pick(n.dataset.name); });
       svg.addEventListener('keydown', (e) => {
         const n = e.target.closest && e.target.closest('.node');
@@ -268,7 +275,12 @@ async function environmentLens(body, ctx) {
     const outside = others.length ? h('div.lm-runline.small', icon('lock'), h('span', `Not drawn: ${others.map((o) => (o.kind === 'excluded' ? `${o.name} (${o.reason === 'link' ? 'a link, not followed' : 'never touched'})` : o.name)).join(', ')}.`)) : null;
     wrap.append(tools, ...content, ...[runLine, outside].filter(Boolean),
       h('div.map-legend.lm-legend', ['bad', 'minimal', 'optimal', 'unknown'].map((b) => h('span', { class: `band ${b}` }, BAND_LABEL[b])),
-        h('span.faint', '● source · ■ test · ▭ document · ▲ config · size grows with lines · dots: gold waits for you, violet changed by Runesmith, blue in an open milestone')));
+        h('span.faint', '● source · ■ test · ▭ document · ▲ config · ◌ data'),
+        h('span.faint.lm-key', h('svg', { class: 'lm-sw', viewBox: '0 0 26 8', width: 26, height: 8, 'aria-hidden': 'true' }, h('path', { class: 'lm-sw-imports', d: 'M1 4H25' })), 'imports'),
+        h('span.faint.lm-key', h('svg', { class: 'lm-sw', viewBox: '0 0 26 8', width: 26, height: 8, 'aria-hidden': 'true' }, h('path', { class: 'lm-sw-tests', d: 'M1 4H25' })), 'a test reaches it'),
+        h('span.faint.lm-key', h('svg', { class: 'lm-sw', viewBox: '0 0 26 8', width: 26, height: 8, 'aria-hidden': 'true' }, h('path', { class: 'lm-sw-bad', d: 'M1 4H25' })), 'a failing test'),
+        h('span.faint', SIZE_NOTE),
+        h('span.faint', 'dots: gold waits for you · violet changed by Runesmith · blue in an open milestone')));
     if (structureNote) wrap.append(h('div.lm-notice.small', { role: 'status' }, icon('info'), structureNote));
     if (selected) showPanel(st, obj, rootObj, env, expand);
     if (mode === 'graph' && focusAfter && focusAfter !== 'panel') wrap.querySelector(`.node[data-name="${CSS.escape(focusAfter)}"]`)?.focus({ preventScroll: true });

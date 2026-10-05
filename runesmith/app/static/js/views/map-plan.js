@@ -4,8 +4,8 @@ import { h, icon, get, toast, commentable, clear, humanize, KIND, plural } from 
 import { esc, trunc, hhmm, when, panel as lmPanel, section, whatSection, evidenceSection, automateSection, noAutomation, focusHeading, keyboardNodes,
   withOverlay } from './map-parts.js';
 import { generationPanel, STATE_SHORT } from './map-self.js';
+import { planLayout, PLAN, midTrunc } from './map-layout.js';
 
-const BOX_W = 172, BOX_H = 46, COL = 232, ROW = 62, LANE_HEAD = 30;
 const STATE_LABEL = { done: 'done', ready: 'ready', waiting: 'waiting', doing: 'in progress', needs_you: 'needs you', dropped: 'dropped' };
 const RUNG_WORDS = {
   source_present: 'The folder holds source files.', tests_present: 'The project has test files.', tests_collect: 'The test runner finds and counts the project’s tests.',
@@ -47,53 +47,40 @@ export default async function developmentLens(body, ctx) {
     }
     const by = new Map(graph.nodes.map((n) => [n.id, n]));
     const shownIds = new Set(graph.nodes.filter((n) => n.drawn || openTracks.has(n.track)).map((n) => n.id));
-    const tracks = graph.tracks.filter((t) => graph.nodes.some((n) => n.track === t.name && shownIds.has(n.id)) || t.more);
     const counts = Object.fromEntries(Object.keys(STATE_LABEL).map((k) => [k, graph.counts[k] || 0]));
     const summary = h('div.row.wrap.small', Object.entries(STATE_LABEL).filter(([k]) => counts[k]).map(([k, label]) => h('span', { class: `lm-state ${k}` }, h('i'), `${counts[k]} ${label}`)));
     const pick = (id) => { planSel = id; openPlanPanel(true); drawPlan(); };
     let content;
     if (planMode === 'graph') {
-      // lanes: one per track; columns by how many prerequisites deep; the stack inside a cell follows the plan's order
-      const lanes = []; let y = 0;
-      const pos = new Map();
-      for (const t of tracks) {
-        const members = graph.nodes.filter((n) => n.track === t.name && shownIds.has(n.id));
-        const stack = new Map();
-        for (const n of members) { const k = n.level; stack.set(k, (stack.get(k) || 0) + 1); pos.set(n.id, { x: 24 + n.level * COL, row: stack.get(k) - 1 }); }
-        const rows = Math.max(1, ...stack.values());
-        const hgt = LANE_HEAD + rows * ROW + (t.more && !openTracks.has(t.name) ? 26 : 8);
-        for (const n of members) { const p = pos.get(n.id); p.y = y + LANE_HEAD + p.row * ROW; }
-        lanes.push({ t, y, hgt, members });
-        y += hgt + 10;
-      }
-      const maxLevel = Math.max(0, ...[...shownIds].map((id) => by.get(id).level));
-      const W = 24 + (maxLevel + 1) * COL + 40, H = y + 10;
+      // one lane per track; a column per prerequisite depth in use (a milestone sits to the right of everything it needs); the
+      // order inside a column follows where what it needs sits; the numbers come from map-layout.js (docs/MAP_LOGIC.md, "Layout")
+      const lay = planLayout(graph, shownIds, openTracks);
+      const { lanes, pos, W, H } = lay;
       let s = `<svg class="lm-plan" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" role="group"
-        aria-label="${esc(`The plan: ${graph.counts.total} milestones in ${tracks.length} tracks, with their prerequisites as links. Tab to a milestone and press Enter for its details, or use the list view.`)}">
+        aria-label="${esc(`The plan: ${graph.counts.total} milestones in ${lay.tracks.length} tracks, with their prerequisites as links. Tab to a milestone and press Enter for its details, or use the list view.`)}">
         <defs><marker id="lm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--line-2)"/></marker></defs>`;
-      for (const l of lanes) {
-        s += `<rect class="lm-lane" x="6" y="${l.y}" width="${W - 12}" height="${l.hgt}" rx="12"/><text x="22" y="${l.y + 19}" class="svg-text" font-size="13" font-weight="680">${esc(trunc(l.t.name, 40))}</text>
-          <text x="${22 + Math.min(300, 8 + l.t.name.length * 7.6)}" y="${l.y + 19}" class="svg-faint" font-size="11">${esc(plural(l.t.total, 'milestone'))}</text>`;
+      for (const l of lanes) s += `<rect class="lm-lane" x="6" y="${l.y}" width="${W - 12}" height="${l.hgt}" rx="12"/>`;
+      for (const e of lay.edges) {
+        s += `<path class="lm-pedge${e.met ? '' : ' unmet'}" marker-end="url(#lm-arrow)" d="${e.d}"><title>${esc(`${by.get(e.to).title} needs ${by.get(e.from).title} first (${e.met ? 'it is settled' : 'still open'})`)}</title></path>`;
       }
-      for (const e of graph.edges) {
-        const a = pos.get(e.from), b = pos.get(e.to);
-        if (!a || !b) continue;
-        const x1 = a.x + BOX_W, y1 = a.y + BOX_H / 2, x2 = b.x, y2 = b.y + BOX_H / 2, mx = (x1 + x2) / 2;
-        s += `<path class="lm-pedge${e.met ? '' : ' unmet'}" marker-end="url(#lm-arrow)" d="M${x1} ${y1} C ${mx} ${y1} ${mx} ${y2} ${x2 - 2} ${y2}"><title>${esc(`${by.get(e.to).title} needs ${by.get(e.from).title} first (${e.met ? 'it is settled' : 'still open'})`)}</title></path>`;
+      for (const l of lanes) {                                    // a track's name over its links, so a link never hides it
+        s += `<text x="22" y="${l.y + 19}" class="svg-text lm-lane-title" font-size="13" font-weight="680">${esc(midTrunc(l.t.name, 40))}</text>
+          <text x="${22 + Math.min(300, 8 + Math.min(40, l.t.name.length) * 7.6)}" y="${l.y + 19}" class="svg-faint lm-lane-title" font-size="11">${esc(plural(l.t.total, 'milestone'))}</text>`;
       }
       for (const l of lanes) {
         for (const n of l.members) {
           const p = pos.get(n.id);
-          const mark = n.state === 'done' ? '✓ ' : n.state === 'needs_you' ? '! ' : '';
+          const mark = n.state === 'done' ? '✓ ' : '';
           const sub = n.state === 'waiting' ? `waiting for ${plural(n.unmet.length, 'prerequisite')}` : n.state === 'needs_you' ? (n.needs[0]?.text || 'needs you') : STATE_LABEL[n.state];
+          const flag = n.state === 'needs_you' ? `<g class="lm-flag" transform="translate(${PLAN.BOX_W - 2},2)"><circle r="9"/><text y="4" text-anchor="middle">!</text></g>` : '';
           s += `<g class="node kb lm-ms ${n.state}${planSel === n.id ? ' sel' : ''}" data-name="${esc(n.id)}" data-note="milestone|${esc(n.id)}" data-note-label="${esc(n.title)}" transform="translate(${p.x},${p.y})" tabindex="0" role="button"
             aria-label="${esc(`${n.title}: ${STATE_LABEL[n.state]}${n.state === 'waiting' ? `, waiting for ${plural(n.unmet.length, 'prerequisite')}` : ''}${n.needs.length ? `. ${n.needs.map((x) => x.text).join('; ')}` : ''}`)}">
-            <rect class="lm-box" width="${BOX_W}" height="${BOX_H}" rx="10"/>
-            <text class="lm-title" x="10" y="19">${esc(mark + trunc(n.title, 24))}</text><text class="lm-sub" x="10" y="35">${esc(trunc(sub, 30))}</text>
+            <rect class="lm-box" width="${PLAN.BOX_W}" height="${PLAN.BOX_H}" rx="10"/>
+            <text class="lm-title" x="10" y="19">${esc(mark + midTrunc(n.title, 24))}</text><text class="lm-sub" x="10" y="35">${esc(midTrunc(sub, 30))}</text>${flag}
             <title>${esc(`${n.title} — ${n.state_words}`)}</title></g>`;
         }
         const t = l.t;
-        if (t.more && !openTracks.has(t.name)) s += `<g class="node kb lm-ms" data-name="more:${esc(t.name)}" transform="translate(24,${l.y + l.hgt - 24})" tabindex="0" role="button" aria-label="${esc(`${t.more} more milestones in ${t.name}, not drawn. Enter to show them.`)}"><rect x="-6" y="-4" width="180" height="22" fill="transparent"/><text class="lm-track-more" y="12">+${t.more} more (finished and later ones)</text></g>`;
+        if (l.more) s += `<g class="node kb lm-ms" data-name="more:${esc(t.name)}" transform="translate(24,${l.y + l.hgt - 24})" tabindex="0" role="button" aria-label="${esc(`${t.more} more milestones in ${t.name}, not drawn. Enter to show them.`)}"><rect x="-6" y="-4" width="180" height="22" fill="transparent"/><text class="lm-track-more" y="12">+${t.more} more (finished and later ones)</text></g>`;
       }
       s += '</svg>';
       const holder = h('div.lm-scroll', { html: s });

@@ -1085,6 +1085,6 @@ def test_the_confirmations_the_map_repeats_are_the_owners_own_words():
 def test_the_map_files_never_print_null_or_read_a_button_after_waiting():
     """Two browser slips tests/test_static_js_hygiene.py already guards, named here for the new files."""
     from test_static_js_hygiene import null_appends, target_after_await
-    for name in ("map.js", "map-parts.js", "map-structure.js", "map-self.js", "map-plan.js", "map-ops.js"):
+    for name in ("map.js", "map-parts.js", "map-layout.js", "map-structure.js", "map-self.js", "map-plan.js", "map-ops.js"):
         text = (VIEWS / name).read_text(encoding="utf-8")
         assert not null_appends(text) and not target_after_await(text), name

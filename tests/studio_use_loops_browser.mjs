@@ -2979,6 +2979,76 @@ try{
     await noOverflow('Environment in the light theme');
     await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
     loops.push({id:'B28.11',case:'Desktop, tablet and phone widths fit without sideways scrolling (the phone starts on the list); light and dark both draw',result:'passed'});
+
+    // ---- the drawing's layout (docs/MAP_LOGIC.md, "Layout"): every placement has a meaning, nothing overlaps, links keep to their part
+    reset();
+    await page.setViewportSize({width:1440,height:1000});
+    await lens('environment');
+    const rects=()=>page.locator('svg.lm-structure').evaluate(svg=>{
+      const rect=el=>{const b=el.getBoundingClientRect();return {x0:b.left,y0:b.top,x1:b.right,y1:b.bottom};};
+      const out=[];
+      for(const n of svg.querySelectorAll('.lm-part')){out.push({name:n.dataset.name+' (shape)',owner:n.dataset.name,...rect(n.querySelector('.lm-shape'))});out.push({name:n.dataset.name+' (name)',owner:n.dataset.name,...rect(n.querySelector('.lm-name-text'))});}
+      for(const n of svg.querySelectorAll('.lm-more'))out.push({name:n.dataset.name,owner:n.dataset.name,...rect(n.querySelector('circle'))});
+      for(const n of svg.querySelectorAll('.lm-group-label'))out.push({name:n.dataset.name+' (folder name)',owner:n.dataset.name,...rect(n.querySelector('rect'))});
+      out.push({name:'hub',owner:'hub',...rect(svg.querySelector('.lm-centre path:nth-of-type(2)'))});
+      return out;});
+    const clashes=list=>{const bad=[];for(let i=0;i<list.length;i++)for(let j=i+1;j<list.length;j++){const a=list[i],b=list[j];
+      if(a.owner!==b.owner&&a.x0<b.x1-0.5&&b.x0<a.x1-0.5&&a.y0<b.y1-0.5&&b.y0<a.y1-0.5)bad.push(a.name+' x '+b.name);}return bad;};
+    let drawn=await rects();
+    assert(drawn.length>st.counts.drawn*2);
+    assert.deepEqual(clashes(drawn),[]);
+    // the folders: the largest source folder first, its tests beside it, then documents and configuration; each says its size
+    const folders=await page.locator('.map-wrap .lm-group-label').evaluateAll(els=>els.map(e=>[e.dataset.name,e.querySelector('text').textContent]));
+    assert.deepEqual(folders.map(f=>f[0]),['group:src/bakery','group:tests','group:scripts','group:docs','group:']);
+    assert.deepEqual(folders.map(f=>f[1]),['src/bakery · 8 files','tests · 5 files','scripts · 2 files','docs · 2 files','top level · 4 files']);
+    const order=await page.locator('.map-wrap .lm-part').evaluateAll(els=>els.map(e=>e.dataset.name));
+    assert.equal(order[0].startsWith('src/bakery/'),true);                            // the keyboard walks the folders in the drawing's order
+    assert.equal(order.findIndex(n=>n.startsWith('tests/'))>order.findLastIndex(n=>n.startsWith('src/bakery/')),true);
+    // the legend says how size is read, in one line, and sits under the drawing, never over it
+    const legend=await page.locator('.lm-legend').innerText();
+    assert(legend.includes('size: lines of code, on a log scale, clamped'));assert(legend.includes('a failing test'));assert(legend.includes('imports'));
+    const under=await page.evaluate(()=>{const svg=document.querySelector('svg.lm-structure').getBoundingClientRect(),legend=document.querySelector('.lm-legend').getBoundingClientRect(),run=document.querySelector('.lm-runline').getBoundingClientRect();return {legend:legend.top>=svg.bottom-1,run:run.top>=svg.bottom-1};});
+    assert.deepEqual(under,{legend:true,run:true});
+    loops.push({id:'B28.13',case:'The folders are placed in the fixed order and say their size; no name, part or the hub overlaps another; the legend states how size is read and sits under the drawing',result:'passed'});
+
+    // links: faint until a part is in hand; the part in hand brightens its own links and dims the rest; a failing test's link is the Bad colour
+    from=requests.length;
+    await page.mouse.move(2,2);                                                          // the pointer is off the drawing: nothing is brightened
+    assert.equal(await page.locator('.lm-edge.hot').count(),0);assert.equal(await page.locator('.lm-edge.dim').count(),0);
+    const part=page.locator('.map-wrap .lm-part[data-name="src/bakery/orders.py"]');
+    await part.hover();
+    const hot=await page.locator('.lm-edge.hot').evaluateAll(els=>els.map(e=>[e.dataset.from,e.dataset.to]));
+    assert(hot.length>=2&&hot.every(([a,b])=>a==='src/bakery/orders.py'||b==='src/bakery/orders.py'));
+    assert.equal(await page.locator('.lm-edge.dim').count(),st.edges.length-hot.length);
+    await page.mouse.move(2,2);
+    assert.equal(await page.locator('.lm-edge.hot').count(),0);assert.equal(await page.locator('.lm-edge.dim').count(),0);
+    await part.focus();                                                                // the keyboard does the same
+    assert((await page.locator('.lm-edge.hot').count())>=2);
+    await page.locator('.map-wrap .lm-part[data-name="src/bakery/legacy.py"]').focus();
+    assert.equal(await page.locator('.lm-edge.hot').count(),0);                        // a part with no link brightens none, and the rest are dim
+    const bad=await page.locator('.lm-edge.bad').evaluateAll(els=>els.map(e=>[e.dataset.from,e.dataset.to,e.classList.contains('tests')]));
+    assert(bad.length>=1&&bad.every(([a,,t])=>a==='tests/test_reports.py'&&t));
+    assert.equal(await page.locator('.lm-edge.imports.bad').count(),0);
+    assert.equal(await page.locator('.lm-edge').count(),st.edges.length);               // links add no second drawing: one path per link
+    assert.deepEqual(posts(from),[]);
+    // selecting keeps the selection's links bright after the pointer leaves; the drawing is not redrawn by a hover
+    await page.locator('.map-wrap .lm-part[data-name="src/bakery/orders.py"]').click();
+    await page.getByRole('region',{name:'Details: src/bakery/orders.py',exact:true}).waitFor();
+    await page.mouse.move(2,2);
+    assert((await page.locator('.lm-edge.hot').count())>=2);
+    drawn=await rects();assert.deepEqual(clashes(drawn),[]);                            // and with the panel open, nothing is drawn under it
+    const room=await page.evaluate(()=>{const svg=document.querySelector('svg.lm-structure').getBoundingClientRect(),side=document.querySelector('.map-side').getBoundingClientRect();return svg.right<=side.left+1;});
+    assert(room);
+    loops.push({id:'B28.14',case:'Hovering or focusing a part brightens its own links and dims the rest; a failing test links to its module in the Bad colour; a selected part keeps its links bright; an open panel takes its own room',result:'passed'});
+
+    // phone: the list is the first view, in the drawing's order, a folder inside a folder under its parent; nothing is wider than the screen
+    await page.setViewportSize({width:390,height:900});await lens('environment');
+    assert.equal(await page.locator('.lm-mode .on').innerText(),'List');
+    const summaries=await page.locator('.lm-list > details.lm-group > summary b').allInnerTexts();
+    assert.deepEqual(summaries,['src/bakery','tests','scripts','docs','(top of the project)']);
+    await noOverflow('the structure list at 390');
+    reset();await page.setViewportSize({width:1440,height:1000});
+    loops.push({id:'B28.15',case:'On a phone the list leads, with the folders in the drawing’s order',result:'passed'});
   }
   if(selected.has('B29')){
     reset();
@@ -3162,6 +3232,26 @@ try{
     await page.evaluate(()=>{document.documentElement.dataset.theme='light';});await page.screenshot({path:path.join(artifacts,'B30-development-light.png'),fullPage:true});
     await noOverflow('Development in the light theme');await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
     loops.push({id:'B30.06',case:'If a builder fails the older tracks are drawn with a plain line; three widths and both themes hold',result:'passed'});
+
+    // ---- the plan graph's layout (docs/MAP_LOGIC.md, "Layout"): rows by track, columns by depth, no link behind a milestone, needs-you marked
+    reset();
+    await page.setViewportSize({width:1440,height:1100});
+    await lens('development');
+    const plan=await page.locator('svg.lm-plan').evaluate((svg)=>{
+      const boxes=[...svg.querySelectorAll('.lm-ms[data-name]:not([data-name^="more:"])')].map(g=>{const b=g.querySelector('.lm-box').getBoundingClientRect();return {id:g.dataset.name,x0:b.left,x1:b.right,y0:b.top,y1:b.bottom};});
+      const ctm=svg.getScreenCTM();
+      const links=[...svg.querySelectorAll('.lm-pedge')].map(p=>{const len=p.getTotalLength(),pts=[];for(let i=0;i<=60;i++){const q=p.getPointAtLength(len*i/60);pts.push({x:q.x*ctm.a+ctm.e,y:q.y*ctm.d+ctm.f});}return pts;});
+      return {boxes,links,flags:svg.querySelectorAll('.lm-flag').length,needs:svg.querySelectorAll('.lm-ms.needs_you').length};});
+    const dev=living.development.graph;
+    assert.equal(plan.boxes.length,dev.counts.drawn);
+    const at=Object.fromEntries(plan.boxes.map(b=>[b.id,b]));
+    for(const e of dev.edges)assert(at[e.to].x0>at[e.from].x1,'a milestone sits to the right of everything it needs');
+    for(const a of plan.boxes)for(const b of plan.boxes)if(a.id<b.id)assert(!(a.x0<b.x1&&b.x0<a.x1&&a.y0<b.y1&&b.y0<a.y1),`${a.id} overlaps ${b.id}`);
+    plan.links.forEach((pts,i)=>{const e=dev.edges[i];for(const q of pts)for(const b of plan.boxes)if(b.id!==e.from&&b.id!==e.to)assert(!(q.x>b.x0+1&&q.x<b.x1-1&&q.y>b.y0+1&&q.y<b.y1-1),`a link runs behind ${b.id}`);});
+    assert.equal(plan.needs,dev.counts.needs_you);assert.equal(plan.flags,plan.needs);      // a milestone that needs you wears a flag, besides its red outline
+    const xs=[...new Set(plan.boxes.map(b=>Math.round(b.x0)))].sort((a,b)=>a-b);
+    const gaps=xs.slice(1).map((x,i)=>x-xs[i]);assert(gaps.every(g=>Math.abs(g-gaps[0])<2),'columns are evenly spaced');
+    loops.push({id:'B30.07',case:'The plan reads left to right (a milestone right of everything it needs), boxes never overlap, no link runs behind a box, a milestone that needs you is flagged, columns are evenly spaced',result:'passed'});
   }
   if(selected.has('B31')){
     reset();

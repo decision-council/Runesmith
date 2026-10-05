@@ -1,53 +1,13 @@
 // The structure graph of one mapped object: its files around the project, grouped by folder, with the links found in the
-// code, and a list view that carries the same facts for the keyboard and screen readers (docs/MAP_LOGIC.md, section 1).
+// code, and a list view that carries the same facts for the keyboard and screen readers (docs/MAP_LOGIC.md, sections 1 and 9).
+// Where every part goes is decided in map-layout.js (pure geometry, tested without a browser); this file draws it.
 import { h, icon, clear, plural, BAND_LABEL, BAND_COLOR } from '../core.js';
-import { esc, trunc, hhmm, panel, section, whatSection, evidenceSection, automateSection, noAutomation } from './map-parts.js';
+import { esc, hhmm, panel, section, whatSection, evidenceSection, automateSection, noAutomation } from './map-parts.js';
+import { structureLayout, radiusOf, sectorPlan, listOrder, WIDE } from './map-layout.js';
 
-const SLOT = 80, R0 = 122, DR = 60, GAP = 0.05, WIDE = 1.2;
+export { radiusOf, structureLayout };
 export const KIND_LABEL = { module: 'Source file', test: 'Test file', doc: 'Document', config: 'Configuration', data: 'Data or other file' };
 const GLYPH = { bad: '✕', optimal: '✓', minimal: '–', unknown: '?', world_class: '★' };
-
-/** Radius of a part: it grows with its lines, on a log scale, clamped. */
-export const radiusOf = (lines) => (lines == null ? 10 : Math.max(8, Math.min(24, 8 + 4.6 * Math.log10(1 + Math.max(0, lines)))));
-
-/** Places every drawn part. Folders take sectors of the circle in path order; inside a sector the parts fill rings from the
- *  centre outwards in name order. The same structure always gives the same drawing: nothing here is random or measured. */
-export function structureLayout(st, wide = WIDE) {
-  const groups = st.groups.map((g) => ({ ...g, items: [] }));
-  const byId = new Map(groups.map((g) => [g.id, g]));
-  for (const n of st.nodes.filter((x) => x.drawn)) byId.get(n.group)?.items.push({ kind: 'node', n });
-  for (const g of groups) { g.items.sort((a, b) => (a.n.id < b.n.id ? -1 : 1)); if (g.more > 0) g.items.push({ kind: 'more', g }); }
-  const live = groups.filter((g) => g.items.length);
-  const total = live.reduce((a, g) => a + g.items.length, 0) || 1;
-  const usable = 2 * Math.PI - GAP * live.length;
-  let a0 = -Math.PI / 2;
-  const points = new Map(), wedges = [];
-  for (const g of live) {
-    g.angle = usable * (0.6 * (g.items.length / total) + 0.4 / live.length);
-    let i = 0, k = 0, first = a0;
-    while (i < g.items.length) {
-      const r = R0 + k * DR;
-      const take = Math.min(Math.max(1, Math.floor((g.angle * r * wide) / SLOT)), g.items.length - i);
-      for (let j = 0; j < take; j++) {
-        const t = a0 + ((j + 0.5) * g.angle) / take;
-        const item = g.items[i + j];
-        points.set(item.kind === 'node' ? item.n.id : `more:${g.id}`, { x: Math.cos(t) * r * wide, y: Math.sin(t) * r, r: item.kind === 'node' ? radiusOf(item.n.lines) : 15, ring: k });
-      }
-      i += take; k++;
-    }
-    const wedge = { g, a0: first, a1: first + g.angle, rOut: R0 + (k - 1) * DR + 40, rings: k };
-    const t = (wedge.a0 + wedge.a1) / 2, r = wedge.rOut + 14 + (wedges.length % 2) * 14;     // its name, just outside its outermost ring
-    wedge.label = { x: Math.cos(t) * r * wide, y: Math.sin(t) * r, anchor: Math.abs(Math.cos(t)) < 0.3 ? 'middle' : Math.cos(t) > 0 ? 'start' : 'end' };
-    wedges.push(wedge);
-    a0 += g.angle + GAP;
-  }
-  const xs = [...points.values()].flatMap((p) => [p.x - 54, p.x + 54]), ys = [...points.values()].flatMap((p) => [p.y - 40, p.y + 46]);
-  const lx = wedges.flatMap((w) => [w.label.x - (w.label.anchor === 'end' ? 120 : w.label.anchor === 'middle' ? 60 : 0), w.label.x + (w.label.anchor === 'start' ? 120 : w.label.anchor === 'middle' ? 60 : 0)]);
-  const ly = wedges.flatMap((w) => [w.label.y - 16, w.label.y + 14]);
-  const minX = Math.min(-120, ...xs, ...lx), maxX = Math.max(120, ...xs, ...lx);
-  const minY = Math.min(-110, ...ys, ...ly), maxY = Math.max(110, ...ys, ...ly);
-  return { points, wedges, bounds: { minX, maxX, minY, maxY }, wide };
-}
 
 const shape = (n, r) => {
   if (n.kind === 'test') return `<rect x="${-r}" y="${-r}" width="${2 * r}" height="${2 * r}" rx="4"/>`;
@@ -64,47 +24,45 @@ export function spokenNode(n) {
   return [`${n.id}: ${KIND_LABEL[n.kind] || n.kind}`, n.lines != null ? `${n.lines} lines` : '', `${BAND_LABEL[n.state.band]}: ${n.state.reason}`, badges].filter(Boolean).join(', ');
 }
 
-const wedgePath = (w, wide) => {
-  const rIn = R0 - 42, steps = Math.max(4, Math.ceil((w.a1 - w.a0) / 0.12));
+const wedgePath = (a0, a1, rIn, rOut) => {
+  const steps = Math.max(4, Math.ceil((a1 - a0) / 0.1));
   const outer = [], inner = [];
   for (let i = 0; i <= steps; i++) {
-    const t = w.a0 + ((w.a1 - w.a0) * i) / steps;
-    outer.push(`${(Math.cos(t) * w.rOut * wide).toFixed(1)} ${(Math.sin(t) * w.rOut).toFixed(1)}`);
-    inner.push(`${(Math.cos(t) * rIn * wide).toFixed(1)} ${(Math.sin(t) * rIn).toFixed(1)}`);
+    const t = a0 + ((a1 - a0) * i) / steps;
+    outer.push(`${(Math.cos(t) * rOut * WIDE).toFixed(1)} ${(Math.sin(t) * rOut).toFixed(1)}`);
+    inner.push(`${(Math.cos(t) * rIn * WIDE).toFixed(1)} ${(Math.sin(t) * rIn).toFixed(1)}`);
   }
   return `M ${outer.join(' L ')} L ${inner.reverse().join(' L ')} Z`;
 };
 
 /** The structure drawing as SVG markup, plus the facts the page needs about it. */
-export function structureSvg(st, { selected, centre, wsName, groupsOpen }) {
+export function structureSvg(st, { selected, centre }) {
   const lay = structureLayout(st);
-  const { points, wedges, bounds, wide } = lay;
-  const pad = 40, W = bounds.maxX - bounds.minX + 2 * pad, H = bounds.maxY - bounds.minY + 2 * pad + 40;
-  const top = bounds.minY - pad - 40;
+  const { points, sectors, labels, edges, bounds } = lay;
+  const pad = 28, W = bounds.maxX - bounds.minX + 2 * pad, H = bounds.maxY - bounds.minY + 2 * pad;
   const byId = new Map(st.nodes.map((n) => [n.id, n]));
-  const hot = selected && !selected.startsWith('group:') && !selected.startsWith('more:') ? selected : null;
-  let s = `<svg class="map lm-structure" viewBox="${bounds.minX - pad} ${top} ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" role="group"
+  const groupOf = new Map(st.groups.map((g) => [g.id, g]));
+  const hot = selected && !selected.startsWith('group:') && !selected.startsWith('more:') && byId.has(selected) ? selected : null;
+  let s = `<svg class="map lm-structure" viewBox="${(bounds.minX - pad).toFixed(1)} ${(bounds.minY - pad).toFixed(1)} ${W.toFixed(1)} ${H.toFixed(1)}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" role="group"
     aria-label="${esc(`Structure of ${centre.name}: ${st.counts.drawn} of ${st.counts.files} files drawn around the project, ${st.counts.edges} links between them. Tab to a part and press Enter for its details, or use the list view.`)}"><defs><radialGradient id="hubg" cx="50%" cy="40%" r="70%"><stop offset="0" stop-color="#f8dc94"/><stop offset=".6" stop-color="#e8b04a"/><stop offset="1" stop-color="#c58a34"/></radialGradient></defs><g class="pz">`;
-  wedges.forEach((w, i) => {
-    s += `<path class="lm-wedge${i % 2 ? ' alt' : ''}" d="${wedgePath(w, wide)}"/>`;
+  sectors.forEach((w, i) => {                                   // a folder's sector, and the folders inside it
+    s += `<path class="lm-wedge${i % 2 ? ' alt' : ''}" d="${wedgePath(w.a0, w.a1, w.rIn, w.rOut)}"/>`;
+    for (const rg of w.regions.slice(1)) s += `<path class="lm-subwedge" d="${wedgePath(rg.a0, rg.a1, w.rIn + 4, rg.rOut)}"/>`;
   });
-  // links first, so the parts sit on top of them
-  for (const e of st.edges) {
-    const a = points.get(e.from), b = points.get(e.to);
-    if (!a || !b) continue;
-    const mx = ((a.x + b.x) / 2) * 0.55, my = ((a.y + b.y) / 2) * 0.55;
+  // links first, so the parts sit on top of them: thin, faint, and brighter only for the part in hand
+  for (const e of edges) {
     const on = hot && (e.from === hot || e.to === hot);
-    s += `<path class="lm-edge ${e.type}${on ? ' hot' : hot ? ' dim' : ''}" d="M${a.x.toFixed(1)} ${a.y.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${b.x.toFixed(1)} ${b.y.toFixed(1)}"><title>${esc(`${e.type === 'tests' ? 'tests' : 'imports'}: ${e.from} → ${e.to} (${(e.how || []).join('; ')})`)}</title></path>`;
+    s += `<path class="lm-edge ${e.type}${e.bad ? ' bad' : ''}${on ? ' hot' : hot ? ' dim' : ''}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" d="${e.d}"><title>${esc(`${e.type === 'tests' ? 'a test reaches' : 'imports'}: ${e.from} → ${e.to} (${e.how.join('; ')})${e.bad ? ' - the test is failing' : ''}`)}</title></path>`;
   }
-  // the centre: the project itself
   s += `<g class="node lm-centre${selected === centre.id ? ' sel' : ''}" data-name="${esc(centre.id)}" data-kind="centre" data-note="${esc(centre.note)}" data-note-label="${esc(centre.name)}"
     tabindex="0" role="button" aria-label="${esc(centre.spoken)}"><path class="halo" d="M-56 -86 L56 -86 L86 -56 L86 56 L56 86 L-56 86 L-86 56 L-86 -56 Z" fill="none" stroke="#e8b04a" stroke-opacity=".35" stroke-width="8"/>
     <path d="M-42 -66 L42 -66 L66 -42 L66 42 L42 66 L-42 66 L-66 42 L-66 -42 Z" fill="url(#hubg)"/>
     <path d="M-37.9 -56 L37.9 -56 L56 -37.9 L56 37.9 L37.9 56 L-37.9 56 L-56 37.9 L-56 -37.9 Z" fill="var(--bg-1)"/>${centre.markup}</g>`;
   for (const [id, p] of points) {
+    const at = `translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`;
     if (id.startsWith('more:')) {
-      const gid = id.slice(5), g = st.groups.find((x) => x.id === gid);
-      s += `<g class="node lm-more${selected === id ? ' sel' : ''}" data-name="${esc(id)}" data-kind="more" transform="translate(${p.x.toFixed(1)},${p.y.toFixed(1)})" tabindex="0" role="button"
+      const gid = id.slice(5), g = groupOf.get(gid);
+      s += `<g class="node lm-more${selected === id ? ' sel' : ''}" data-name="${esc(id)}" data-kind="more" transform="${at}" tabindex="0" role="button"
         aria-label="${esc(`${g.more} more files in ${g.label}, not drawn. Enter to see them.`)}"><rect x="-24" y="-18" width="48" height="52" fill="transparent"/><circle r="15" fill="var(--bg-2)" stroke="var(--line-2)" stroke-width="1.6" stroke-dasharray="3 3"/>
         <text text-anchor="middle" y="4" class="svg-text" font-size="11" font-weight="700">+${g.more}</text><text text-anchor="middle" y="30" class="svg-faint" font-size="9.5">more</text><title>${esc(`+${g.more} more files in ${g.label}`)}</title></g>`;
       continue;
@@ -112,40 +70,63 @@ export function structureSvg(st, { selected, centre, wsName, groupsOpen }) {
     const n = byId.get(id);
     const dots = (n.badges || []).filter((b) => BADGE_DOT[b.kind]).slice(0, 3).map((b, i) => `<circle cx="${p.r * 0.85 + 2}" cy="${-p.r * 0.85 + i * 8}" r="3.4" fill="${BADGE_DOT[b.kind]}"><title>${esc(b.text)}</title></circle>`).join('');
     s += `<g class="node lm-part lm-b-${n.state.band}${selected === id ? ' sel' : ''}" data-name="${esc(id)}" data-kind="part" data-note="file|${esc(centre.name)}/${esc(id)}" data-note-label="${esc(id)}"
-      transform="translate(${p.x.toFixed(1)},${p.y.toFixed(1)})" tabindex="0" role="button" aria-label="${esc(spokenNode(n))}">
+      transform="${at}" tabindex="0" role="button" aria-label="${esc(spokenNode(n))}">
       <rect x="-42" y="${-p.r - 8}" width="84" height="${2 * p.r + 30}" fill="transparent"/>
       <rect class="halo" x="${-p.r - 7}" y="${-p.r - 7}" width="${2 * p.r + 14}" height="${2 * p.r + 14}" rx="${p.r + 7}" fill="none" stroke="${BAND_COLOR[n.state.band]}" stroke-opacity=".4" stroke-width="5"/>
       <g class="lm-shape">${shape(n, p.r)}</g>
       <text text-anchor="middle" y="4" class="lm-glyph" font-size="${Math.max(9, Math.min(13, p.r * 0.7))}">${GLYPH[n.state.band]}</text>${dots}
-      <text text-anchor="middle" y="${p.r + 13}" class="svg-muted" font-size="10">${esc(trunc(n.name, 15))}</text>
+      <text text-anchor="middle" y="${p.r + 13}" class="svg-muted lm-name-text" font-size="10">${esc(p.label)}</text>
       <title>${esc(`${n.id} — ${KIND_LABEL[n.kind]} — ${BAND_LABEL[n.state.band]}`)}</title></g>`;
   }
-  for (const w of wedges) {                                   // a folder's name, just outside its outermost ring
-    const { x, y, anchor } = w.label;
-    const label = w.g.id === '' ? 'top level' : w.g.id.split('/').slice(-2).join('/');
-    s += `<g class="node lm-group-label${selected === `group:${w.g.id}` ? ' sel' : ''}" data-name="group:${esc(w.g.id)}" data-kind="group" transform="translate(${x.toFixed(1)},${y.toFixed(1)})" tabindex="0" role="button"
-      aria-label="${esc(`Folder ${w.g.label}: ${plural(w.g.files, 'file')}`)}"><rect x="${anchor === 'end' ? -118 : anchor === 'middle' ? -59 : 0}" y="-13" width="118" height="22" rx="8" fill="var(--bg-2)" fill-opacity=".85" stroke="var(--line-2)"/>
-      <text x="${anchor === 'end' ? -59 : anchor === 'middle' ? 0 : 59}" y="2" text-anchor="middle" class="svg-text" font-size="10.5" font-weight="650">${esc(trunc(label, 17))} · ${w.g.files}</text><title>${esc(`${w.g.label}: ${plural(w.g.files, 'file')}`)}</title></g>`;
+  for (const lb of labels) {                                    // a folder's name and size, outside its outermost ring
+    const g = groupOf.get(lb.gid), rx = lb.anchor === 'end' ? -lb.w : lb.anchor === 'middle' ? -lb.w / 2 : 0;
+    if (lb.leader) {
+      const w = sectors.find((x) => x.regions.some((r) => r.id === lb.gid)), rg = w.regions.find((r) => r.id === lb.gid);
+      s += `<path class="lm-leader" d="M${(Math.cos(lb.t) * rg.rOut * WIDE).toFixed(1)} ${(Math.sin(lb.t) * rg.rOut).toFixed(1)} L${lb.x.toFixed(1)} ${lb.y.toFixed(1)}"/>`;
+    }
+    s += `<g class="node lm-group-label${lb.sub ? ' sub' : ''}${selected === `group:${lb.gid}` ? ' sel' : ''}" data-name="group:${esc(lb.gid)}" data-kind="group" transform="translate(${lb.x.toFixed(1)},${lb.y.toFixed(1)})" tabindex="0" role="button"
+      aria-label="${esc(`Folder ${g.label}: ${plural(g.files, 'file')}`)}"><rect x="${rx.toFixed(1)}" y="-11" width="${lb.w}" height="22" rx="8" fill="var(--bg-2)" fill-opacity=".92" stroke="var(--line-2)"/>
+      <text x="${(rx + lb.w / 2).toFixed(1)}" y="3.5" text-anchor="middle" class="svg-text lm-group-text" font-size="${lb.size}" font-weight="650">${esc(lb.text)}</text><title>${esc(`${g.label}: ${plural(g.files, 'file')}`)}</title></g>`;
   }
   s += '</g></svg>';
-  return { markup: s, width: W, height: H };
+  return { markup: s, width: W, height: H, layout: lay };
 }
 
-/** The list view: every part, in folders, as buttons in the page's normal tab order. */
+/** A part in hand brightens its own links and dims the rest; leaving it restores the selected part's. Classes only: the
+ *  drawing is never redrawn for a hover, so the focus and the pointer stay where they are. */
+export function wireLinks(svg, selected) {
+  const links = [...svg.querySelectorAll('.lm-edge')];
+  const base = selected && !selected.startsWith('group:') && !selected.startsWith('more:') && svg.querySelector(`.lm-part[data-name="${CSS.escape(selected)}"]`) ? selected : null;
+  const show = (id) => {
+    for (const e of links) { const on = !!id && (e.dataset.from === id || e.dataset.to === id); e.classList.toggle('hot', on); e.classList.toggle('dim', !!id && !on); }
+  };
+  const part = (e) => e.target.closest?.('.node.lm-part');
+  const left = (e) => { const n = part(e); return n && !(e.relatedTarget && n.contains(e.relatedTarget)); };
+  svg.addEventListener('pointerover', (e) => { const n = part(e); if (n) show(n.dataset.name); });
+  svg.addEventListener('pointerout', (e) => { if (left(e)) show(base); });
+  svg.addEventListener('focusin', (e) => { const n = part(e); if (n) show(n.dataset.name); });
+  svg.addEventListener('focusout', (e) => { if (left(e)) show(base); });
+}
+
+/** The list view: every part, in the folders of the drawing in the order the drawing places them (a folder inside a folder under
+ *  its parent), as buttons in the page's normal tab order. */
 export function structureList(st, onPick, selected) {
   const box = h('div.lm-list', { role: 'group', 'aria-label': `List view: ${plural(st.nodes.length, 'file')} with their states` });
-  const groups = st.groups;
-  for (const [gi, g] of groups.entries()) {
-    const members = st.nodes.filter((n) => n.group === g.id);
-    if (!members.length) continue;
+  const plan = sectorPlan(st);
+  const folder = (g, subs, index) => {
+    const members = listOrder(plan.byGroup.get(g.id) || []);
     const bad = members.filter((n) => n.state.band === 'bad').length;
-    box.append(h('details.lm-group', { open: gi < 3 || members.some((n) => selected === n.id) || bad > 0 },
+    const inside = subs.flatMap((x) => plan.byGroup.get(x.id) || []);
+    const open = index < 3 || [...members, ...inside].some((n) => selected === n.id) || bad > 0;
+    return h('details.lm-group', { open, class: index < 0 ? 'lm-subgroup' : '' },
       h('summary', h('b', g.label), ` · ${plural(g.files, 'file')}`, bad ? h('span.badge.bad', `${bad} bad`) : null),
       h('ul.lm-rows', { role: 'list' }, members.map((n) => h('li', h('button.lm-row', { type: 'button', 'data-name': n.id, 'aria-label': spokenNode(n), class: selected === n.id ? 'sel' : '', onclick: () => onPick(n.id) },
         h('span.lm-kind', KIND_LABEL[n.kind]), h('span.lm-name.mono', n.name), h('span', { class: `band ${n.state.band}` }, BAND_LABEL[n.state.band]),
         n.lines != null ? h('span.tiny.faint', `${n.lines} lines`) : null,
-        ...(n.badges || []).slice(0, 3).map((b) => h('span.badge.rune', b.text))))))));
-  }
+        ...(n.badges || []).slice(0, 3).map((b) => h('span.badge.rune', b.text)))))),
+      ...subs.map((x) => folder(x, [], -1)));
+  };
+  plan.sectors.forEach((sec, i) => { if ((plan.byGroup.get(sec.own.id) || []).length || sec.subs.length) box.append(folder(sec.own, sec.subs, i)); });
   if (st.counts.files > st.nodes.length) box.append(h('p.small.muted', `The list holds ${st.nodes.length} of ${st.counts.files} files: a folder this large is read in part. The counts above are the whole folder's.`));
   return box;
 }

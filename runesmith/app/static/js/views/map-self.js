@@ -62,8 +62,11 @@ export default async function selfLens(body, ctx) {
 
   const draw = () => {
     clear(wrap);
+    wrap.classList.add('lm-flow');                         // the tool bar, legend and notes sit in the flow, under nothing
+    const beside = !!current && window.matchMedia?.('(min-width: 901px)').matches;     // the panel stands at the right: the ring is centred in what is left
+    wrap.classList.toggle('panel-over', beside);
     const R1 = 190, R2 = 262, N = kernel.length;
-    let s = `<svg class="map" viewBox="-560 -330 1120 660" xmlns="http://www.w3.org/2000/svg"><defs>
+    let s = `<svg class="map" viewBox="${beside ? '-540 -330 1208 660' : '-560 -330 1120 660'}" xmlns="http://www.w3.org/2000/svg"><defs>
       <radialGradient id="core" r="60%"><stop offset="0" stop-color="#f8dc94"/><stop offset=".55" stop-color="#e8b04a"/><stop offset="1" stop-color="#c58a34"/></radialGradient>
       <radialGradient id="coreHalo" r="50%"><stop offset="0" stop-color="#e8b04a" stop-opacity=".4"/><stop offset="1" stop-color="#e8b04a" stop-opacity="0"/></radialGradient></defs><g class="pz">`;
     s += `<circle r="${R2 + 34}" fill="none" stroke="var(--line)" stroke-dasharray="2 8"><animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="140s" repeatCount="indefinite"/></circle>`;
