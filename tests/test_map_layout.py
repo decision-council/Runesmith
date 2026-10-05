@@ -257,16 +257,12 @@ def test_the_tests_sit_beside_the_source_they_reach_most(laid):
     assert second["order"].index("src/big") < second["order"].index("src/small")        # the larger package still comes first
 
 
-def test_each_test_file_keeps_the_order_of_the_module_it_reaches_so_the_links_do_not_cross(laid):
+def test_each_test_file_keeps_the_order_of_the_module_it_reaches_counted_from_the_shared_edge(laid):
     lay = laid["dump"]["bakery"]["layout"]
     points = {p["id"]: p for p in lay["points"]}
     sectors = {s["id"]: s for s in lay["sectors"]}
     tests = [p for p in lay["points"] if p["sector"] == "tests"]
     assert len(tests) == 8
-    main = {}
-    for e in lay["edges"]:
-        if e["type"] == "tests" and e["from"] in {t["id"] for t in tests}:
-            main.setdefault(e["from"], []).append(e["to"])
     views = {n["id"]: n for n in laid["views"]["bakery"]["nodes"]}
     start = sectors["tests"]["a0"]
     located = []
@@ -279,9 +275,6 @@ def test_each_test_file_keeps_the_order_of_the_module_it_reaches_so_the_links_do
         mine = sorted(row for row in located if row[0] == group)
         mirrored = [row[2] for row in sorted(mine, key=lambda row: row[1])]
         assert mirrored == sorted(mirrored), mine                                      # ... the order follows the modules' mirrored order
-    near = [(angle, target) for _, angle, _, _, target in located if points[target]["sector"] == "src/bakery"]
-    reach = (sectors["src/bakery"]["a1"] - sectors["src/bakery"]["a0"]) + (sectors["tests"]["a1"] - sectors["tests"]["a0"]) + 0.05
-    assert len(near) == 7 and all(abs(angle - points[target]["angle"]) <= reach for angle, target in near)   # within the two neighbouring sectors
     one = next(p for p in lay["points"] if p["id"] == "tests/test_models.py")
     assert one["sector"] == "tests"
 

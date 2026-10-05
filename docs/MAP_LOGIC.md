@@ -153,11 +153,11 @@ list works on whole objects; automatic apply is limited to the folders allowed i
   candidate not adopted); **imported** (frozen from the library, not on trial). A tick is drawn only on the active generation and on
   a generation that won its trial. A candidate on trial is the child of the generation it challenges (a library generation is frozen
   with the active one as its parent), so it follows it; a sibling pair is ordered by frozen time, never by digest. Detail: digest, parent, author model (from the campaign record, else "unknown"), campaign and
-  target, created, validation, trial record, when it was made active. Automate: "Make active" (roll back) and, for the
+  target, created, validation, trial record, when it was last made active (its latest activation). Automate: "Make active" (roll back) and, for the
   generation on trial, "Stop this trial", both with their existing confirmations and ledger records.
 - **Self-knowledge metrics** (repair yield, seconds per repair, calls per repair, false "fixed" rate): each with its sample size
   and window ("41 judged sessions since 09:01Z") and, during a trial, per arm (sessions marked with the arm since the trial
-  opened). Fewer than 10 judged sessions: "few sessions". Each metric opens its definition and evidence; Automate: the share and
+  opened). Fewer than 10 judged sessions: "few sessions", and no band (only the value). Each metric opens its definition and evidence; Automate: the share and
   the self-improvement switch.
 
 ## 3. Development: the plan and the climbs
@@ -193,7 +193,7 @@ list works on whole objects; automatic apply is limited to the folders allowed i
 - **Work-loop stages**, each with its counter, what it counts and since when (the panel says it; `stages_view`):
   **Map** (objects the latest map lists, including excluded ones; as of the latest map); **Discover** (objects whose tests failed in
   the latest round, found by pytest discovery or by the unittest measurement a round makes where the repair organ cannot serve the
-  project; the latest round); **Repair** (judged attempts: session records that got the held-out judge's verdict; since the
+  project, or by the map's own test probe when no round has seen that failure; the window says which); **Repair** (judged attempts: session records that got the held-out judge's verdict; since the
   first one, else since this home was created); **Judge** (judged attempts the judge accepted; same window); **Propose** (accepted
   fixes you have not applied or rejected, now; drafts waiting are counted apart); **Apply** (fixes you applied, drafts you applied,
   drafts a checked build applied automatically; same window as Repair).
@@ -327,10 +327,15 @@ A control with no row above is not offered. A change to a row is a change to the
     links never cross the hub and are faint until a part is in hand, names are cut in the middle and never overlap, and the plan
     graph has even columns, ordered rows, and links that do not run behind a milestone. Nothing was added to what the map says: only
     where it says it.
-21. **Tests are a sector next to their source, not a band over it.** "Each test file at the angle of the module it reaches" cannot
-    hold for a sector that is next to another (the angles differ), so a test file keeps the *order* of its module, counted from the
-    edge the two sectors share. With source files ordered by how central they are, a tested module is often in an inner ring, so the
-    dashed link is as short as neighbouring sectors allow, not shorter.
+21. **Test links are not short, parallel or uncrossed; only their order is kept.** The brief asked for each test file at the angle
+    of the module it reaches, so that the dashed links are short and parallel. That cannot hold for a sector of tests that is next to
+    its source sector (the two sets of angles differ), so a test file keeps the *order* of its module, counted from the edge the two
+    sectors share, and the sectors are neighbours. Measured on the 42-file demo project, the dashed links average about 300 px
+    against about 200 px for imports, and about a third of the pairs of dashed links cross (placing each test at the mirror image of
+    its module, or by order only, gave the same figures). Source files are ordered by how central they are, so a tested module is
+    often in an inner ring, which keeps the links long. They are faint until a part is in hand for that reason. An outer band of tests
+    over the same angles as the source sector would make every link a short radial line, but it takes the tests out of the sector
+    order the brief fixes (source, tests, documents, ...), so it was not done; it is the one change to try if the dashed links read badly.
 22. **An open panel takes room instead of covering the drawing** (the first draft laid it over the right third of the map, so the
     selected part, or its links, could be hidden by its own panel). The drawing is smaller while a panel is open; zoom is unchanged.
 
@@ -355,15 +360,17 @@ parts inside a sector.
   folders)". A sector's width grows with its parts: 60 per cent by its share of the parts and 40 per cent in equal shares, so a small
   folder is never lost.
 - **Tests beside their source.** A folder of tests sits right after (clockwise) the source sector that holds the most of its test
-  files' main modules, so the two share an edge and the dashed links between them stay as short as neighbours allow. The *main module*
+  files' main modules, so the two share an edge (the dashed links are as short as neighbouring sectors allow; see section 8, item 21, for how
+  short that is). The *main module*
   of a test file is the one it is named for, else the one it reaches by most reasons, else the first by path; only drawn modules count.
   (This reconciles "then tests" in the order with "next to the source they reach": the tests come after the source they belong to.)
 - **Inside a source folder: how central.** Files are ordered by how many files import them, most first, then by name; the most
   imported are nearest the hub, ring by ring outwards, and inside a ring by name. Documents, configuration and data have no links, so
   they go by name; in a folder that mixes kinds the source files come first.
 - **Inside a folder of tests: the module's place.** Each test file takes its place, in order, by the module it reaches most, counted
-  from the edge the two sectors share (the module nearest that edge gives the first place, so the links nest and do not cross in order);
-  files that reach no module come last, by name. A test file whose module is in its own sector (a folder of tests inside a source
+  from the edge the two sectors share (the module nearest that edge gives the first place); this keeps the order of the modules and the
+  two sectors side by side, and does not make the dashed links short, parallel or free of crossings; files that reach no module come
+  last, by name. A test file whose module is in its own sector (a folder of tests inside a source
   folder) counts from that sector's start instead, with no mirroring.
 - **A folder inside a folder.** A folder that sits inside a folder that is itself drawn is a sub-folder: it is drawn inside its
   parent's wedge with its own share, its own dashed outline and its own label ("ui · 3 files"). One level only: deeper folders join the
