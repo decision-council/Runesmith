@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runesmith"
-version = "0.1.0"
+version = "1.0.0"
 description = "A model-agnostic runtime that improves the objects it works on and improves itself, with an evidence-bound Kaizen loop."
 readme = "README.md"
 license = {text = "Apache-2.0"}

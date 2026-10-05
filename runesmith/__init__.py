@@ -13,4 +13,4 @@ Models are replaceable instruments. Competence that survives is held in
 evidence-bearing state: organs, tools, memories and calibrated self-knowledge.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

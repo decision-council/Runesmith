@@ -513,7 +513,7 @@ class Workspace:
             raise WorkspaceError("a name uses letters, digits, '-', '_' or '.' (at most 40)")
         kind = spec.get("kind")
         if kind not in ("openai", "milliner", "manual"):
-            raise WorkspaceError("the kind must be openai, milliner or manual")
+            raise WorkspaceError("the kind must be openai or manual")   # the internal connector is not offered by name
         clean = {k: spec[k] for k in ("kind", "model", "base_url", "preset", "label", "json_mode", "timeout_s", "note",
                                       "api_key_env", "token_env", "caller_tag", "budget_tag")
                  if spec.get(k) not in (None, "")}
