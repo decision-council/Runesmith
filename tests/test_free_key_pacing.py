@@ -431,3 +431,29 @@ def test_a_busy_service_beside_one_that_has_used_its_retry_never_loops(tmp_path)
     with pytest.raises(TransportCensored):
         ask(router(tmp_path / 'two', instrument(first, 'a'), instrument(second, 'b'), sleeps=sleeps))
     assert (first.requests, second.requests) == (2, 2) and sleeps == [BUSY_WAIT_S]
+
+
+def test_a_busy_model_is_not_asked_again_while_the_others_still_have_tries_and_never_before_the_wait(tmp_path):
+    # Journey J0-F18: a busy answer sent the next try to the same model a second later. Here 'a' is busy once and 'b' fails
+    # in another way (twice, its free tries): 'a' waits for the longer wait instead of being asked in between.
+    log = []
+
+    def a(method, url, headers, body, timeout):
+        log.append('a')
+        return google(503, GOOGLE_503) if log.count('a') == 1 else (200, ANSWER)
+
+    def b(*args):
+        log.append('b')
+        raise TimeoutError('timed out')
+    sleeps = []
+    assert ask(router(tmp_path, instrument(a, 'a'), instrument(b, 'b'), sleeps=sleeps)).ok
+    assert log == ['a', 'b', 'b', 'a'] and sleeps == [5, 20, BUSY_WAIT_S]
+
+
+def test_two_busy_providers_are_each_asked_once_before_the_wait_and_nothing_is_suggested_to_add(tmp_path):
+    first, second = Service(*[google(503, GOOGLE_503)] * 2), Service(*[google(503, GOOGLE_503)] * 2)
+    sleeps = []
+    with pytest.raises(TransportCensored) as error:
+        ask(router(tmp_path, instrument(first, 'a'), instrument(second, 'b', base='https://api.groq.com/openai/v1'), sleeps=sleeps))
+    assert (first.requests, second.requests) == (2, 2) and sleeps == [BUSY_WAIT_S]
+    assert 'second' not in error.value.plain and 'few minutes' in error.value.plain          # two providers: nothing to add

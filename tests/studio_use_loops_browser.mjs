@@ -52,7 +52,7 @@ const fixtureWork={counts:{},draft_counts:{waiting:1},proposals:[],drafts:[recov
   build_escalation:{eligible:false,milestone:'m1',attempts:1,used:false,
     allowance:{known:true,can_draft:true,used:1,remaining:2,limit:3,blockers:[]}}};
 let fixtureBreakdowns=[],fixtureMapObjects=null,fixtureProbeMap=null;
-let briefCandidates=[],ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,timeout_s:30},fixFixture={offer:null};
+let briefCandidates=[],ownerBrief='',fixturePlan=null,heldPlans=[],fixtureAcceptance={},tryFixture={suggestions:[],practice:null,stale:false,timeout_s:30},fixFixture={offer:null},tryPractice=null;
 let healthFixture={checks:[]},healthUnavailable=false;
 let fixtureExpectations={};
 let fixtureAutonomy='propose';
@@ -289,8 +289,8 @@ await context.route('**/*',async route=>{
   else if(p==='/api/fix-tests'&&req.method()==='GET')data=fixFixture;
   else if(p==='/api/fix-tests')data={milestone:'m9',frozen_files:4,code_paths:['invoice'],allow_apply:body.allow_apply===true};
   else if(p==='/api/try')data=tryFixture;
-  else if(p==='/api/try/run')data={command:body.command,real:body.real===true,exit_code:0,timed_out:false,seconds:0.2,stdout:'2026-01-30  Dune by Frank Herbert',stderr:'',utc:'2026-09-27T22:00:00Z'};
-  else if(p==='/api/try/reset')data={created_utc:'2026-09-27T22:00:00Z',files:6};
+  else if(p==='/api/try/run')data={command:body.command,real:body.real===true,exit_code:0,timed_out:false,seconds:0.2,stdout:'2026-01-30  Dune by Frank Herbert',stderr:'',utc:'2026-09-27T22:00:00Z',practice:body.real===true?null:tryPractice};
+  else if(p==='/api/try/reset')data={created_utc:'2026-09-27T22:30:00Z',files:6};
   else if(p==='/api/inference/discover')data={found:discoverFixture};
   else if(p==='/api/worker/run'||/^\/api\/measurements\/[^/]+\/report$/.test(p)){
     if(body?.job==='revise'&&authorRevisionConflict){await route.fulfill({status:409,json:{error:'Revision quote unavailable or stale.'}});return;}
@@ -2384,7 +2384,40 @@ try{
     await page.waitForFunction(()=>!document.querySelector('button.busy'));
     assert(requests.slice(start).some(r=>r.path==='/api/try/reset'&&r.method==='POST'));
     loops.push({id:'B21.03',case:'The practice copy can be started again from the real folder',result:'passed'});
-    tryFixture={suggestions:[],practice:null,timeout_s:30};
+    // J0-F20: the card says when the practice copy was made, warns when the folder has changed since, and says when the
+    // next run made it again (a draft had been written to the folder: the first Try of the new command used to fail).
+    const line=card.locator('[data-practice-copy]');
+    const clockAt=/ at \d{1,2}:\d{2}/;
+    tryFixture={...tryFixture,practice:null,stale:false};tryPractice={created_utc:'2026-09-27T22:00:00Z',state:'made'};
+    await page.evaluate(async state=>{window.homeState=state;window.navigation=null;await window.mount('home');},base);
+    await card.waitFor();
+    assert((await line.innerText()).includes('no practice copy yet'),await line.innerText());
+    await card.getByRole('button',{name:'Run',exact:true}).click();
+    await card.getByText('Finished normally',{exact:false}).waitFor();
+    assert.equal(await line.getAttribute('data-state'),'made');
+    assert(/Runesmith made the practice copy from your folder at \d{1,2}:\d{2}/.test(await line.innerText()),await line.innerText());
+    tryFixture={...tryFixture,practice:{created_utc:'2026-09-27T22:00:00Z',files:6},stale:true};
+    tryPractice={created_utc:'2026-09-27T23:15:00Z',state:'refreshed'};
+    await page.evaluate(async state=>{window.homeState=state;window.navigation=null;await window.mount('home');},base);
+    await card.waitFor();
+    assert.equal(await line.getAttribute('data-state'),'stale');
+    const stale=await line.innerText();
+    assert(clockAt.test(stale)&&stale.includes('Your folder has changed since the practice copy was made')&&stale.includes('anything you tried on the old copy is gone'),stale);
+    assert(!(await card.innerText()).includes('null')&&!(await card.innerText()).includes('undefined'));
+    await card.getByRole('button',{name:'Run',exact:true}).click();
+    await card.getByText('Finished normally',{exact:false}).waitFor();
+    assert.equal(await line.getAttribute('data-state'),'refreshed');
+    const refreshed=await line.innerText();
+    assert(refreshed.includes('made it again from your folder at')&&clockAt.test(refreshed)&&refreshed.includes('before this run'),refreshed);
+    tryPractice={created_utc:'2026-09-27T23:15:00Z',state:'kept'};
+    await card.getByRole('button',{name:'Run',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[data-practice-copy]')?.dataset.state==='kept');
+    assert((await line.innerText()).includes('nothing has changed there since'));
+    await card.getByRole('button',{name:'Start the practice copy again',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[data-practice-copy]')?.dataset.state==='reset');
+    assert(/The practice copy was made again from your folder at \d{1,2}:\d{2}/.test(await line.innerText()),await line.innerText());
+    loops.push({id:'B21.04',case:'The Try card says when the practice copy was made, warns when the folder changed since, and says when a run made it again',result:'passed'});
+    tryFixture={suggestions:[],practice:null,stale:false,timeout_s:30};tryPractice=null;
   }
   if(selected.has('B22')){
     // Fix the failing tests (journey J3): plain numbers, Cancel sends nothing, automatic apply only when chosen.

@@ -16,6 +16,7 @@ from __future__ import annotations
 import calendar
 import io
 import json
+import time
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
@@ -356,6 +357,123 @@ def test_a_chain_of_busy_models_is_asked_once_each(tmp_path, listed, monkeypatch
     row = propose_job(worker)
     assert row['result'] == 'failed' and google.models == ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash-lite']
     assert Pacing(ws.home / 'PACING.json').active() == {}                                      # busy is not a hold: only a 429 is
+
+
+# ---- J0-F18: after a busy answer the next try goes to the NEXT model; a held model takes no place in the order ----
+
+def hold(ws, name='gemini', seconds=6 * 3600):
+    Pacing(ws.home / 'PACING.json').mark(name, time.time() + seconds, daily=True)
+
+
+def folder(tmp_path, name):
+    (tmp_path / name).mkdir()
+    return tmp_path / name
+
+
+def test_with_the_first_model_held_a_busy_second_is_not_asked_again_at_once(tmp_path, listed, monkeypatch):
+    # J0 (phase 4): 3.8 held for its day, 3.7 busy, 3.7 busy AGAIN a second later, then 3.5-lite: two requests spent on one model.
+    ws, _ = chained(folder(tmp_path, 'one'))
+    hold(ws)
+    google = Google({'gemini-3.7-flash': [(503, BUSY)] * 4})
+    monkeypatch.setattr(instruments, 'urlopen', google)
+    assert ask(ws.router(backoff_s=())).ok
+    assert google.models == ['gemini-3.7-flash', 'gemini-3.5-flash-lite']                    # never 3.8, 3.7 once, then the next
+    # The same through a job (the checks): both live models busy: one request each, and no wait inside the click.
+    ws2, worker = checks_workspace(folder(tmp_path, 'job'), listed)
+    hold(ws2)
+    google = Google({m: [(503, BUSY)] * 4 for m in ('gemini-3.7-flash', 'gemini-3.5-flash-lite')})
+    monkeypatch.setattr(instruments, 'urlopen', google)
+    row = propose_job(worker)
+    assert row['result'] == 'failed' and 'very busy' in row['outcome']['error']
+    assert google.models == ['gemini-3.7-flash', 'gemini-3.5-flash-lite']
+
+
+def test_three_models_with_two_busy_answers_ask_each_once_and_the_third_answers(tmp_path, listed, monkeypatch):
+    ws, _ = chained(tmp_path)
+    google = Google({'gemini-3.8-flash': [(503, BUSY)], 'gemini-3.7-flash': [(503, BUSY)]})   # J0: 503, 503, answer
+    monkeypatch.setattr(instruments, 'urlopen', google)
+    assert ask(ws.router(backoff_s=(5, 20))).ok
+    assert google.models == ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash-lite']
+
+
+def test_a_model_held_in_the_middle_takes_no_place_and_a_refusal_never_skips_the_next_model(tmp_path, listed, monkeypatch):
+    ws, _ = chained(folder(tmp_path, 'one'))
+    hold(ws, 'gemini-3.7-flash')
+    google = Google({'gemini-3.8-flash': [(503, BUSY)]})
+    monkeypatch.setattr(instruments, 'urlopen', google)
+    assert ask(ws.router(backoff_s=())).ok and google.models == ['gemini-3.8-flash', 'gemini-3.5-flash-lite']
+    # A day's refusal at the first request: the next model in the order is asked, not the one after it.
+    ws2, _ = chained(folder(tmp_path, 'again'))
+    google = Google({'gemini-3.8-flash': [(429, DAILY)], 'gemini-3.7-flash': [(503, BUSY)]})
+    monkeypatch.setattr(instruments, 'urlopen', google)
+    assert ask(ws2.router(backoff_s=())).ok
+    assert google.models == ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash-lite']
+
+
+def test_the_second_ask_of_a_busy_model_comes_after_the_wait_and_after_every_other_model_was_asked(tmp_path, listed, monkeypatch):
+    ws, _ = chained(tmp_path)
+    hold(ws)
+    started = time.time()
+    now, events = [started], []
+    google = Google({'gemini-3.7-flash': [(503, BUSY)] * 2, 'gemini-3.5-flash-lite': [(503, BUSY)]})
+
+    def sent(request, timeout=None):
+        events.append((round(now[0] - started), json.loads(request.data.decode())['model']))
+        return google(request, timeout)
+    monkeypatch.setattr(instruments, 'urlopen', sent)
+    base = ws.router()
+    router = Router(base.instruments, {'plan': list(base.roles['plan'])}, backoff_s=(5, 20, 60),
+                    sleep=lambda s: now.__setitem__(0, now[0] + s), pacing=Pacing(ws.home / 'PACING.json'), clock=lambda: now[0])
+    assert ask(router).ok
+    # 3.7 busy, then 3.5-lite busy (each once), then the longer wait, then 3.7 again (busy), then 3.5-lite answers.
+    assert [model for _, model in events] == ['gemini-3.7-flash', 'gemini-3.5-flash-lite', 'gemini-3.7-flash', 'gemini-3.5-flash-lite']
+    from runesmith.pacing import BUSY_WAIT_S
+    assert [seconds for seconds, _ in events] == [0, 0, BUSY_WAIT_S, BUSY_WAIT_S]
+
+
+def test_a_model_whose_last_requests_were_all_busy_is_told_as_busy_until_it_answers_or_a_while_passes(tmp_path):
+    now = [utc(5, 12)]
+    counts = DayCount(tmp_path / 'REQUESTS_TODAY.json', clock=lambda: now[0])
+    assert counts.busy_now('gemini-3.7-flash') is None
+    for _ in range(4):                                              # J0: four 503s in a row, the row said "answering now"
+        counts.bump('gemini-3.7-flash', GEMINI, 503)
+    assert counts.busy_now('gemini-3.7-flash') == {'streak': 4, 'at': now[0]} and counts.busy_now('gemini-3.5-flash-lite') is None
+    assert counts.today('gemini-3.7-flash', GEMINI)['count'] == 4                                    # busy requests still count
+    counts.bump('gemini-3.7-flash', GEMINI, 429)                    # a refusal for the limit is no busy answer and no request
+    assert counts.busy_now('gemini-3.7-flash')['streak'] == 4 and counts.today('gemini-3.7-flash', GEMINI)['count'] == 4
+    now[0] += 601                                                   # nothing asked since: it is not told as busy for ever
+    assert counts.busy_now('gemini-3.7-flash') is None
+    counts.bump('gemini-3.7-flash', GEMINI, 503)
+    counts.bump('gemini-3.7-flash', GEMINI, 200)                    # an answer ends the run
+    assert counts.busy_now('gemini-3.7-flash') is None
+
+
+def test_the_model_row_and_the_card_stop_saying_answering_now_for_a_busy_model(tmp_path, listed, monkeypatch):
+    ws, _ = chained(tmp_path)
+    hold(ws)
+    google = Google({'gemini-3.7-flash': [(503, BUSY)] * 2})
+    monkeypatch.setattr(instruments, 'urlopen', google)
+    assert ask(ws.router(backoff_s=())).ok and google.models == ['gemini-3.7-flash', 'gemini-3.5-flash-lite']
+    rows = {row['name']: row for row in ws.inference()['instruments']}
+    assert rows['gemini-3.7-flash']['busy']['streak'] == 1 and rows['gemini-3.7-flash']['answering'] == ['repair', 'plan', 'acceptance']
+    assert rows['gemini-3.5-flash-lite']['busy'] is None and rows['gemini']['busy'] is None        # the answer ended its run; the held one sent none
+    free = {row['name']: row for row in ws.pacing_view()['free_keys']}
+    assert free['gemini-3.7-flash']['busy']['streak'] == 1 and free['gemini-3.5-flash-lite']['busy'] is None
+    assert ask(ws.router(backoff_s=())).ok                          # busy again (its second 503), the next model answers
+    assert {r['name']: r for r in ws.inference()['instruments']}['gemini-3.7-flash']['busy']['streak'] == 2
+    assert ask(ws.router(backoff_s=())).ok and google.models[-1] == 'gemini-3.7-flash'            # asked first, and now answers
+    assert {r['name']: r for r in ws.inference()['instruments']}['gemini-3.7-flash']['busy'] is None
+
+
+def test_the_busy_words_say_what_helps_for_the_models_there_are():
+    from runesmith.pacing import busy_words
+    one = busy_words('Google Gemini')
+    assert 'very busy' in one and 'second model' in one                                   # one model: a second one helps
+    chain = busy_words('Google Gemini', models=3, providers=1)
+    assert 'very busy' in chain and 'second model' not in chain and 'second free provider' in chain and 'Groq' in chain
+    assert 'few minutes' in chain
+    many = busy_words('Google Gemini, Groq', models=3, providers=2)
+    assert 'very busy' in many and 'few minutes' in many and 'second' not in many
 
 
 def test_a_request_too_large_for_the_window_still_gets_the_lean_retry_and_a_busy_one_does_not():

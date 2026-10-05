@@ -299,6 +299,16 @@ async function recordedUsage(){
   await load();
 }
 
+// Who answers now, or that the service turned this model's last requests away as busy (journey J0-F24: four 503s in a row and
+// the row still said "answering now").
+function answeringBadge(i, data) {
+  if (i.busy?.streak) {
+    const n = i.busy.streak;
+    return h('span.badge.warn', { 'data-busy': i.name, title: `The service turned away this model's last ${n > 1 ? `${n} requests` : 'request'} as busy, in the last few minutes. Nothing was lost.` }, icon('clock'), 'busy lately');
+  }
+  return i.answering?.length ? h('span.badge.accent', { 'data-answering': i.name, title: `Answers for: ${i.answering.map((r) => data.role_labels[r].split(':')[0]).join(', ')}` }, icon('zap'), 'answering now') : null;
+}
+
 function instrumentRow(i, data, reload) {
   const st = data.stats[i.name];
   const status = h('div.small', ...testStatus(i, reload));
@@ -307,7 +317,7 @@ function instrumentRow(i, data, reload) {
     h('div', {style:{paddingRight:'22px'}}, h('div.row.wrap', h('b', i.label), h('span.badge.mono', i.name), i.local ? h('span.badge.good', 'local') : null, i.usable ? null : h('span.badge.warn', 'incomplete'),
       i.key.secret ? h('span', { class: `badge ${i.key.saved ? 'good' : 'bad'}` }, icon('key'), i.key.saved ? 'key saved' : 'key missing') : null,
       // Who answers now (the first model of a role that is not waiting for its free limit), and who shares this key.
-      i.answering?.length ? h('span.badge.accent', { 'data-answering': i.name, title: `Answers for: ${i.answering.map((r) => data.role_labels[r].split(':')[0]).join(', ')}` }, icon('zap'), 'answering now') : null,
+      answeringBadge(i, data),
       i.shares_key_with?.length ? h('span.badge', { title: `The same saved key as ${i.shares_key_with.join(', ')}; each model has its own free allowance` }, icon('key'), `same key as ${i.shares_key_with[0]}${i.shares_key_with.length > 1 ? ` +${i.shares_key_with.length - 1}` : ''}`) : null),
       h('div.small.muted.mono.ellipsis', `${i.model || ''}${i.base_url ? ' · ' + i.base_url : ''}`),
       i.used_today?.words ? h('div.small', { 'data-used-today': i.name }, i.used_today.words) : null,

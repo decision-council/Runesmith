@@ -4,13 +4,17 @@ Journey R1 found that a non-technical owner could not use the program Runesmith 
 the owner picks one of the commands the project documents (its README, then its milestones), edits it, and runs it.
 
 - It runs on a practice copy of the folder unless the owner chooses the real folder. The practice copy lasts between
-  runs, so "add" and then "list" behave as they would for real, until the owner starts it again.
+  runs, so "add" and then "list" behave as they would for real, until the owner starts it again, or until the real
+  folder changes (a draft was written to it, say): then the next run makes the copy again from the folder first and
+  says so (journey J0-F20: the first Try of a new command failed on a copy made before the command was written).
 - Only the project's own Python program runs (``python -m <package in this folder>`` or ``python <file in this
   folder>.py``): never a shell and never another program.
 - Input is closed, output is capped, the run stops after a time limit, and every run is recorded in the ledger.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shlex
@@ -152,16 +156,37 @@ def suggestions(ws) -> list[dict[str, Any]]:
     return found[:24]
 
 
-def status(ws) -> dict[str, Any]:
-    practice = _read_json(_folder(ws) / "PRACTICE.json", None)
-    return {"suggestions": suggestions(ws), "practice": practice if (_folder(ws) / "practice").is_dir() else None,
-            "timeout_s": TIMEOUT_S}
+def _files_digest(snapshot: dict[str, Any]) -> str:
+    """What the practice copy was made from: every copied file's path and content (not the snapshot's own policy, which
+    also moves with settings that change nothing in the copy)."""
+    manifest = {rel: row["sha256"] for rel, row in snapshot["manifest"].items()}
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def reset_practice(ws) -> dict[str, Any]:
-    """Make the practice copy again from the real folder (its source, settings and data files)."""
+def _changed_since(ws) -> tuple[bool | None, dict[str, Any] | None]:
+    """(whether the real folder changed after the practice copy was made, the folder as it is now). None when that cannot
+    be told (the folder cannot be read as a snapshot): the copy is then left as it is. A copy made before this was
+    recorded counts as changed: it is made again once."""
     try:
         snapshot = collect_snapshot(ws)
+    except SnapshotUnsupported:
+        return None, None
+    record = _read_json(_folder(ws) / "PRACTICE.json", None)
+    made_from = record.get("files_digest") if isinstance(record, dict) else None
+    return made_from != _files_digest(snapshot), snapshot
+
+
+def status(ws) -> dict[str, Any]:
+    exists = (_folder(ws) / "practice").is_dir()
+    practice = _read_json(_folder(ws) / "PRACTICE.json", None) if exists else None
+    changed = _changed_since(ws)[0] if exists else None
+    return {"suggestions": suggestions(ws), "practice": practice, "stale": bool(changed), "timeout_s": TIMEOUT_S}
+
+
+def reset_practice(ws, snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Make the practice copy again from the real folder (its source, settings and data files)."""
+    try:
+        snapshot = snapshot or collect_snapshot(ws)
     except SnapshotUnsupported as error:
         raise WorkspaceError(f"A practice copy of this folder is not possible: {error}") from None
     target = _folder(ws) / "practice"
@@ -171,7 +196,8 @@ def reset_practice(ws) -> dict[str, Any]:
         path = target / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-    record = {"created_utc": _now(), "files": len(snapshot["files"]), "snapshot_digest": snapshot["digest"]}
+    record = {"created_utc": _now(), "files": len(snapshot["files"]), "snapshot_digest": snapshot["digest"],
+              "files_digest": _files_digest(snapshot)}
     _write_json(_folder(ws) / "PRACTICE.json", record)
     return record
 
@@ -181,12 +207,22 @@ def run(ws, command: str, *, real: bool = False) -> dict[str, Any]:
     if type(real) is not bool:
         raise WorkspaceError("Choose the practice copy or your real folder.")
     argv = parse(ws, command)
+    practice = None
     if real:
         folder = ws.root
     else:
         folder = _folder(ws) / "practice"
         if not folder.is_dir():
-            reset_practice(ws)
+            made, state = reset_practice(ws), "made"
+        else:
+            # The real folder is looked at before every practice run: a draft written to it since the copy was made (by the
+            # owner or by an automatic apply) must be in the copy, or the first Try of what was built fails (journey J0-F20).
+            changed, snapshot = _changed_since(ws)
+            if changed:
+                made, state = reset_practice(ws, snapshot), "refreshed"
+            else:
+                made, state = _read_json(_folder(ws) / "PRACTICE.json", None) or {}, "kept"
+        practice = {"created_utc": made.get("created_utc"), "state": state}
     scratch = _folder(ws) / "tmp"
     scratch.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.upper() in {"SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "COMSPEC"}}
@@ -203,7 +239,7 @@ def run(ws, command: str, *, real: bool = False) -> dict[str, Any]:
     seconds = round(time.monotonic() - started, 2)
     text = lambda data: data.decode("utf-8", errors="replace")[:MAX_OUTPUT]  # noqa: E731
     result = {"command": command, "real": real, "exit_code": code, "timed_out": timed_out, "seconds": seconds,
-              "stdout": text(stdout), "stderr": text(stderr), "utc": _now()}
+              "stdout": text(stdout), "stderr": text(stderr), "utc": _now(), "practice": practice}
     ws.ledger.append("try.ran", {"command": command, "real": real, "exit_code": code, "timed_out": timed_out,
-                                 "seconds": seconds})
+                                 "seconds": seconds, **({"practice": practice["state"]} if practice else {})})
     return result

@@ -26,6 +26,7 @@ FREE_TIER_TRIES = 2          # at most one retry per call for an instrument with
 GOOGLE_DAY_HINT_S = 3600     # Google's free tier names a wait this long only for its day's limit (a minute's limit is seconds)
 GOOGLE_FREE_DAILY_REQUESTS = 20   # what Google's free key allowed a model per day in the journeys; a refusal's own number replaces it
 SAID_CHARS = 600             # how much of the service's own refusal is kept beside the hold
+BUSY_RECENT_S = 600          # a model whose last request was turned away as busy this recently is told as busy, not as answering
 _LOCK = threading.Lock()
 
 _DURATION = (r"(?:\d+(?:\.\d+)?\s*(?:hours?|hrs?|h|minutes?|mins?|ms|m|seconds?|secs?|s)\s*)+")
@@ -206,9 +207,16 @@ def truncated_words(retried: bool = False) -> str:
 ROOM_RETRY_WORDS = "the model ran out of room before finishing: Runesmith asked again with more room"
 
 
-def busy_words(name: str) -> str:
-    return (f"{name} is very busy right now (the service said so, and did not take the request). Nothing was lost: "
-            "try again in a few minutes, or put a second model first under Thinking power.")
+def busy_words(name: str, *, models: int = 1, providers: int = 1) -> str:
+    """The plain line for a call every model of which was turned away as busy. What helps depends on what there is: with one
+    model, a second one; with a chain of models of one provider (they share one service's busy hours), a second provider;
+    with several providers there is nothing to add (journey J0-F24: a chain was told to put a second model first)."""
+    words = f"{name} is very busy right now (the service said so, and did not take the request). Nothing was lost: "
+    if models <= 1:
+        return words + "try again in a few minutes, or put a second model first under Thinking power."
+    if providers <= 1:
+        return words + "try again in a few minutes, or add a second free provider (Groq, for example) under Thinking power."
+    return words + "try again in a few minutes."
 
 
 # ------------------------------------------------------------------------------------------ the saved marks --
@@ -357,8 +365,23 @@ class DayCount:
             data = self._read()
             row = data.get(name) if isinstance(data.get(name), dict) else {}
             count = int(row.get('count') or 0) + 1 if row.get('day') == day else 1
-            data[name] = dict(row, day=day, count=count)
+            busy = {}                                   # the run of requests in a row that the service turned away as busy
+            if status == 503:
+                busy = {'busy': int(row.get('busy') or 0) + 1, 'busy_at': self.now()}
+            elif row.get('busy'):
+                busy = {'busy': 0}
+            data[name] = dict(row, day=day, count=count, **busy)
             self._write(data)
+
+    def busy_now(self, name: str) -> dict | None:
+        """{streak, at} when this instrument's last requests (``streak`` of them, in a row) were all turned away as busy and
+        the last was within BUSY_RECENT_S; otherwise None (journey J0-F24: a row kept saying "answering now" after four 503s)."""
+        row = self._read().get(name)
+        row = row if isinstance(row, dict) else {}
+        streak, at = int(row.get('busy') or 0), row.get('busy_at')
+        if streak > 0 and isinstance(at, (int, float)) and 0 <= self.now() - at <= BUSY_RECENT_S:
+            return {'streak': streak, 'at': float(at)}
+        return None
 
     def learn_cap(self, name: str, base_url: str | None, message: str | None, daily: bool) -> int | None:
         """Keep the limit a day's refusal names. Only a daily refusal: a per-minute one names a different (smaller) number."""

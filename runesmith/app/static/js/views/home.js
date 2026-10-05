@@ -399,12 +399,18 @@ function pacingCard(s, navigate) {
   if (!(p.limited || []).length && !free.length) return null;
   const waiting = p.waiting ?? ((p.limited || []).length > 0 && p.only_provider_limited);
   const answering = Object.values(p.answering || {})[0];
-  const state = (k) => k.held ? `used up for today: asked again after about ${k.until_clock}` : k.answering?.length ? 'answering now' : 'next in line';
+  // A model whose last requests the service turned away as busy is not "answering" (journey J0-F24: four 503s in a row, and the row still said so).
+  const busyOf = (k) => k?.busy?.streak ? k.busy : null;
+  const busyWords = (b) => `busy lately: the service turned away its last ${b.streak > 1 ? `${b.streak} requests` : 'request'}`;
+  const answeringKey = free.find((k) => k.name === answering?.name);
+  const answeringBusy = !!busyOf(answeringKey);
+  const state = (k) => k.held ? `used up for today: asked again after about ${k.until_clock}` : busyOf(k) ? busyWords(k.busy) : k.answering?.length ? 'answering now' : 'next in line';
   return h('section.card.mt-24', { 'aria-label': waiting ? 'A free limit was reached' : 'Free thinking power today', id: 'free-limit' },
     h('div.card-head', h('h3', icon('clock'), waiting ? 'Waiting for a free limit' : 'Free thinking power today'),
-      waiting ? h('span.badge.warn', 'no calls are made meanwhile') : answering ? h('span.badge.good', `answering now: ${answering.model || answering.label}`) : null),
+      waiting ? h('span.badge.warn', 'no calls are made meanwhile') : answering ? (answeringBusy
+        ? h('span.badge.warn', `busy lately: ${answering.model || answering.label}`) : h('span.badge.good', `answering now: ${answering.model || answering.label}`)) : null),
     ...(p.limited_summary ? [h('p', p.limited_summary)] : (p.limited || []).map((r) => h('p', r.words))),
-    !waiting && (p.limited || []).length && answering ? h('p', `Work goes on with ${answering.label}.`) : null,
+    !waiting && (p.limited || []).length && answering && !answeringBusy ? h('p', `Work goes on with ${answering.label}.`) : null,
     free.length ? h('div.list', { 'data-free-keys': '' }, free.map((k) => h('div.item', { 'data-free-key': k.name },
       h('div.body', h('div.title', k.label), h('div.meta', [state(k), k.used?.words].filter(Boolean).join(' · ')))))) : null,
     p.only_provider_limited ? h('div',
@@ -440,6 +446,25 @@ function drawTry(card, t) {
   const real = h('input', { type: 'checkbox', 'aria-label': 'Use my real folder (changes are kept)' });
   const output = h('pre.code.mt-8', { hidden: true, 'aria-live': 'polite' });
   const verdict = h('div.small.mt-8', { hidden: true });
+  // When the practice copy was made, and whether the folder has changed since (journey J0-F20: the first Try of a command
+  // that a draft had just written failed on a copy made before it).
+  const practiceLine = h('div.small.mt-8', { 'data-practice-copy': '', hidden: true, 'aria-live': 'polite' });
+  const showPractice = (practice, kind) => {
+    const at = practice?.created_utc ? `at ${clock(practice.created_utc)}` : 'just now';
+    const words = {
+      none: 'There is no practice copy yet: the first run makes one from your folder.',
+      kept: `The practice copy was made ${at} from your folder, and nothing has changed there since.`,
+      stale: `Your folder has changed since the practice copy was made ${at}. The next run makes the practice copy again from your folder first, so anything you tried on the old copy is gone.`,
+      refreshed: `Your folder had changed since the practice copy was made, so Runesmith made it again from your folder ${at}, before this run. Anything you tried on the old copy is gone.`,
+      made: `Runesmith made the practice copy from your folder ${at}.`,
+      reset: `The practice copy was made again from your folder ${at}.`,
+    };
+    practiceLine.textContent = words[kind] || words.kept;
+    practiceLine.className = `small mt-8 ${kind === 'stale' || kind === 'refreshed' ? 'warn' : 'muted'}`;
+    practiceLine.dataset.state = kind;
+    practiceLine.hidden = false;
+  };
+  showPractice(t.practice, !t.practice ? 'none' : t.stale ? 'stale' : 'kept');
   const chips = h('div.pillbox.mt-8', t.suggestions.map((x) => h('button.chip', { type: 'button', title: `From ${x.source}`,
     onclick: () => { command.value = x.command; command.focus(); } }, x.command, x.placeholders ? h('span.faint', ' · fill in the capitals') : null)));
   const runBtn = h('button.btn.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
@@ -455,13 +480,15 @@ function drawTry(card, t) {
         : `Ended with an error (exit status ${r.exit_code}) in ${r.seconds} s.`;
     verdict.className = `small mt-8 ${r.exit_code === 0 ? 'good' : 'warn'}`;
     output.textContent = [r.stdout, r.stderr].filter((x) => x && x.trim()).join('\n') || '(no output)';
+    if (r.practice) showPractice(r.practice, r.practice.state);
   }) }, icon('play'), 'Run');
   const resetBtn = h('button.btn.ghost', { onclick: (e) => withBusy(e.currentTarget, async () => {
-    await post('/api/try/reset', {}); toast('The practice copy starts again from your real folder.', 'good'); }) }, icon('refresh'), 'Start the practice copy again');
+    const made = await post('/api/try/reset', {}); showPractice(made, 'reset');
+    toast('The practice copy starts again from your real folder.', 'good'); }) }, icon('refresh'), 'Start the practice copy again');
   card.append(h('div.card-head', h('h3', icon('play'), 'Try what was built'), h('span.badge', 'runs your program')),
-    h('p.small.muted', 'Pick a command from your project’s own instructions, change it if you like, and run it. It runs on a practice copy of your folder, so nothing real changes, unless you choose your real folder.'),
+    h('p.small.muted', 'Pick a command from your project’s own instructions, change it if you like, and run it. It runs on a practice copy of your folder, so nothing real changes, unless you choose your real folder. The copy is made again from your folder whenever your files have changed.'),
     chips, h('div.row.wrap.mt-8', command), h('label.row.mt-8', real, 'Use my real folder (changes are kept)'),
-    h('div.row.wrap.mt-8', runBtn, resetBtn), verdict, output);
+    h('div.row.wrap.mt-8', runBtn, resetBtn), practiceLine, verdict, output);
   card.hidden = false;
 }
 

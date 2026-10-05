@@ -574,7 +574,7 @@ class Router:
         busy: set[str] = set()
         spent: dict[str, int] = {}
         waited_short = busy_waited = False
-        asks, wait, last = 0, 0.0, (None, None)
+        asks, wait, last, last_busy = 0, 0.0, (None, None), None
 
         def askable(n):                                 # not at its limit, not turned away for good, no retry of a free key left unused
             return (n not in stopped and n not in gone and not self._held(n, stopped)
@@ -589,10 +589,18 @@ class Router:
                 if stopped:
                     raise self._limited_error(names, stopped)
                 break
+            if busy and all(n in busy for n in live):
+                # Every model that may still be asked has just said it is busy (a model whose tries went to a failure
+                # of another kind): none is asked before the longer wait is over, and then once more, as below.
+                if busy_waited or not self.backoff_s:
+                    raise self._busy_error(names, last_busy)
+                busy_waited, wait = True, BUSY_WAIT_S
+                busy.clear()
+                continue
             outcome = self._attempt(role, live, attempt, prompt=prompt, system=system, schema=schema,
                                     max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort, gone=gone,
-                                    own_effort_first=own_effort_first, order=names, soft_effort=soft_effort, room=room,
-                                    room_retry=room_retry)
+                                    own_effort_first=own_effort_first, avoid=busy, spent=spent, soft_effort=soft_effort,
+                                    room=room, room_retry=room_retry)
             attempt = outcome.attempts
             if not outcome.ok and (outcome.receipt.get('not_admitted') or outcome.receipt.get('no_route_accepted')):
                 # Every model turned the request away before generating: nothing ran, so this is no answer, never an
@@ -629,8 +637,9 @@ class Router:
                 continue
             if status == 503:
                 busy.add(name)
+                last_busy = outcome
                 if any(n not in busy for n in names if askable(n)):
-                    continue                            # another model has not been asked: it goes first, no wait
+                    continue                            # another model has not been asked: it goes next (never this one), no wait
                 if busy_waited or not self.backoff_s:
                     raise self._busy_error(names, outcome)
                 busy_waited, wait = True, BUSY_WAIT_S   # one more try, after a longer wait
@@ -691,23 +700,29 @@ class Router:
     def _busy_error(self, names, outcome):
         from runesmith.pacing import busy_words
         providers = list(dict.fromkeys(getattr(self.instruments.get(n), 'label', None) or n for n in names))
-        words = busy_words(', '.join(providers))
+        words = busy_words(', '.join(providers), models=len(names), providers=len({self._provider(n) for n in names}))
         return TransportCensored(f"{words} ({(outcome.error or '')[:300]})", plain=words,
                                  detail=(outcome.error or '')[:1500] or None, receipt={'not_admitted': True, 'paced': 'busy'})
 
     def _attempt(self, role, names, attempt, *, prompt, system, schema, max_tokens, key, reasoning_effort, gone=None,
-                 own_effort_first=False, order=None, soft_effort=None, room=None, room_retry=False):
+                 own_effort_first=False, avoid=(), spent=None, soft_effort=None, room=None, room_retry=False):
+        """One ask of the role's models, in order. ``names`` are the models that may be asked now, in the role's order: one
+        held back at its limit, or used up for this call, is not among them and takes no place in the order. ``avoid``
+        are the models that have just said they are busy (not asked while another may be); ``spent`` is what each has
+        been asked in this call so far."""
         refused = set()
         gone = {} if gone is None else gone
-        order = list(order or names)
+        spent = {} if spent is None else spent
+        place = {n: i for i, n in enumerate(names)}
+        candidates = [n for n in names if n not in avoid] or list(names)
         while True:
-            live = [n for n in names if n not in gone]
+            live = [n for n in candidates if n not in gone]
             if not live:                                # every model refused for good: its own plain words
                 return next(iter(gone.values()))
-            # Rotate over the declared fallbacks: from this attempt's place in the role's whole order, the next model that
-            # may still be asked. A model held back at its limit keeps its place, so the one after it is next, not the one after that.
-            start = attempt % len(order)
-            name = next(n for n in (order[(start + k) % len(order)] for k in range(len(order))) if n in live)
+            # The model asked the fewest times in this call goes next, the role's order breaking a tie: a busy model gives
+            # way to the next one instead of being asked again a second later (journey J0-F18), and a model that is not
+            # asked (held back, used up) neither takes its place in the order nor makes the one after it go twice.
+            name = min((n for n in live if n not in refused) or live, key=lambda n: (spent.get(n, 0), place[n]))
             instrument = self.instruments[name]
             own = getattr(instrument, 'default_reasoning', None)
             effort = (own or reasoning_effort) if own_effort_first else (reasoning_effort or own)
@@ -744,5 +759,5 @@ class Router:
                 # Refused for good, or by every route it has for this very request: a later backoff tier does not
                 # ask it again (reviews). Refused at admission (capacity) may pass later, so it is asked again.
                 gone[name] = outcome
-            if outcome.ok or not turned_away or set(names) <= refused | set(gone):
+            if outcome.ok or not turned_away or set(candidates) <= refused | set(gone):
                 return outcome

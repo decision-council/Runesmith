@@ -12,7 +12,8 @@ const slice = (source, from, to) => {
   return source.slice(start, end);
 };
 const view = [slice(home, 'const MODEL_JOBS', '// A long error cut for the Overview'),
-  slice(home, 'function pacingCard(', 'function drawFix('), slice(inference, 'function removeWords(', '// What the last test said')].join('\n');
+  slice(home, 'function pacingCard(', 'function drawFix('), slice(inference, 'function removeWords(', '// What the last test said'),
+  slice(inference, 'function answeringBadge(', 'function instrumentRow(')].join('\n');
 
 function h(tag, ...rest) {
   let props = {};
@@ -67,6 +68,25 @@ for (const expected of ['Free thinking power today', 'answering now: gemini-3.7-
 assert(!/Waiting for a free limit|null|undefined/.test(shown), shown);
 assert.equal(find(card, (n) => n.props && 'data-free-key' in n.props).length, 3);
 assert.equal(find(card, (n) => n.tag === 'button.btn.primary').length, 0, 'a second provider is not pushed while a model answers');
+
+// a model whose last requests the service turned away as busy is not "answering" (journey J0-F24: four 503s in a row, the row still said so)
+const busyKeys = pacing.free_keys.map((k) => k.name === 'gemini-3.7-flash' ? { ...k, busy: { streak: 4, at: 1 } } : k);
+const busyShown = text(context.pacingCard({ pacing: { ...pacing, free_keys: busyKeys } }, () => {}));
+for (const expected of ['busy lately: gemini-3.7-flash', 'busy lately: the service turned away its last 4 requests · about 3 of 20 used today',
+  'next in line · about 0 of 20 used today']) assert(busyShown.includes(expected), expected);
+assert(!/answering now|Work goes on with/.test(busyShown), busyShown);
+const oneBusy = text(context.pacingCard({ pacing: { ...pacing, free_keys: pacing.free_keys.map((k) => k.name === 'gemini-3.7-flash' ? { ...k, busy: { streak: 1, at: 1 } } : k) } }, () => {}));
+assert(oneBusy.includes('turned away its last request ·'), oneBusy);
+
+// the model row's badge: busy replaces "answering now"; with nothing busy it is as before
+const rows = { role_labels: { plan: 'Plan: drafts the plan' } };
+const busyBadge = context.answeringBadge({ name: 'gemini-3.7-flash', answering: ['plan'], busy: { streak: 4, at: 1 } }, rows);
+assert(text(busyBadge).includes('busy lately') && !text(busyBadge).includes('answering') && busyBadge.props['data-busy'] === 'gemini-3.7-flash');
+assert(busyBadge.props.title.includes('last 4 requests'), busyBadge.props.title);
+assert(context.answeringBadge({ name: 'x', answering: [], busy: { streak: 1, at: 1 } }, rows).props.title.includes('last request as busy'));
+const answeringBadge = context.answeringBadge({ name: 'gemini-3.7-flash', answering: ['plan'], busy: null }, rows);
+assert(text(answeringBadge).includes('answering now') && answeringBadge.props['data-answering'] === 'gemini-3.7-flash');
+assert.equal(context.answeringBadge({ name: 'x', answering: [], busy: null }, rows), null);
 
 // every model held back, one provider: the card waits, and says what to do
 const waiting = context.pacingCard({ pacing: { ...pacing, waiting: true, only_provider_limited: true, answering: {},

@@ -465,6 +465,7 @@ class Workspace:
                 "roles": [role for role in ROLES if name in (config["roles"].get(role) or [])],
                 "answering": [role for role in ROLES if answering.get(role) == name],
                 "used_today": today,
+                "busy": counted.busy_now(name) if spec.get("kind") == "openai" else None,   # its last requests all turned away as busy
                 "free_chain": bool((preset or {}).get("free_chain")),
                 "note": spec.get("note")})
         roles = {role: list(config["roles"].get(role) or []) for role in ROLES}
@@ -538,7 +539,7 @@ class Workspace:
             if spec.get("kind") == "openai" and is_free_tier(spec) and self._usable(name, spec):
                 today = counted.today(name, str(spec.get("base_url") or ""), free=True)
                 free.append({"name": name, "label": shown(name, spec), "model": spec.get("model"),
-                             "answering": [r for r in ROLES if answering.get(r) == name],
+                             "answering": [r for r in ROLES if answering.get(r) == name], "busy": counted.busy_now(name),
                              "held": name in active, "until_clock": clock(active[name]["until"]) if name in active else None,
                              "used": dict(today, words=used_words(today, refused=name in active and bool(active[name].get("daily"))))})
         held_all = bool(providers) and providers <= set(active)

@@ -173,3 +173,114 @@ def test_the_overview_promises_the_card_only_when_it_is_there(tmp_path):
     bare.save_plan({"summary": "x", "milestones": [{"title": "Plan only", "done_when": "later"}]})
     studio.ws = bare
     assert api_state(studio, {}, None)["try_ready"] is False
+
+
+# ---- J0-F20: files written to the project reach the practice copy before the next Try ----
+
+LOG_BEGIN = '''import argparse, json
+from pathlib import Path
+data = Path("books.json")
+books = json.loads(data.read_text()) if data.exists() else []
+parser = argparse.ArgumentParser(prog="readinglog.py")
+commands = parser.add_subparsers(dest="command", required=True)
+commands.add_parser("list")
+commands.add_parser("add").add_argument("title")
+'''
+LOG_DELETE = LOG_BEGIN + '''commands.add_parser("delete").add_argument("number", type=int)
+'''
+LOG_RUN = '''args = parser.parse_args()
+if args.command == "add":
+    books.append(args.title); data.write_text(json.dumps(books)); print("added", args.title)
+elif args.command == "delete":
+    if not 1 <= args.number <= len(books):
+        raise SystemExit("Error: Book number %d does not exist." % args.number)
+    print("deleted", books.pop(args.number - 1)); data.write_text(json.dumps(books))
+else:
+    print("\\n".join(f"{i}. {b}" for i, b in enumerate(books, 1)) or "No books yet")
+'''
+READING_LOG_V1, READING_LOG_V2 = LOG_BEGIN + LOG_RUN, LOG_DELETE + LOG_RUN
+
+
+def log_project(tmp_path):
+    (tmp_path / "readinglog.py").write_bytes(READING_LOG_V1.encode("utf-8"))
+    (tmp_path / "books.json").write_text(json.dumps(["Emma"]), encoding="utf-8")
+    return Workspace(tmp_path)
+
+
+def write_delete_command(ws, by):
+    """A draft that adds the delete command, written to the project the way the owner or an automatic apply does."""
+    draft = ws.save_draft(title="Delete a book by its number", why="Adds delete", drafted_by="test",
+                          files=[{"path": "readinglog.py", "content": READING_LOG_V2, "base": READING_LOG_V1}])
+    assert ws.apply_draft(draft["id"], by=by)["ok"]
+    return draft
+
+
+@pytest.mark.parametrize("by", ["owner", "build"])
+def test_a_draft_written_to_the_project_is_in_the_practice_copy_at_the_next_try(tmp_path, by):
+    ws = log_project(tmp_path)
+    made = try_it.run(ws, "python readinglog.py add Dune")                  # the practice copy: made now from the folder
+    assert made["practice"]["state"] == "made" and made["exit_code"] == 0
+    kept = try_it.run(ws, "python readinglog.py list")                      # nothing changed: the copy lasts, Dune is still there
+    assert kept["practice"] == {"created_utc": made["practice"]["created_utc"], "state": "kept"}
+    assert kept["stdout"].split() == ["1.", "Emma", "2.", "Dune"] and try_it.status(ws)["stale"] is False
+    write_delete_command(ws, by)
+    status = try_it.status(ws)
+    assert status["stale"] is True and status["practice"]["created_utc"] == made["practice"]["created_utc"]   # the card can say so
+    tried = try_it.run(ws, "python readinglog.py delete 1")                 # J0: "invalid choice: 'delete'" on the old copy
+    assert tried["exit_code"] == 0 and tried["stdout"].strip() == "deleted Emma", tried["stderr"]
+    assert tried["practice"]["state"] == "refreshed" and tried["practice"]["created_utc"] >= made["practice"]["created_utc"]
+    assert try_it.run(ws, "python readinglog.py list")["stdout"].strip() == "No books yet"       # Dune (the old practice) is gone
+    assert try_it.status(ws)["stale"] is False and try_it.status(ws)["practice"]["created_utc"] == tried["practice"]["created_utc"]
+    assert json.loads((tmp_path / "books.json").read_text(encoding="utf-8")) == ["Emma"]                # the real folder untouched
+    assert [e["data"].get("practice") for e in ws.ledger.events("try.ran")] == ["made", "kept", "refreshed", "kept"]
+
+
+def test_a_draft_undone_or_a_file_changed_by_hand_also_refreshes_the_copy(tmp_path):
+    ws = log_project(tmp_path)
+    assert try_it.run(ws, "python readinglog.py list")["practice"]["state"] == "made"
+    draft = write_delete_command(ws, "owner")
+    assert try_it.run(ws, "python readinglog.py delete 1")["practice"]["state"] == "refreshed"
+    assert ws.undo_draft(draft["id"])["ok"]
+    after = try_it.run(ws, "python readinglog.py delete 1")
+    assert after["practice"]["state"] == "refreshed" and after["exit_code"] != 0 and "invalid choice" in after["stderr"]
+    (tmp_path / "readinglog.py").write_bytes(READING_LOG_V2.encode("utf-8"))         # the owner's own editor
+    assert try_it.run(ws, "python readinglog.py delete 1")["exit_code"] == 0
+    # A run in the real folder is not a practice run: it says nothing of the copy and the copy is not touched by it.
+    real = try_it.run(ws, "python readinglog.py list", real=True)
+    assert real["practice"] is None and real["exit_code"] == 0
+
+
+def test_a_practice_copy_made_before_the_folder_was_recorded_is_made_again_once(tmp_path):
+    ws = log_project(tmp_path)
+    try_it.reset_practice(ws)
+    record = json.loads((ws.home / "try" / "PRACTICE.json").read_text(encoding="utf-8"))
+    record.pop("files_digest")                                              # a copy of an earlier build
+    (ws.home / "try" / "PRACTICE.json").write_text(json.dumps(record), encoding="utf-8")
+    assert try_it.status(ws)["stale"] is True
+    assert try_it.run(ws, "python readinglog.py list")["practice"]["state"] == "refreshed"
+    assert try_it.run(ws, "python readinglog.py list")["practice"]["state"] == "kept"
+
+
+def test_a_folder_that_cannot_be_read_as_a_snapshot_leaves_the_copy_as_it_is(tmp_path, monkeypatch):
+    ws = log_project(tmp_path)
+    assert try_it.run(ws, "python readinglog.py add Dune")["practice"]["state"] == "made"
+
+    def refuse(_ws):
+        raise try_it.SnapshotUnsupported("too large")
+    monkeypatch.setattr(try_it, "collect_snapshot", refuse)
+    assert try_it.status(ws)["stale"] is False
+    kept = try_it.run(ws, "python readinglog.py list")
+    assert kept["practice"]["state"] == "kept" and "Dune" in kept["stdout"]
+
+
+def test_the_route_tells_the_card_when_the_copy_was_made_and_that_the_folder_changed(tmp_path):
+    from types import SimpleNamespace
+    from runesmith.app.server import api_try, api_try_run
+    ws = log_project(tmp_path)
+    studio = SimpleNamespace(ws=ws)
+    assert api_try(studio, {}, None)["practice"] is None and api_try(studio, {}, None)["stale"] is False
+    ran = api_try_run(studio, {}, {"command": "python readinglog.py list", "real": False})
+    assert api_try(studio, {}, None)["practice"]["created_utc"] == ran["practice"]["created_utc"]
+    write_delete_command(ws, "owner")
+    assert api_try(studio, {}, None)["stale"] is True
+
