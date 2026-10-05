@@ -3,33 +3,15 @@ import { h, icon, get, post, bus, toast, commentable, openNotes, clear, ago, plu
   BAND_LABEL, humanize, cap, bytes, withBusy, clock, debounce, $ } from '../core.js';
 import { iconSvg } from '../icons.js';
 import { bandPosition, fmtCap } from './home.js';
-import { automateSection, whatSection, evidenceSection, section, noAutomation, focusHeading, hhmm, when } from './map-parts.js';
+import { automateSection, whatSection, evidenceSection, section, noAutomation, focusHeading, hhmm, when, panZoom, keyboardNodes, kv, scopedObject, withOverlay } from './map-parts.js';
 import { structureSvg, structureList, nodePanel, groupPanel, morePanel } from './map-structure.js';
+import selfLens from './map-self.js';
+import developmentLens from './map-plan.js';
+import operationsLens from './map-ops.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hubSize = (name) => { const n = String(name || 'Workspace').length; return n <= 9 ? 15 : n <= 12 ? 13.5 : n <= 15 ? 12 : 10.5; };
 const trunc = (s, n) => (String(s).length > n ? String(s).slice(0, n - 1) + '…' : String(s));
-// Old maps stay on disk until the owner re-maps. Render their retained probe with
-// current evidence semantics, without starting tests or rewriting the receipt.
-function scopedObject(obj) {
-  if (obj._overlaid) return obj;
-  const probe = obj.probe || {}, unavailable = !!(probe.unavailable || probe.error);
-  if (probe.runner !== 'unittest' && !unavailable) return obj;
-  const objectives = (obj.objectives || []).map(row => ['test_pass_rate', 'test_suite_seconds'].includes(row.metric)
-    ? {...row, value: null, band: 'unknown', evidence: 'unknown'} : row);
-  const ladder = (obj.ladder || []).map(row => ['tests_collect', 'tests_pass', 'fast_suite'].includes(row.rung)
-    ? {...row, status: row.rung === 'tests_pass' && !unavailable && probe.exit_code != null && probe.exit_code !== 0
-      ? 'not_achieved' : 'unknown'} : row);
-  return {...obj, objectives, ladder, next_rung: ladder.find(row => row.status !== 'achieved')?.rung || null};
-}
-// The test rungs of a code object's ladder from the latest recorded test run, whatever ran it (the server names the run and
-// its time on each rung). Without them (an older answer, or no run recorded) the map's own scoped ladder stays.
-function withOverlay(obj, ladders) {
-  const scoped = scopedObject(obj), overlay = ladders && ladders[obj.name];
-  if (!overlay) return scoped;
-  const ladder = (scoped.ladder || []).map((r) => (overlay[r.rung] ? { ...r, status: overlay[r.rung].status, evidence: overlay[r.rung] } : r));
-  return { ...scoped, ladder, next_rung: ladder.find((r) => r.status !== 'achieved')?.rung || null, _overlaid: true };
-}
 // A long workspace name wraps onto two balanced lines inside the hub instead of being cut.
 const hubLines = (name) => {
   const text = String(name || 'Workspace').trim(), words = text.split(/\s+/);
@@ -48,23 +30,6 @@ const hubMarkup = (lines, facts) => {
     + `<text text-anchor="middle" y="${two ? 18 : 14}" class="svg-muted" font-size="11.5">${facts.empty ? 'empty folder' : `${facts.files ?? 0}${facts.truncated_scan ? '+' : ''} files`}</text>`
     + `<text text-anchor="middle" y="${two ? 33 : 30}" class="svg-faint" font-size="10.5">workspace</text>`;
 };
-/** Every `.node` of a lens drawing takes the keyboard: a Tab stop, announced by its tooltip, picked by Enter or Space. */
-function keyboardNodes(svg, pick) {
-  for (const n of svg.querySelectorAll('.node')) {
-    n.classList.add('kb');
-    if (!n.hasAttribute('tabindex')) n.setAttribute('tabindex', '0');
-    if (!n.hasAttribute('role')) n.setAttribute('role', 'button');
-    const tip = n.querySelector(':scope > title');
-    if (!n.hasAttribute('aria-label') && tip) n.setAttribute('aria-label', tip.textContent);
-  }
-  svg.addEventListener('keydown', (e) => {
-    const n = e.target.closest && e.target.closest('.node');
-    if (!n || (e.key !== 'Enter' && e.key !== ' ')) return;
-    e.preventDefault();
-    pick(n);
-  });
-}
-
 // The environment map's rings: an ellipse wider than tall, like the canvas. A node is 196 × 66 plus a margin.
 const RING_X = 270, RING_Y = 165, NODE_W = 196 + 26, NODE_H = 66 + 22;
 export function ringLayout(n) {
@@ -115,22 +80,9 @@ export default async function render(root, ctx) {
   const head = h('div.page-head', h('div', h('h2', 'Living map'), h('p', lens.blurb)), h('div.actions', tabs));
   const body = h('div');
   root.append(head, body);
+  ctx.refreshLens = () => ctx.navigate('map', lens.id);          // a control that changed what a lens draws asks for it again
   const draw = { environment: environmentLens, self: selfLens, development: developmentLens, operations: operationsLens }[lens.id];
   return draw(body, ctx);
-}
-
-// ------------------------------------------------------------ pan and zoom --
-function panZoom(svg, g, fit) {
-  let view = { x: 0, y: 0, k: 1 }, drag = null;
-  const apply = () => g.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
-  const toLocal = (e) => { const r = svg.getBoundingClientRect(); const vb = svg.viewBox.baseVal; return { x: (e.clientX - r.left) / r.width * vb.width + vb.x, y: (e.clientY - r.top) / r.height * vb.height + vb.y }; };
-  svg.addEventListener('wheel', (e) => { e.preventDefault(); const p = toLocal(e); const f = Math.exp(-e.deltaY * 0.0015); const k = Math.max(0.35, Math.min(3.2, view.k * f));
-    view.x = p.x - (p.x - view.x) * (k / view.k); view.y = p.y - (p.y - view.y) * (k / view.k); view.k = k; apply(); }, { passive: false });
-  svg.addEventListener('pointerdown', (e) => { if (e.target.closest('.node')) return; drag = { ...toLocal(e), vx: view.x, vy: view.y }; svg.classList.add('dragging'); svg.setPointerCapture(e.pointerId); });
-  svg.addEventListener('pointermove', (e) => { if (!drag) return; const p = toLocal(e); view.x = drag.vx + (p.x - drag.x); view.y = drag.vy + (p.y - drag.y); apply(); });
-  svg.addEventListener('pointerup', () => { drag = null; svg.classList.remove('dragging'); });
-  svg.addEventListener('dblclick', (e) => { if (!e.target.closest('.node')) { view = { x: 0, y: 0, k: 1 }; apply(); } });
-  return { zoom: (f) => { view.k = Math.max(0.35, Math.min(3.2, view.k * f)); apply(); }, reset: () => { view = { x: 0, y: 0, k: 1 }; apply(); fit && fit(); } };
 }
 
 // ============================================================== ENVIRONMENT ==
@@ -531,226 +483,4 @@ function ladderEl(obj) {
     if (r.evidence?.note) box.append(h('div.tiny.faint.lm-src', { style: { marginLeft: '26px' } }, `Source: ${r.evidence.note}`));
   }
   return box;
-}
-function kv(rows) {
-  return h('table.table.small', { style: { marginTop: '6px' } }, rows.map(([k, v]) => h('tr', h('td.faint', { style: { padding: '5px 8px 5px 0', width: '44%' } }, k), h('td', { style: { padding: '5px 0', wordBreak: 'break-word' } }, v == null || v === '' ? '—' : String(v)))));
-}
-
-// ===================================================================== SELF ==
-async function selfLens(body, ctx) {
-  const data = await get('/api/map/self');
-  const wrap = h('div.map-wrap');
-  let selected = null;
-  const kernel = data.kernel, organs = data.active_organs;
-  const draw = () => {
-    clear(wrap);
-    const R1 = 190, R2 = 262, N = kernel.length;
-    let s = `<svg class="map" viewBox="-560 -330 1120 660" xmlns="http://www.w3.org/2000/svg"><defs>
-      <radialGradient id="core" r="60%"><stop offset="0" stop-color="#f8dc94"/><stop offset=".55" stop-color="#e8b04a"/><stop offset="1" stop-color="#c58a34"/></radialGradient>
-      <radialGradient id="coreHalo" r="50%"><stop offset="0" stop-color="#e8b04a" stop-opacity=".4"/><stop offset="1" stop-color="#e8b04a" stop-opacity="0"/></radialGradient></defs><g class="pz">`;
-    s += `<circle r="${R2 + 34}" fill="none" stroke="var(--line)" stroke-dasharray="2 8"><animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="140s" repeatCount="indefinite"/></circle>`;
-    kernel.forEach((c, i) => {
-      const a0 = (i / N) * Math.PI * 2 - Math.PI / 2 + 0.012, a1 = ((i + 1) / N) * Math.PI * 2 - Math.PI / 2 - 0.012;
-      const p = (r, a) => `${(Math.cos(a) * r).toFixed(1)} ${(Math.sin(a) * r).toFixed(1)}`;
-      const d = `M ${p(R2, a0)} A ${R2} ${R2} 0 0 1 ${p(R2, a1)} L ${p(R1, a1)} A ${R1} ${R1} 0 0 0 ${p(R1, a0)} Z`;
-      const sel = selected === c.path;
-      const shade = 0.18 + 0.5 * Math.min(1, (c.lines || 50) / 450);
-      s += `<g class="node${sel ? ' sel' : ''}" data-kind="kernel" data-name="${esc(c.path)}" data-note="component|${esc(c.path)}" data-note-label="${esc(c.path)}"><path d="${d}" fill="var(--rune)" fill-opacity="${sel ? 0.95 : shade.toFixed(2)}" stroke="var(--bg-1)" stroke-width="1.5"/><title>${esc(c.path)} — ${esc(c.purpose || '')}</title></g>`;
-    });
-    s += `<circle r="${R1 - 26}" fill="url(#coreHalo)"/>`;
-    s += `<circle r="118" fill="var(--bg-1)" stroke="var(--line-2)"/>`;
-    const m = organs.length || 1;
-    organs.forEach((o, i) => {
-      const a = (i / m) * Math.PI * 2 - Math.PI / 2;
-      const x = Math.cos(a) * 64, y = Math.sin(a) * 64;
-      s += `<g class="node" data-kind="organ" data-name="${esc(o.path)}" data-note="organ|${esc(o.path)}" data-note-label="organ ${esc(o.path)}" transform="translate(${m === 1 ? 0 : x},${m === 1 ? -20 : y})"><circle r="${m === 1 ? 46 : 30}" fill="url(#core)"/><text text-anchor="middle" y="4" font-size="12" font-weight="700" fill="#0b0e14">${esc(o.path.replace('.py', ''))}</text><title>organ ${esc(o.path)} · ${o.lines} lines</title></g>`;
-    });
-    const gen = data.identity.active_generation || '';
-    s += `<text text-anchor="middle" y="${m === 1 ? 50 : 104}" class="svg-muted" font-size="11.5">active generation</text><text text-anchor="middle" y="${m === 1 ? 68 : 120}" class="svg-text" font-size="13" font-weight="700">${esc(gen)}</text>`;
-    s += `<text x="0" y="${-R2 - 44}" text-anchor="middle" class="svg-faint" font-size="12" letter-spacing="3">KERNEL · FIXED · ${N} MODULES</text>`;
-    s += `<text x="0" y="${R2 + 58}" text-anchor="middle" class="svg-faint" font-size="12" letter-spacing="3">ORGANS · LIVING · REWRITTEN ONLY WITH EVIDENCE</text>`;
-    // lineage along the left
-    const lin = data.lineage || [];
-    lin.forEach((g, i) => {
-      const y = -150 + i * 64, x = -470;
-      const active = g.id === gen;
-      s += `${i ? `<path d="M${x} ${y - 46} L${x} ${y - 16}" stroke="var(--line-2)" stroke-width="2"/>` : ''}
-        <g class="node" data-kind="generation" data-name="${esc(g.id)}" data-note="generation|${esc(g.id)}" data-note-label="${esc(g.id)}" transform="translate(${x},${y})"><circle r="14" fill="${active ? '#ff8a3d' : 'var(--bg-3)'}" stroke="${active ? '#f8dc94' : 'var(--line-2)'}" stroke-width="2"/>
-        <text x="24" y="-2" class="svg-text" font-size="12" font-weight="650">${esc(g.id.replace('gen-', ''))}</text><text x="24" y="13" class="svg-faint" font-size="10.5">${esc(trunc(g.label || '', 28))}</text><title>${esc(g.label || '')}</title></g>`;
-    });
-    if (lin.length) s += `<text x="-484" y="-190" class="svg-faint" font-size="11" letter-spacing="2">LINEAGE</text>`;
-    s += `</g></svg>`;
-    const holder = h('div', { html: s });
-    const svg = holder.firstChild;
-    svg.setAttribute('role', 'group');
-    svg.setAttribute('aria-label', `Runesmith's anatomy: ${N} kernel modules, ${organs.length} organ${organs.length === 1 ? '' : 's'} and ${lin.length} generation${lin.length === 1 ? '' : 's'}. Tab to a part and press Enter for its details.`);
-    const pz = panZoom(svg, svg.querySelector('.pz'));
-    svg.addEventListener('click', (e) => { const n = e.target.closest('.node'); if (!n) return; selected = n.dataset.name; drawPanel(n.dataset.kind, n.dataset.name); draw(); });
-    keyboardNodes(svg, (n) => {                     // details open beside the drawing, and the focus goes there
-      selected = n.dataset.name; drawPanel(n.dataset.kind, n.dataset.name); draw();
-      const head = panel.querySelector('h3'); if (head) { head.setAttribute('tabindex', '-1'); head.focus(); }
-    });
-    wrap.append(h('div.map-tools', h('button.btn.sm.icon', { 'aria-label': 'Zoom in', title: 'Zoom in', onclick: () => pz.zoom(1.2) }, icon('plus')),
-      h('button.btn.sm.icon', { 'aria-label': 'Zoom out', title: 'Zoom out', onclick: () => pz.zoom(1 / 1.2) }, icon('minus')),
-      h('button.btn.sm.icon', { 'aria-label': 'Reset the view', title: 'Reset view', onclick: () => pz.reset() }, icon('crosshair')), h('span.badge.rune', `Runesmith ${data.identity.version}`)), svg,
-      h('div.map-legend', h('span', h('b', { style: { color: 'var(--rune)' } }, '■'), ' kernel module (fixed)'), h('span', h('b', { style: { color: 'var(--ember)' } }, '●'), ' organ (can be improved)'), h('span.faint', 'click any part')));
-    wrap.append(panel);
-  };
-  const panel = h('div.map-side');
-  const drawPanel = (kind, name) => {
-    clear(panel);
-    const close = h('button.btn.icon.sm.ghost', { onclick: () => { selected = null; drawPanel(); draw(); } }, icon('x'));
-    if (kind === 'kernel' || kind === 'organ') {
-      const c = kind === 'kernel' ? kernel.find((k) => k.path === name) : data.organs.find((o) => o.path.endsWith(name)) || { path: name };
-      panel.append(...[h('div.row', h('div.grow', h('div.small.faint', kind === 'kernel' ? 'Kernel module · fixed' : 'Organ · improvable'), h('h3', { style: { margin: '2px 0 0' } }, c.path)), close),
-        h('p.muted', c.purpose || 'No docstring.'),
-        c.public_symbols?.length ? h('div', h('div.label-text', 'Public parts'), h('div.pillbox.mt-8', c.public_symbols.slice(0, 30).map((p) => h('span.badge.mono', p)))) : null,
-        c.lines ? h('p.small.faint.mt-8', `${c.lines} lines`) : null,
-        h('button.btn.sm.mt-8', { onclick: () => openNotes('component', c.path, c.path) }, icon('note'), 'Comment for the Improver')].filter(Boolean));
-      return;
-    }
-    if (kind === 'generation') {
-      const g = data.lineage.find((x) => x.id === name) || {};
-      panel.append(h('div.row', h('div.grow', h('div.small.faint', 'Generation'), h('h3', { style: { margin: '2px 0 0' } }, g.id)), close),
-        h('p.muted', g.label), kv([['Parent', g.parent || '—'], ['Frozen', g.frozen_utc], ['Organ digest', (g.organ_digest || '').slice(0, 22) + '…']]),
-        h('button.btn.sm.mt-8', { onclick: () => ctx.navigate('improve') }, icon('spark'), 'Open Self-improvement'),
-        h('button.btn.sm.mt-8', { onclick: () => openNotes('generation', g.id, g.id) }, icon('note'), 'Comment'));
-      return;
-    }
-    // default: identity + capabilities
-    panel.append(h('div.row', h('div.grow', h('div.small.faint', 'Runesmith itself'), h('h3', { style: { margin: '2px 0 0' } }, 'Self-knowledge')),
-      h('button.btn.sm', { onclick: () => openNotes('self', 'runesmith', 'Runesmith itself') }, icon('note'), 'Comment')),
-      h('p.small.muted', 'Everything here is read from Runesmith’s own bytes and its own records. Nothing is assumed: a capability without evidence says unknown.'));
-    const capNames = { repair_yield: 'Repair yield', seconds_per_repair: 'Seconds per repair', calls_per_repair: 'Calls per repair', false_promotion_rate: 'False "fixed" rate' };
-    for (const [k, label] of Object.entries(capNames)) {
-      const c = data.capabilities[k] || { band: 'unknown', value: null };
-      const row = h('div.gauge-row', h('span.small', label), h('div', { class: `bandbar${c.value == null ? ' unknown' : ''}` }, c.value != null ? h('span.mark', { style: { left: `${bandPosition(c)}%` } }) : null),
-        h('span', { class: `band ${c.band}` }, c.value == null ? '?' : fmtCap(k, c.value)));
-      commentable(row, 'capability', k, label);
-      panel.append(row);
-    }
-    panel.append(h('div.divider'), h('div.label-text', 'What an organ may ask of the kernel'),
-      h('div.col.gap-6.mt-8', Object.entries(data.affordances).map(([k, v]) => h('div.small', h('b.mono', k), h('span.muted', ` — ${v}`)))),
-      h('div.divider'), h('div.label-text', 'Envelope per attempt'),
-      kv(Object.entries(data.envelope).map(([k, v]) => [humanize(k), v])));
-    if (data.open_targets?.length) panel.append(h('div.divider'), h('div.label-text', 'Where it struggles most (Kaizen targets)'),
-      h('div.col.gap-6.mt-8', data.open_targets.map((t) => h('div.small', h('b', humanize(t.family || t.stage || t.kind || 'target')), h('span.muted', ` · share ${Math.round((t.share || 0) * 100)}%`)))));
-    panel.append(h('div.divider'), h('div.label-text', 'Unknown'), h('ul.small.muted', { style: { paddingLeft: '18px' } }, data.unknowns.map((u) => h('li', u))));
-  };
-  body.append(wrap);
-  drawPanel();
-  draw();
-}
-
-// ============================================================== DEVELOPMENT ==
-async function developmentLens(body, ctx) {
-  const data = await get('/api/map/development');
-  const lanes = [];
-  const goals = (data.goals || []).filter((g) => g.status !== 'removed');
-  const plan = data.plan;
-  if (plan?.milestones?.length) {
-    const byTrack = new Map();
-    for (const m of plan.milestones) { const t = m.track || 'Plan'; if (!byTrack.has(t)) byTrack.set(t, []); byTrack.get(t).push(m); }
-    for (const [t, ms] of byTrack) lanes.push({ kind: 'plan', label: t, sub: 'plan track', stations: ms.map((m) => ({ id: m.id, label: m.title, status: m.status === 'done' ? 'achieved' : m.status === 'doing' ? 'doing' : m.status === 'dropped' ? 'dropped' : 'open', note: ['milestone', m.id, m.title] })) });
-  }
-  for (const o of data.objects.map(scopedObject)) if (o.ladder?.length) lanes.push({ kind: 'object', label: o.name, sub: KIND[o.kind]?.label || o.kind, stations: o.ladder.map((r) => ({ id: r.rung, label: humanize(r.rung), status: r.status, next: o.next_rung === r.rung, note: ['rung', `${o.name}/${r.rung}`, `${o.name}: ${humanize(r.rung)}`] })) });
-  if (data.lineage?.length) lanes.push({ kind: 'self', label: 'Runesmith itself', sub: 'generations', stations: data.lineage.map((g) => ({ id: g.id, label: g.id.replace('gen-', ''), status: g.active ? 'active' : 'achieved', note: ['generation', g.id, g.id], title: g.label })) });
-  const goalsCard = h('div.card', h('div.card-head', h('h3', icon('target'), 'Operating toward'), h('div.actions', h('button.btn.sm', { onclick: () => ctx.navigate('goals') }, icon('plus'), 'Goals & plan'))),
-    goals.length ? h('div.pillbox', goals.map((g) => { const c = h('span', { class: `chip${g.status === 'done' ? ' on' : ''}` }, icon(g.status === 'done' ? 'check' : 'target'), g.text); commentable(c, 'goal', g.id, g.text); c.querySelector('.note-btn').style.top = '-10px'; return c; }))
-      : h('p.muted', 'No goals yet. Goals tell the planner and the map what matters to you.'));
-  const laneW = 210, stepW = 158, rowH = 96;
-  const maxStations = Math.max(3, ...lanes.map((l) => l.stations.length));
-  const W = laneW + maxStations * stepW + 60, H = Math.max(1, lanes.length) * rowH + 30;
-  let s = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="display:block">`;
-  lanes.forEach((lane, i) => {
-    const y = 30 + i * rowH + 26;
-    const color = lane.kind === 'self' ? 'var(--rune)' : lane.kind === 'plan' ? 'var(--violet)' : 'var(--ember)';
-    s += `<rect x="8" y="${y - 32}" width="${W - 16}" height="${rowH - 12}" rx="14" fill="var(--bg-1)" stroke="var(--line)"/>`;
-    s += `<text x="26" y="${y - 4}" class="svg-text" font-size="14" font-weight="680">${esc(trunc(lane.label, 22))}</text><text x="26" y="${y + 14}" class="svg-faint" font-size="11">${esc(lane.sub)}</text>`;
-    const x0 = laneW, x1 = laneW + (lane.stations.length - 1) * stepW;
-    s += `<path d="M${x0} ${y} L${x1} ${y}" stroke="var(--line-2)" stroke-width="4" stroke-linecap="round"/>`;
-    const lastDone = lane.stations.reduce((m, st, j) => (st.status === 'achieved' || st.status === 'active' ? j : m), -1);
-    if (lastDone > 0) s += `<path d="M${x0} ${y} L${laneW + lastDone * stepW} ${y}" stroke="${color}" stroke-width="4" stroke-linecap="round"/>`;
-    lane.stations.forEach((st, j) => {
-      const x = laneW + j * stepW;
-      const fill = st.status === 'achieved' ? color : st.status === 'active' ? '#ff8a3d' : st.status === 'doing' ? 'var(--bg-2)' : 'var(--bg-2)';
-      const stroke = st.status === 'unknown' ? 'var(--text-3)' : st.status === 'not_achieved' ? '#e8b04a' : st.status === 'dropped' ? 'var(--line-2)' : color;
-      s += `<g class="node" data-lane="${i}" data-st="${j}" transform="translate(${x},${y})">${st.next || st.status === 'doing' ? `<circle r="17" fill="none" stroke="${color}" stroke-opacity=".45" stroke-width="5"><animate attributeName="r" values="14;19;14" dur="2.2s" repeatCount="indefinite"/></circle>` : ''}
-        <circle r="10" fill="${fill}" stroke="${stroke}" stroke-width="2.5" ${st.status === 'unknown' ? 'stroke-dasharray="3 3"' : ''}/>
-        ${st.status === 'achieved' || st.status === 'active' ? '<path d="M-4 0 L-1 3 L4 -3" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>' : ''}
-        <text y="30" text-anchor="middle" class="${st.status === 'dropped' ? 'svg-faint' : 'svg-muted'}" font-size="11" ${st.status === 'dropped' ? 'text-decoration="line-through"' : ''}>${esc(trunc(st.label, 22))}</text><title>${esc(st.title || st.label)} — ${esc(st.status)}</title></g>`;
-    });
-  });
-  if (!lanes.length) s += `<text x="${W / 2}" y="60" text-anchor="middle" class="svg-muted" font-size="14">No tracks yet: map the folder, set goals, or draft a plan.</text>`;
-  s += '</svg>';
-  const holder = h('div', { html: s, style: { overflowX: 'auto' } });
-  const station = (n) => lanes[+n.dataset.lane].stations[+n.dataset.st];
-  holder.addEventListener('click', (e) => { const n = e.target.closest('.node'); if (!n) return; openNotes(...station(n).note); });
-  if (holder.firstChild) {
-    holder.firstChild.setAttribute('role', 'group');
-    holder.firstChild.setAttribute('aria-label', `${lanes.length} development track${lanes.length === 1 ? '' : 's'}. Tab to a station and press Enter to comment on it.`);
-    keyboardNodes(holder.firstChild, (n) => openNotes(...station(n).note));
-  }
-  const tracks = h('div.card', h('div.card-head', h('h3', icon('route'), 'Development tracks'), h('span.badge', 'click a station to comment')), holder,
-    h('div.row.mt-8.small.faint', h('span', { class: 'band optimal' }, 'achieved'), h('span', { class: 'band minimal' }, 'not yet'), h('span', { class: 'band unknown' }, 'unknown'), h('span', '· a glowing ring marks what is next')));
-  const camp = h('div.card', h('div.card-head', h('h3', icon('spark'), 'Self-improvement campaigns')),
-    data.campaigns.length ? h('div.list', data.campaigns.slice().reverse().map((c) => h('div.item', h('div', { class: `ico ${c.decision === 'candidate' ? 'good' : ''}` }, icon('beaker')),
-      h('div.body', h('div.title', `${humanize(c.decision)} · target: ${humanize(c.target || '?')}`), h('div.meta', `${c.campaign} · ${c.attempts.length} attempt(s) · validation ${c.best ?? '—'} vs baseline ${c.baseline ?? '—'}`)))))
-      : h('p.muted', 'None yet. Runesmith starts one when it has enough of its own experience (Settings → Self-improvement).'));
-  body.append(goalsCard, h('div.mt-16'), tracks, h('div.mt-16'), camp);
-}
-
-// =============================================================== OPERATIONS ==
-async function operationsLens(body, ctx) {
-  const offs = [];
-  const box = h('div');
-  body.append(box);
-  const load = async () => {
-    const d = await get('/api/map/operations');
-    clear(box);
-    const w = d.worker;
-    const liveStage = { mapping: 0, discovering: 1, working: 2, planning: -1, drafting: -1 }[w.status];
-    const stages = [
-      ['Map', 'map', d.pipeline.objects, 'objects'], ['Discover', 'search', d.pipeline.code_objects, 'code objects'],
-      ['Repair', 'hammer', d.pipeline.attempts, 'attempts'], ['Judge', 'scale', d.pipeline.accepted, 'accepted'],
-      ['Propose', 'inbox', d.pipeline.waiting, 'waiting'], ['You apply', 'user', d.pipeline.applied, 'applied']];
-    const pipe = h('div.card', h('div.card-head', h('h3', icon('activity'), 'The work loop'),
-      h('span', { class: `badge ${w.current ? 'rune' : w.paused ? 'warn' : ''}` }, w.current ? (w.detail || w.status) : w.paused ? 'paused' : 'idle')),
-      h('div.pipeline', stages.map(([label, ic, n, unit], i) => h('div', { class: `stage${i === liveStage ? ' live' : ''}` }, h('div.orb', icon(ic)), h('b', String(n ?? 0)), h('span', `${label} · ${unit}`)))),
-      h('p.tiny.faint', 'Runesmith never writes to your files on its own: every fix waits in Work & proposals until you apply it.'));
-    const roles = h('div.card', h('div.card-head', h('h3', icon('cpu'), 'Who thinks what'), h('div.actions', h('button.btn.sm', { onclick: () => ctx.navigate('inference') }, 'Thinking power', icon('right')))));
-    for (const [role, label] of Object.entries(d.role_labels)) {
-      const names = d.roles[role] || [];
-      const row = h('div.item', h('div', { class: `ico ${names.length ? 'rune' : 'warn'}` }, icon(role === 'repair' ? 'hammer' : role === 'kaizen' ? 'spark' : role === 'acceptance' ? 'check' : 'wand')),
-        h('div.body', h('div.title', label), h('div.meta', names.length ? names.map((n) => { const st = d.stats[n]; return `${n}${st ? ` (${st.calls} calls, ${st.errors} errors, ~${(st.latency_s / Math.max(1, st.calls)).toFixed(1)} s)` : ''}`; }).join(' → ')
-          : role === 'plan' && d.ready.plan ? `borrows the ${d.ready.plan_source} role's model`
-          : role === 'acceptance' && d.ready.acceptance ? 'uses the Planner’s model' : 'no model yet')));
-      roles.append(row);
-    }
-    const att = d.attention;
-    const modeText = { HEALTHY: 'Healthy: most attention goes to your work', SUSPECTED_BLOCKAGE: 'A failure keeps recurring: the repairs may be struggling',
-      SUBJECT_BLOCKED: 'Blocked by a recurring failure: the improvement plan treats it as a struggle', RECOVERING: 'Recovering after an improvement',
-      CAPACITY_CONSTRAINED: 'Models are short of capacity: work waits, nothing is scored' };
-    const attention = h('div.card', h('div.card-head', h('h3', icon('gauge'), 'Attention')),
-      att ? h('div', h('div.kpi', h('div.v', `${Math.round(att.share * 100)}%`, h('small', 'self')), h('div.k', modeText[att.mode] || att.mode)),
-        h('div.bar.rune.mt-8', h('i', { style: { width: `${att.share * 100}%` } })), h('p.tiny.faint.mt-8', 'Your share of work turns that go to improving Runesmith itself (Settings, Self-improvement). The line above is only a health signal: it shows when the same failure keeps recurring, and it no longer changes the share.'))
-        : h('p.muted', 'Attention starts once Runesmith has worked on something.'));
-    const t = d.trial;
-    const trial = h('div.card', h('div.card-head', h('h3', icon('scale'), 'Trial')),
-      t ? h('div', h('p.small', `${t.candidate} challenges ${t.incumbent}. New work is split between them by a seeded coin; the result decides activation.`),
-        h('div.grid.two', ['incumbent', 'candidate'].map((arm) => h('div.kpi', h('div.k', arm), h('div.v', `${t.counts[arm][0]}`, h('small', `/ ${t.counts[arm][1]}`)), h('div.bar.mt-8', h('i', { style: { width: `${Math.min(100, t.counts[arm][1] / t.max_per_arm * 100)}%` } })))))) : h('p.muted', 'No trial open. A candidate generation must win one before it can become active.'));
-    const sched = h('div.card', h('div.card-head', h('h3', icon('clock'), 'Schedule')),
-      kv([['Autonomy', d.settings.autonomy === 'propose' ? 'Propose: works, then asks you' : 'Observe: maps and watches'], ['Scheduled rounds', d.settings.auto_work ? (d.settings.full_speed ? `full speed (waits at most ${d.settings.interval_minutes} min)` : `every ${d.settings.interval_minutes} min`) : 'off'],
-        ['Next round', w.next_round_utc ? `${clock(w.next_round_utc)} (${ago(w.next_round_utc)})` : '—'], ['Last round', d.round_utc ? `${ago(d.round_utc)}: ${humanize(d.last_round?.outcome)}` : 'never']]),
-      h('div.row.mt-8', h('button.btn.sm', { onclick: () => ctx.navigate('settings') }, icon('sliders'), 'Change')));
-    const consoleBox = h('div.console');
-    (w.lines || []).slice(-60).forEach((l) => consoleBox.append(h('div', { class: `l ${l.level || ''}` }, h('time', clock(l.utc)), l.text)));
-    const live = h('div.card', h('div.card-head', h('h3', icon('activity'), 'Live log')), consoleBox);
-    box.append(pipe, h('div.grid.two.mt-16', roles, attention), h('div.grid.two.mt-16', trial, sched), h('div.mt-16'), live);
-    setTimeout(() => { consoleBox.scrollTop = 1e9; }, 0);
-  };
-  await load();
-  const later = debounce(load, 500);
-  for (const k of ['worker', 'round', 'call', 'improve', 'settings']) offs.push(bus.on(k, later));
-  return () => offs.forEach((f) => f());
 }

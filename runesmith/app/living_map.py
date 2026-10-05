@@ -607,6 +607,10 @@ def structure_view(ws, name: str | None = None, expand: tuple[str, ...] = ()) ->
                                 "lines": f["lines"], "bytes": size, "mtime_utc": mtime_utc(rel),
                                 "language": LANGUAGE.get(os.path.splitext(rel)[1].lower()),
                                 "badges": work_badges.get(rel, [])}
+        change = ledger_changes.get(rel)
+        if change:                                                # Runesmith's own record: what it changed here, and when
+            node["badges"] = node["badges"] + [{"kind": "changed", "text": f"last changed by Runesmith, {when(change['utc'])}",
+                                                "source": change["source"]}]
         node["state"] = _state(rel, kind, run, reaches.get(rel, []), info, stale, obj)
         if kind == "test":
             node["test"] = _test_result(rel, run, stale, run_epoch)
@@ -824,9 +828,14 @@ def _evidence(ws, node: dict[str, Any], f: dict[str, Any], imports_of, imported_
         if (t or {}).get("failing"):
             rows.append({"label": "Failing tests", "items": t["failing"][:12], "source": (t or {}).get("source")})
     change = changes.get(rel)
-    if change:
+    on_disk = epoch(node["mtime_utc"])
+    if change and (on_disk is None or on_disk <= (epoch(change["utc"]) or 0) + 10):
         rows.append({"label": "Last change", "value": f"{change['what']} {when(change['utc'])}" + (f" ({change['by']})" if change.get("by") else ""),
                      "source": change["source"], "utc": change["utc"]})
+    elif change:                                                # the file changed again after Runesmith's change
+        rows.append({"label": "Last change", "value": f"changed on disk {when(node['mtime_utc'])}, after Runesmith's change at "
+                     f"{when(change['utc'])} ({change['what'].rstrip(',')}); who changed it is not recorded",
+                     "source": f"file time, {disk}, and {change['source']}", "utc": node["mtime_utc"]})
     else:
         rows.append({"label": "Last change", "value": f"{when(node['mtime_utc'])}; Runesmith's records do not say who", "source": "file time, " + disk,
                      "utc": node["mtime_utc"]})

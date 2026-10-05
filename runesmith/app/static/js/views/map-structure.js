@@ -105,7 +105,7 @@ export function structureSvg(st, { selected, centre, wsName, groupsOpen }) {
     if (id.startsWith('more:')) {
       const gid = id.slice(5), g = st.groups.find((x) => x.id === gid);
       s += `<g class="node lm-more${selected === id ? ' sel' : ''}" data-name="${esc(id)}" data-kind="more" transform="translate(${p.x.toFixed(1)},${p.y.toFixed(1)})" tabindex="0" role="button"
-        aria-label="${esc(`${g.more} more files in ${g.label}, not drawn. Enter to see them.`)}"><circle r="15" fill="var(--bg-2)" stroke="var(--line-2)" stroke-width="1.6" stroke-dasharray="3 3"/>
+        aria-label="${esc(`${g.more} more files in ${g.label}, not drawn. Enter to see them.`)}"><rect x="-24" y="-18" width="48" height="52" fill="transparent"/><circle r="15" fill="var(--bg-2)" stroke="var(--line-2)" stroke-width="1.6" stroke-dasharray="3 3"/>
         <text text-anchor="middle" y="4" class="svg-text" font-size="11" font-weight="700">+${g.more}</text><text text-anchor="middle" y="30" class="svg-faint" font-size="9.5">more</text><title>${esc(`+${g.more} more files in ${g.label}`)}</title></g>`;
       continue;
     }
@@ -113,6 +113,7 @@ export function structureSvg(st, { selected, centre, wsName, groupsOpen }) {
     const dots = (n.badges || []).filter((b) => BADGE_DOT[b.kind]).slice(0, 3).map((b, i) => `<circle cx="${p.r * 0.85 + 2}" cy="${-p.r * 0.85 + i * 8}" r="3.4" fill="${BADGE_DOT[b.kind]}"><title>${esc(b.text)}</title></circle>`).join('');
     s += `<g class="node lm-part lm-b-${n.state.band}${selected === id ? ' sel' : ''}" data-name="${esc(id)}" data-kind="part" data-note="file|${esc(centre.name)}/${esc(id)}" data-note-label="${esc(id)}"
       transform="translate(${p.x.toFixed(1)},${p.y.toFixed(1)})" tabindex="0" role="button" aria-label="${esc(spokenNode(n))}">
+      <rect x="-42" y="${-p.r - 8}" width="84" height="${2 * p.r + 30}" fill="transparent"/>
       <rect class="halo" x="${-p.r - 7}" y="${-p.r - 7}" width="${2 * p.r + 14}" height="${2 * p.r + 14}" rx="${p.r + 7}" fill="none" stroke="${BAND_COLOR[n.state.band]}" stroke-opacity=".4" stroke-width="5"/>
       <g class="lm-shape">${shape(n, p.r)}</g>
       <text text-anchor="middle" y="4" class="lm-glyph" font-size="${Math.max(9, Math.min(13, p.r * 0.7))}">${GLYPH[n.state.band]}</text>${dots}

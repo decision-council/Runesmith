@@ -222,7 +222,7 @@ const REG = {
     now: extra?.hasChecks ? 'This milestone has approved checks.' : 'No approved checks yet.',
     effect: 'Asks the Checker model for plain-words checks; they wait for you to read and approve them (unless the autopilot is on). It spends one model call.',
     buttons: [{ label: extra?.hasChecks ? 'Ask for new checks' : 'Propose acceptance checks', disabled: !extra?.ready, run: async () => {
-      await post('/api/worker/run', { job: 'propose_acceptance', params: { milestone: extra.id } });
+      await post('/api/worker/run', { job: 'propose_acceptance', params: { milestone: extra.mid } });
       toast('Proposing acceptance checks for this milestone. They appear in Goals & plan for you to read and approve.', 'good', 6000);
     } }] }),
   // ---- Runesmith itself
@@ -245,6 +245,7 @@ const REG = {
         if (!(await confirmDialog(CONFIRM.adopt(e.name)))) return;
         const r = await post(`/api/improve/adopt/${e.id}`, {});
         r.ok ? toast(`${e.name} adopted as ${r.id}; the trial is open.`, 'good', 7000) : toast(r.detail, 'warn', 8000);
+        ctx.refreshLens?.();
       } })) };
   },
   activate: (S, ctx, extra) => ({ id: 'activate', label: 'Make this generation active (roll back)',
@@ -252,8 +253,9 @@ const REG = {
     effect: 'Your own choice, recorded as such in the ledger. It skips the trial, so use it to roll back to an earlier generation. An open trial is closed by it.',
     buttons: [{ label: 'Make active', disabled: !!extra.active, run: async () => {
       if (!(await confirmDialog(CONFIRM.activate(extra.name)))) return;
-      const r = await post(`/api/improve/activate/${extra.id}`, {});
+      const r = await post(`/api/improve/activate/${extra.gid}`, {});
       r.ok ? toast(`${extra.name} is active.${r.trial_closed ? ' The open trial was closed.' : ''}`, 'good', 6000) : toast(r.detail, 'warn', 8000);
+      ctx.refreshLens?.();
     } }] }),
   stop_trial: (S, ctx, extra) => ({ id: 'stop_trial', label: 'Stop this trial',
     now: 'The candidate is being compared with the incumbent on new repairs.',
@@ -262,6 +264,7 @@ const REG = {
       if (!(await confirmDialog(CONFIRM.stop_trial(extra.incumbentName, extra.candidateName)))) return;
       const r = await post(`/api/improve/activate/${extra.incumbent}`, {});
       r.ok ? toast('Trial stopped; what runs is unchanged.', 'good') : toast(r.detail || 'The trial could not be stopped.', 'warn');
+      ctx.refreshLens?.();
     } }] }),
   // ---- links to the page that already owns the control
   link: (S, ctx, extra) => ({ id: extra.id, label: extra.label, now: extra.now || '', effect: extra.effect || '', buttons: [{ label: extra.button, run: async () => { ctx.navigate(...extra.go); } }] }),
@@ -321,4 +324,67 @@ export function noAutomation(why, governedBy, links = []) {
   return section('Automate', h('div.callout', icon('lock'), h('div', h('b', 'Not automatable, by design. '), why,
     governedBy ? h('div.small.mt-8', h('b', 'What governs it instead: '), governedBy) : null)),
   ...(links.length ? [h('div.row.wrap.mt-8', links.map((l) => h('button.btn.sm', { onclick: l.go }, l.label)))] : []));
+}
+
+// ---------------------------------------------------------------------------- shared drawing helpers --
+/** Every `.node` of a lens drawing takes the keyboard: a Tab stop, announced by its tooltip, picked by Enter or Space. */
+export function keyboardNodes(svg, pick) {
+  for (const n of svg.querySelectorAll('.node')) {
+    n.classList.add('kb');
+    if (!n.hasAttribute('tabindex')) n.setAttribute('tabindex', '0');
+    if (!n.hasAttribute('role')) n.setAttribute('role', 'button');
+    const tip = n.querySelector(':scope > title');
+    if (!n.hasAttribute('aria-label') && tip) n.setAttribute('aria-label', tip.textContent);
+  }
+  svg.addEventListener('keydown', (e) => {
+    const n = e.target.closest && e.target.closest('.node');
+    if (!n || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    pick(n);
+  });
+}
+
+
+// ------------------------------------------------------------ pan and zoom --
+export function panZoom(svg, g, fit) {
+  let view = { x: 0, y: 0, k: 1 }, drag = null;
+  const apply = () => g.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
+  const toLocal = (e) => { const r = svg.getBoundingClientRect(); const vb = svg.viewBox.baseVal; return { x: (e.clientX - r.left) / r.width * vb.width + vb.x, y: (e.clientY - r.top) / r.height * vb.height + vb.y }; };
+  svg.addEventListener('wheel', (e) => { e.preventDefault(); const p = toLocal(e); const f = Math.exp(-e.deltaY * 0.0015); const k = Math.max(0.35, Math.min(3.2, view.k * f));
+    view.x = p.x - (p.x - view.x) * (k / view.k); view.y = p.y - (p.y - view.y) * (k / view.k); view.k = k; apply(); }, { passive: false });
+  svg.addEventListener('pointerdown', (e) => { if (e.target.closest('.node')) return; drag = { ...toLocal(e), vx: view.x, vy: view.y }; svg.classList.add('dragging'); svg.setPointerCapture(e.pointerId); });
+  svg.addEventListener('pointermove', (e) => { if (!drag) return; const p = toLocal(e); view.x = drag.vx + (p.x - drag.x); view.y = drag.vy + (p.y - drag.y); apply(); });
+  svg.addEventListener('pointerup', () => { drag = null; svg.classList.remove('dragging'); });
+  svg.addEventListener('dblclick', (e) => { if (!e.target.closest('.node')) { view = { x: 0, y: 0, k: 1 }; apply(); } });
+  return { zoom: (f) => { view.k = Math.max(0.35, Math.min(3.2, view.k * f)); apply(); }, reset: () => { view = { x: 0, y: 0, k: 1 }; apply(); fit && fit(); } };
+}
+
+
+export function kv(rows) {
+  return h('table.table.small', { style: { marginTop: '6px' } }, rows.map(([k, v]) => h('tr', h('td.faint', { style: { padding: '5px 8px 5px 0', width: '44%' } }, k), h('td', { style: { padding: '5px 0', wordBreak: 'break-word' } }, v == null || v === '' ? '—' : String(v)))));
+}
+
+
+
+// ------------------------------------------------------------------------------------------ the ladders --
+// Old maps stay on disk until the owner re-maps. Render their retained probe with
+// current evidence semantics, without starting tests or rewriting the receipt.
+export function scopedObject(obj) {
+  if (obj._overlaid) return obj;
+  const probe = obj.probe || {}, unavailable = !!(probe.unavailable || probe.error);
+  if (probe.runner !== 'unittest' && !unavailable) return obj;
+  const objectives = (obj.objectives || []).map(row => ['test_pass_rate', 'test_suite_seconds'].includes(row.metric)
+    ? {...row, value: null, band: 'unknown', evidence: 'unknown'} : row);
+  const ladder = (obj.ladder || []).map(row => ['tests_collect', 'tests_pass', 'fast_suite'].includes(row.rung)
+    ? {...row, status: row.rung === 'tests_pass' && !unavailable && probe.exit_code != null && probe.exit_code !== 0
+      ? 'not_achieved' : 'unknown'} : row);
+  return {...obj, objectives, ladder, next_rung: ladder.find(row => row.status !== 'achieved')?.rung || null};
+}
+// The test rungs of a code object's ladder from the latest recorded test run, whatever ran it (the server names the run and
+// its time on each rung). Without them (an older answer, or no run recorded) the map's own scoped ladder stays.
+export function withOverlay(obj, ladders) {
+  const scoped = scopedObject(obj), overlay = ladders && ladders[obj.name];
+  if (!overlay) return scoped;
+  const ladder = (scoped.ladder || []).map((r) => (overlay[r.rung] ? { ...r, status: overlay[r.rung].status, evidence: overlay[r.rung] } : r));
+  return { ...scoped, ladder, next_rung: ladder.find((r) => r.status !== 'achieved')?.rung || null, _overlaid: true };
 }

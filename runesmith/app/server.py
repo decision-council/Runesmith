@@ -759,6 +759,7 @@ def api_map_development(s: Studio, q, body):
             elif overlay:
                 ladders[obj["name"]] = overlay
     view["ladders"] = ladders
+    view["mapped_utc"] = env_map.get("utc")
     for key, label, builder in (("graph", "the plan graph", living_map.plan_graph),
                                 ("lineage_ordered", "the lineage of generations", living_map.lineage_view)):
         built, problem = _living(label, builder, ws)
