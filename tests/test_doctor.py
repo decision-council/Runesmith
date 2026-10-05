@@ -28,6 +28,21 @@ def test_doctor_on_a_fresh_home_and_on_a_missing_one(tmp_path, capsys):
     assert "[ok ] ledger" in out and "[ok ] generation kernel" in out
 
 
+def test_doctor_says_plainly_that_no_model_is_set_up_instead_of_all_checks_passed(tmp_path, capsys):
+    # Starvation-integrity study (SI): "all checks passed" was printed for a home whose roles name no instrument at all.
+    home = tmp_path / "home"
+    cli.main(["--home", str(home), "init"])
+    cli.main(["--home", str(home), "doctor", "--offline"])
+    assert "no model is set up" not in capsys.readouterr().out                 # the fresh home names a local model
+    config = json.loads((home / "runesmith.json").read_text(encoding="utf-8"))
+    config["roles"] = {role: [] for role in config["roles"]}
+    (home / "runesmith.json").write_text(json.dumps(config), encoding="utf-8")
+    cli.main(["--home", str(home), "doctor", "--offline"])
+    out = capsys.readouterr().out
+    assert "all checks passed" not in out and "no model is set up" in out
+    assert not any(row["check"].startswith("instrument ") for row in diagnose_home(home, network=False))
+
+
 def test_requalify_after_a_kernel_update(tmp_path):
     home = tmp_path / "home"
     cli.main(["--home", str(home), "init"])

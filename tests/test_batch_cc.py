@@ -876,3 +876,46 @@ def test_an_owner_withdrawing_checks_ends_the_count(tmp_path):
     assert proposals._record(ws, "g1")["request_failures"]["count"] == 1
     proposals.withdraw(ws, "g1", reason="These checks put the camera in the wrong place.")
     assert "request_failures" not in proposals._record(ws, "g1")
+
+
+def test_the_failure_count_stored_with_the_proposals_has_a_ledger_event_of_its_own(tmp_path):
+    # Starvation-integrity study (SI, T10): with the check autopilot on and no model, each scheduled request stored a
+    # failure count in acceptance-proposals/<milestone>.json and nothing in the ledger said so.
+    ws = autopilot_workspace(tmp_path, [], [])
+    config = ws.config()
+    config["roles"] = {role: [] for role in config["roles"]}                    # no model is set up at all
+    ws.save_config(config)
+    worker = scheduled(ws)
+    failed = lambda: [e["data"] for e in ws.ledger.events("acceptance.request_failed")]     # noqa: E731
+    for n in (1, 2):
+        assert run_request(worker)["result"] == "failed"
+        stored = proposals._record(ws, "m1")["request_failures"]
+        assert stored["count"] == n and failed()[-1] == {"milestone": "m1", "count": n, "reason": stored["reason"]}
+    assert len(failed()) == 2 and "no model is set up" in failed()[0]["reason"]
+    run_request(worker, "owner")                                                # his own request is never counted
+    assert len(failed()) == 2
+
+
+def test_the_end_of_a_failure_count_by_an_answer_has_a_ledger_event_of_its_own(tmp_path):
+    ws = autopilot_workspace(tmp_path, [], [])
+    proposals.clear_request_failures(ws, "m1")                                  # nothing was stored: nothing changed
+    assert list(ws.ledger.events("acceptance.request_failures_cleared")) == []
+    proposals.note_request_failure(ws, "m1", PlannerUnavailable("not usable"))
+    proposals.note_request_failure(ws, "m1", PlannerUnavailable("not usable"))
+    proposals.clear_request_failures(ws, "m1")
+    assert "request_failures" not in proposals._record(ws, "m1")
+    assert [e["data"] for e in ws.ledger.events("acceptance.request_failures_cleared")] == [{"milestone": "m1", "count": 2}]
+    proposals.clear_request_failures(ws, "m1")                                  # already clear: no second event
+    assert len(list(ws.ledger.events("acceptance.request_failures_cleared"))) == 1
+
+
+def test_a_checker_answer_refused_twice_has_a_ledger_event_of_its_own(tmp_path):
+    # The refused row and the kept answers (acceptance-proposals/refused/<key>.json) were written with no event either.
+    ws = autopilot_workspace(tmp_path, [UNUSABLE] * 2, [])
+    with pytest.raises(WorkspaceError, match="Both answers broke a rule"):
+        propose(ws, ws.router(), "m1")
+    row = proposals._proposal_rows(ws, "m1")[-1]
+    refused = [e["data"] for e in ws.ledger.events("acceptance.refused")]
+    assert len(refused) == 1 and refused[0]["milestone"] == "m1" and refused[0]["proposal"] == row["id"]
+    assert (ws.home / "acceptance-proposals" / "refused" / (row["id"] + ".json")).is_file()
+    assert "could not use either answer" in refused[0]["reason"]

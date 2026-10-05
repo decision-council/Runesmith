@@ -41,7 +41,9 @@ def run_local_task(*, home: Path, organ_dir: Path, repo: Path, failing_tests: li
     finally:
         task.close()
     record.update(issue=issue, repo=str(repo))
-    if remember:
+    if remember and record["status"] != "censored_transport":
+        # An attempt cut off by a transport failure was never judged and says nothing of its approach: not remembered, or
+        # recall would warn against an approach that was never tried (it stays in the ledger and the sessions).
         verdict = {True: "judge accepted", False: "judge rejected", None: "not judged"}[record.get("strict_success")]
         memory.add("episode" if record.get("strict_success") else "negative",
                    f"{issue}\nstatus: {record['status']} ({verdict})\nchanged: {', '.join(sorted(final))}\n"

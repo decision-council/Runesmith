@@ -356,6 +356,9 @@ def api_worker_run(s: Studio, q, body):
     queued = s.worker.enqueue(job, **params)
     if job in runesmith_md.RETRIES:         # the owner's "one more try" and its kin: decisions for RUNESMITH.md
         if getattr(s, 'ws', None) is not None:          # a Studio without a folder (or a test's stand-in) logs nothing
+            # The request is the owner's act, whether or not the job can start (no model: nothing does), and the log
+            # may be off: the ledger says it was made (starvation-integrity study, T03).
+            s.ws.ledger.append('build.retry_asked', {'job': job, 'id': queued.get('id')})
             runesmith_md.retry_asked(s.ws, job)
     return queued
 

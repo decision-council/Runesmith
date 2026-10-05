@@ -402,6 +402,8 @@ class Worker:
             self._save_queue(jobs, recovery=None)
             self._jobs = deque(jobs)
             self._recovery = None
+        self.ws.ledger.append('studio.recovery_reviewed', {'revision': revision, 'decision': decision, 'reviewed_by': by,
+                                                           'jobs': len(receipt['jobs'])})
         self.say('Recovery review recorded. Queue remains paused; Resume is a separate decision.')
         runesmith_md.restart_decision(self.ws, decision, by, len(receipt['jobs']))
         self._publish_state()
@@ -900,7 +902,11 @@ class Worker:
         self._set("checking", "Checking the setup")
         rows = self.ws.health(network=True)
         bad = [r for r in rows if r["ok"] is False]
-        self.say(f"Health check: {len(rows) - len(bad)} of {len(rows)} fine" + (f"; {len(bad)} need attention" if bad else "."))
+        unchecked = [r for r in rows if r["ok"] is None]        # nothing was checked there (no model is set up, say): not fine
+        self.say(f"Health check: {len(rows) - len(bad) - len(unchecked)} of {len(rows)} fine"
+                 + (f"; {len(bad)} need attention" if bad else "")
+                 + (f"; {len(unchecked)} not checked ({'; '.join(r['detail'] for r in unchecked)})" if unchecked else "")
+                 + ".")
         self.bus.publish("health", {"rows": rows})
         return {"summary": f"{len(bad)} problems"}
 
@@ -1265,15 +1271,18 @@ class Worker:
             self.say(f"{obj['name']}: {label}" + (f"; {new} new to work on" if new else ""))
             self._work_checkpoint()
         summary: dict[str, Any] = {}
-        consumed = 0
+        consumed = attempts = censored = 0
         if fresh:
             self._set("working", f"Working on {len(fresh)} opportunity(ies)")
             self.say(f"Working on {len(fresh)} opportunity(ies). Fixes become proposals; your files are not touched.")
 
             def on_step(step: dict[str, Any]) -> None:
-                nonlocal consumed
+                nonlocal consumed, attempts, censored
                 if step.get("lane") in ("object", "skipped"):
                     consumed += 1
+                if step.get("lane") == "object":
+                    attempts += 1
+                    censored += step.get("status") == "censored_transport"
                 self._report_step(step)
                 if step.get("lane") == "subject":
                     from runesmith.app import self_plan
@@ -1309,8 +1318,14 @@ class Worker:
         elif not fix_offered:
             self.say("Nothing new to work on this round.")
         write_report(ws.home)
-        return self._finish_round(fresh[:consumed] if fresh else [], statuses, summary,
-                                  "worked" if fresh else "tests fail: fix offered" if fix_offered else "nothing new")
+        if attempts and censored == attempts:
+            # Every attempt ended in a failed connection to the model: none was judged, so the round did not work
+            # (the study of starvation integrity found "worked" recorded for such rounds).
+            self.say("No repair attempt reached the Worker model: the connection failed each time, so nothing was judged. "
+                     "The round did not work; check the model's connection under Thinking power.", "warn")
+        return self._finish_round(fresh[:consumed] if fresh else [], statuses, dict(summary, censored=censored),
+                                  "worker model not reached" if attempts and censored == attempts else "worked" if fresh
+                                  else "tests fail: fix offered" if fix_offered else "nothing new")
 
     def _report_step(self, step: dict[str, Any]) -> None:
         lane = step.get("lane")
@@ -1333,7 +1348,7 @@ class Worker:
                                    "triage": o.get("triage"), "issue": o["issue"][:1200]} for o in served],
                 "summary": {"outcome": outcome, "served": len(served),
                             "accepted": summary.get("strict_successes", 0), "kaizen_steps": summary.get("subject_steps", 0),
-                            "skipped_environment": summary.get("skipped_environment", 0),
+                            "skipped_environment": summary.get("skipped_environment", 0), "censored": summary.get("censored", 0),
                             "frozen": summary.get("frozen", []), "trials": len(summary.get("trials", []))}}
         _write_json(ws.home / "WORK.json", work)
         from runesmith.app import self_plan

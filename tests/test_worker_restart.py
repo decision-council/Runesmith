@@ -226,6 +226,28 @@ def test_stale_review_cannot_overwrite_external_queue_or_receipts(tmp_path):
     assert not (ws.home / 'studio-recovery').exists()
 
 
+def test_the_owner_s_review_of_an_interrupted_job_has_a_ledger_event_of_its_own(tmp_path, monkeypatch):
+    # Starvation-integrity study (SI, T11): the review wrote RUNESMITH.md and its receipt file, and no ledger event.
+    import runesmith.app.worker_journal as journal
+    ws = workspace(tmp_path); original = Worker(ws, EventBus())
+    original.enqueue('health'); original.enqueue('map', probe=False)
+    worker = Worker(ws, EventBus()); worker._recover()
+    revision = worker.snapshot()['recovery']['revision']
+    real_write = journal.atomic_write
+    def fail_queue(path, value):
+        if path.name == 'STUDIO_QUEUE.json' and value['recovery'] is None:
+            raise OSError('decision persisted but final queue commit interrupted')
+        return real_write(path, value)
+    monkeypatch.setattr(journal, 'atomic_write', fail_queue)
+    with pytest.raises(OSError): worker.review_recovery(revision=revision, decision='keep', reviewed=True)
+    assert not list(ws.ledger.events('studio.recovery_reviewed'))        # the decision was not carried out: not recorded
+    monkeypatch.setattr(journal, 'atomic_write', real_write)
+    again = Worker(ws, EventBus()); again._recover()
+    again.review_recovery(revision=again.snapshot()['recovery']['revision'], decision='keep', reviewed=True)
+    assert [e['data'] for e in ws.ledger.events('studio.recovery_reviewed')] == [
+        {'revision': revision, 'decision': 'keep', 'reviewed_by': 'owner', 'jobs': 2}]
+
+
 def test_enqueue_and_snapshot_return_detached_intentions(tmp_path):
     ws = workspace(tmp_path); worker = Worker(ws, EventBus())
     job = worker.enqueue('map', probe=False); job['params']['probe'] = True

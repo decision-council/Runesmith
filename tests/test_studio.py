@@ -478,6 +478,35 @@ def test_a_worker_round_finds_repairs_and_proposes_with_the_owners_notes(tmp_pat
     assert ws.ledger.verify()["ok"]
 
 
+@pytest.mark.parametrize("statuses, outcome", [
+    (["censored_transport", "censored_transport"], "worker model not reached"),
+    (["censored_transport", "budget_exhausted"], "worked"),           # one attempt got an answer: the round did work
+    (["public_pass"], "worked")])
+def test_a_round_whose_every_attempt_was_cut_off_by_a_transport_failure_is_not_recorded_as_worked(
+        tmp_path, monkeypatch, statuses, outcome):
+    # Starvation-integrity study (SI): "worked" was recorded in 7 of 104 windows in which every repair attempt ended in
+    # a failed connection to the model and none was judged.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    make_repo(workspace)
+    ws = Workspace(workspace)
+    ws.update_settings({"onboarded": True, "auto_work": False, "kaizen": False})
+    scripted(ws, FIX_ANSWERS)
+
+    def attempts(*, opportunities, on_step, **kwargs):
+        for number, status in enumerate(statuses):
+            on_step({"lane": "object", "key": f"k{number}", "status": status})
+        return {"object_steps": len(statuses), "strict_successes": statuses.count("public_pass"), "subject_steps": 0}
+    monkeypatch.setattr("runesmith.loop.run_loop", attempts)
+    worker = Worker(ws, EventBus())
+    worker._job_round()
+    [event] = [e["data"] for e in ws.ledger.events("studio.round")]
+    assert event["outcome"] == outcome and event["censored"] == statuses.count("censored_transport")
+    assert ws.work()["last_round"]["outcome"] == outcome
+    said = [line["text"] for line in worker.snapshot()["lines"]]
+    assert any("No repair attempt reached" in text for text in said) == (outcome != "worked")
+
+
 # ------------------------------------------------------------------ server --
 
 @pytest.fixture()

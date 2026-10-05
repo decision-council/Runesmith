@@ -256,3 +256,18 @@ def test_run_now_does_what_the_schedule_does(tmp_path):
     assert worker.scheduled_job() == ('build', {})
     job = api_worker_run(SimpleNamespace(worker=worker), {}, {'job': 'next'})
     assert job['kind'] == 'build'
+
+
+def test_the_health_job_does_not_count_an_unchecked_row_as_fine_and_says_no_model_is_set_up(tmp_path):
+    # Starvation-integrity study (SI): "Health check: 8 of 8 fine" with no model set up; the row for it is not a failure
+    # (ok is None) but nothing was checked there, so it is not fine either.
+    ws = workspace(tmp_path)
+    assert not ws.ready()['any']
+    rows = ws.health(network=True)
+    fine = sum(1 for row in rows if row['ok'])
+    assert fine < len(rows) and any(row['check'] == 'thinking power' and row['ok'] is None for row in rows)
+    worker = Worker(ws, EventBus())
+    worker._job_health()
+    [said] = [line['text'] for line in worker.snapshot()['lines'] if line['text'].startswith('Health check:')]
+    assert f'{fine} of {len(rows)} fine' in said and 'no model is set up' in said
+    assert not said.startswith(f'Health check: {len(rows)} of {len(rows)} fine')

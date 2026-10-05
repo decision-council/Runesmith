@@ -655,6 +655,7 @@ def note_refusal(ws, milestone_id, key, drafted_by, reason) -> None:
         keep = _kept_beyond_window(rows)
         record['proposals'] = [r for i, r in enumerate(rows) if i >= len(rows) - 10 or id(r) in keep]
         _write_json(_record_path(ws, milestone_id), record)
+    ws.ledger.append('acceptance.refused', {'milestone': milestone_id, 'proposal': key, 'reason': reason[:300]})
 
 
 # Failed scheduled requests for a milestone's checks (journey J11, review of batch CC): a request whose answer was not
@@ -710,15 +711,22 @@ def note_request_failure(ws, milestone_id, error) -> dict[str, Any] | None:
         record['request_failures'] = {'count': (int(before.get('count') or 0) if same else 0) + 1, 'contract': contract,
                                       'snapshot': snapshot, 'utc': _now(), 'reason': str(error)[:300]}
         _write_json(_record_path(ws, milestone_id), record)
-        return dict(record['request_failures'])
+        failures = dict(record['request_failures'])
+    ws.ledger.append('acceptance.request_failed', {'milestone': milestone_id, 'count': failures['count'],
+                                                   'reason': failures['reason']})
+    return failures
 
 
 def clear_request_failures(ws, milestone_id) -> None:
     """A request that was answered (or the owner's own withdrawal) ends the count."""
     with ws._lock:
         record = _record(ws, milestone_id)
-        if record.pop('request_failures', None) is not None:
+        ended = record.pop('request_failures', None)
+        if ended is not None:
             _write_json(_record_path(ws, milestone_id), record)
+    if ended is not None:
+        count = int(ended.get('count') or 0) if isinstance(ended, dict) else 0
+        ws.ledger.append('acceptance.request_failures_cleared', {'milestone': milestone_id, 'count': count})
 
 
 def _forgiven(failures) -> bool:

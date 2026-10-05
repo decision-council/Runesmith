@@ -365,6 +365,31 @@ def test_a_restart_decision_and_a_retry_are_logged(tmp_path):
         "You asked Runesmith to retrieve a model's saved answer after an interruption (no new model call)."]
 
 
+RETRY_JOBS = {"escalate": {}, "resume_author": {"request_id": "saved"}, "readmit": {"escalation": "e1"},
+              "readmit_answer": {"attempt": "a1"}, "resume_check": {"draft_id": "d1", "reason": "it timed out"}}
+
+
+@pytest.mark.parametrize("job", sorted(RETRY_JOBS))
+def test_an_owner_s_retry_request_has_a_ledger_event_whether_or_not_anything_starts_and_with_the_log_off(tmp_path, job):
+    # Starvation-integrity study (SI, T03): with no model the one more try could not start, so RUNESMITH.md said "You
+    # asked for one more try..." and no ledger event said the owner had asked.
+    from types import SimpleNamespace
+    from runesmith.app.server import api_worker_run
+    from runesmith.app.worker import EventBus, Worker
+    ws = Workspace(tmp_path)
+    app = SimpleNamespace(worker=Worker(ws, EventBus()), ws=ws)
+    queued = api_worker_run(app, {}, {"job": job, "params": RETRY_JOBS[job]})
+    assert [e["data"] for e in ws.ledger.events("build.retry_asked")] == [{"job": job, "id": queued["id"]}]
+    assert len(log_of(tmp_path)) == 1
+    assert not list(ws.ledger.events("build.escalation_started"))        # nothing started: that event would be false
+    ws.update_settings({"runesmith_md": False})                           # the owner turned his own log off
+    again = api_worker_run(app, {}, {"job": job, "params": dict(RETRY_JOBS[job], **({"reason": "again"} if job == "resume_check" else {}))})
+    assert len(log_of(tmp_path)) == 1 and again["id"]
+    assert [e["data"]["job"] for e in ws.ledger.events("build.retry_asked")] == [job, job]
+    api_worker_run(app, {}, {"job": "map", "params": {}})                 # not a retry: no event
+    assert len(list(ws.ledger.events("build.retry_asked"))) == 2
+
+
 def test_a_build_judged_by_finished_milestones_checks_too_says_so(tmp_path):
     ws = Workspace(tmp_path)
     ws.save_plan({"summary": "s", "milestones": [{"title": "Groups"}]})

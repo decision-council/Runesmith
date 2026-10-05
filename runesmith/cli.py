@@ -225,7 +225,13 @@ def cmd_doctor(args) -> None:
         if row["fix"]:
             print(f"       -> {row['fix']}")
     problems = sum(1 for row in rows if row["ok"] is False)
-    print(f"{problems} problem(s)" if problems else "all checks passed")
+    # No role names an instrument: nothing about a model was checked, so "all checks passed" would say too much.
+    no_model = any(row["check"] == "config" and row["ok"] for row in rows) and not any(
+        row["check"].startswith("instrument ") for row in rows)
+    print(f"{problems} problem(s)" if problems else "no problems found" if no_model else "all checks passed")
+    if no_model:
+        print("no model is set up: Runesmith can map and watch, but not plan or repair. "
+              "Add one under Thinking power in the Studio (runesmith up).")
 
 
 PYTEST_FOR_DEMO = ("The demo repairs a small project whose tests run with pytest, which is not installed for this Python.\n"

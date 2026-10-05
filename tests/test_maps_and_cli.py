@@ -114,6 +114,25 @@ def test_cli_init_repair_and_ledger_offline(tmp_path, capsys):
     assert len(Memory(home / "memory.jsonl").active()) == 1
 
 
+def test_an_attempt_cut_off_by_a_transport_failure_leaves_no_negative_memory(tmp_path, monkeypatch):
+    # Starvation-integrity study (SI): a repair attempt that never reached a model was remembered as a "negative" (an
+    # approach that failed), and the next recall would have said so. It was not judged; it says nothing of the approach.
+    from runesmith import local
+    home = tmp_path / "home"
+    cli.main(["--home", str(home), "init"])
+    repo = make_repo(tmp_path)
+    ask = dict(home=home, organ_dir=tmp_path, repo=repo, failing_tests=["tests/test_ops.py::test_add"],
+               issue="add() returns a wrong value", judge_tests=None, router=object())
+    monkeypatch.setattr(local, "run_opportunity", lambda **kw: {"status": "censored_transport", "error": "connection refused"})
+    record, final, _ = local.run_local_task(key="cut-off", **ask)
+    assert record["strict_success"] is None and not final
+    assert Memory(home / "memory.jsonl").active() == []
+    monkeypatch.setattr(local, "run_opportunity", lambda **kw: {"status": "budget_exhausted"})   # a model that was asked and failed
+    local.run_local_task(key="judged", **ask)
+    [row] = Memory(home / "memory.jsonl").active()
+    assert row["kind"] == "negative" and "judge rejected" in row["text"] and row["source"] == {"session": "judged"}
+
+
 def _tree(root: Path) -> dict[str, bytes]:
     return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
 
