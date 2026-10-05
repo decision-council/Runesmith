@@ -1,0 +1,3 @@
+AMENDMENT_3.md sha256 0e1201c07835137fba7f4e608d51a9295b7bcc5ab65b9898509d29919f3f36ca
+sealed_utc 2026-10-05T15:54:34Z
+no U1 evaluation session exists at this time
