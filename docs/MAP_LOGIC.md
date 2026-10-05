@@ -122,7 +122,8 @@ list works on whole objects; automatic apply is limited to the folders allowed i
   ended in activation, and it is no longer active); **rejected** (lost its trial); **rolled back** (it was active and you made
   another active); **trial stopped** (you ended its trial); **superseded** (replaced when another won its trial); **frozen** (a
   candidate not adopted); **imported** (frozen from the library, not on trial). A tick is drawn only on the active generation and on
-  a generation that won its trial. Detail: digest, parent, author model (from the campaign record, else "unknown"), campaign and
+  a generation that won its trial. A candidate on trial is the child of the generation it challenges (a library generation is frozen
+  with the active one as its parent), so it follows it; a sibling pair is ordered by frozen time, never by digest. Detail: digest, parent, author model (from the campaign record, else "unknown"), campaign and
   target, created, validation, trial record, when it was made active. Automate: "Make active" (roll back) and, for the
   generation on trial, "Stop this trial", both with their existing confirmations and ledger records.
 - **Self-knowledge metrics** (repair yield, seconds per repair, calls per repair, false "fixed" rate): each with its sample size
@@ -149,7 +150,9 @@ list works on whole objects; automatic apply is limited to the folders allowed i
   existing confirmation. A done or dropped milestone is recorded history: none, and why.
 - **Tracks / ladders:** the build ladder per object uses the **latest recorded test run, whatever ran it** (section 1), with its
   source and time on the station ("latest test run 13:11Z, during a repair round"): "tests collect" is achieved when a whole-suite
-  run ran tests; "tests pass" is achieved when it passed, not achieved when any test failed (a subset run too), and unknown when
+  run ran tests, or when a measuring round (Python's own unittest, which is the runner for a project the repair organ cannot serve)
+  ran at least one test (the station says it found tests, as a subset, and does not show every file collects; a unittest *probe*
+  keeps the older scoped rule: collect stays unknown); "tests pass" is achieved when it passed, not achieved when any test failed (a subset run too), and unknown when
   the run was a subset that passed, could not run, timed out, or a fix was applied after it; "fast suite" is unknown unless the
   latest run is a probe that timed the suite. With no run recorded the map's own ladder stays. The same overlay feeds the
   Environment panel's ladder.
@@ -160,7 +163,8 @@ list works on whole objects; automatic apply is limited to the folders allowed i
 
 - **Work-loop stages**, each with its counter, what it counts and since when (the panel says it; `stages_view`):
   **Map** (objects the latest map lists, including excluded ones; as of the latest map); **Discover** (objects whose tests failed in
-  the latest round; the latest round); **Repair** (judged attempts: session records that got the held-out judge's verdict; since the
+  the latest round, found by pytest discovery or by the unittest measurement a round makes where the repair organ cannot serve the
+  project; the latest round); **Repair** (judged attempts: session records that got the held-out judge's verdict; since the
   first one, else since this home was created); **Judge** (judged attempts the judge accepted; same window); **Propose** (accepted
   fixes you have not applied or rejected, now; drafts waiting are counted apart); **Apply** (fixes you applied, drafts you applied,
   drafts a checked build applied automatically; same window as Repair).

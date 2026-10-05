@@ -445,6 +445,11 @@ def ladder_overlay(ws, obj: dict[str, Any], *, run: dict[str, Any] | None = None
     collect = "unknown"
     if not superseded and whole and out in ("passed", "failed"):
         collect = "achieved"                                    # a whole-suite run that ran tests collected them
+    elif not superseded and run.get("source") == "measure" and ((run.get("counts") or {}).get("ran") or 0) > 0:
+        # A repair round that measured with Python's own unittest is Runesmith's own runner for a project its organ cannot
+        # serve (no pytest, or no src folder): it found and ran tests. That shows they are found; it is a subset, so
+        # "tests pass" below still never reads achieved from it.
+        collect = "achieved"
     if run.get("source") == "probe" and whole and "collected" in (run.get("counts") or {}) and not run["counts"]["collected"]:
         collect = "not_achieved"
     pass_ = "unknown"
@@ -452,7 +457,9 @@ def ladder_overlay(ws, obj: dict[str, Any], *, run: dict[str, Any] | None = None
         pass_ = "not_achieved"                                  # a failed test is a failed suite, subset or not
     elif not superseded and out == "passed" and whole:
         pass_ = "achieved"
-    notes = {"tests_collect": {"achieved": f"{words}: it ran tests, so they collect.",
+    ran_note = (f"{words}: unittest found and ran {(run.get('counts') or {}).get('ran')} tests, so tests are found; as a subset it "
+                "does not show that every test file collects.")
+    notes = {"tests_collect": {"achieved": f"{words}: it ran tests, so they collect." if whole else ran_note,
                                "not_achieved": f"{words}: no tests were collected.",
                                "unknown": f"{words}: {run_outcome_words(run)}; that does not show the tests collect."},
              "tests_pass": {"achieved": f"{words}: {run_outcome_words(run)}.",
@@ -978,6 +985,7 @@ def last_changes(ws, root: Path) -> dict[str, dict[str, Any]]:
 _LEDGER_KINDS = {"generation.activated", "generation.imported", "generation.requalified", "trial.opened", "trial.rejected",
                  "trial.closed_by_owner", "milestone.added", "breakdown.adopted", "plan.saved", "fix_tests.started",
                  "stuck.needs_owner", "milestone.updated", "acceptance.approved", "acceptance.autopilot"}
+_LEDGER_KIND_BYTES = tuple(kind.encode("ascii") for kind in sorted(_LEDGER_KINDS))
 _LEDGER_CACHE: dict[str, dict[str, Any]] = {}
 
 
@@ -1001,6 +1009,8 @@ def ledger_events(ws, *kinds: str) -> list[dict[str, Any]]:
                 chunk = stream.read(size - entry["offset"])
             cut = chunk.rfind(b"\n") + 1
             for line in chunk[:cut].splitlines():
+                if not any(kind in line for kind in _LEDGER_KIND_BYTES):
+                    continue                                    # a cheap check before parsing: most events are other kinds
                 try:
                     row = json.loads(line)
                 except ValueError:
@@ -1408,6 +1418,15 @@ def metrics_view(ws) -> dict[str, Any]:
 
 # ----------------------------------------------------------------------- Operations: the loop, counted and defined --
 
+def _found_work(status: str) -> bool:
+    """Whether a round's status for an object says its tests failed: pytest discovery ("failing"), or the unittest
+    measurement a round makes where the repair organ cannot serve the project ("measured: 2 of 14 tests fail")."""
+    if status == "failing":
+        return True
+    match = re.match(r"measured: (\d+) of \d+ tests? fail", str(status))
+    return bool(match and int(match.group(1)) > 0)
+
+
 def stages_view(ws) -> list[dict[str, Any]]:
     """The work loop's stages, each counter with what it counts and since when (docs/MAP_LOGIC.md section 4)."""
     env_map = ws.environment_map() or {"objects": []}
@@ -1425,7 +1444,7 @@ def stages_view(ws) -> list[dict[str, Any]]:
     owner_applied = sum(1 for d in drafts if d.get("state") == "applied" and d.get("applied_by") != "delegated_build")
     mapped = [o for o in env_map.get("objects", [])]
     code = [o for o in mapped if o.get("kind") == "python_repository"]
-    failing = [n for n, s in statuses.items() if s == "failing"]
+    failing = [n for n, s in statuses.items() if _found_work(s)]
     since_words = f"since {when(first or home_since)}" if (first or home_since) else "since this home was created"
     return [
         {"id": "map", "label": "Map", "count": len(mapped), "unit": "objects mapped",
@@ -1434,7 +1453,7 @@ def stages_view(ws) -> list[dict[str, Any]]:
          "source": "ENVIRONMENT.json", "utc": env_map.get("utc"),
          "extra": f"{len(code)} are Python projects whose tests Runesmith can run"},
         {"id": "discover", "label": "Discover", "count": len(failing), "unit": "objects with work found",
-         "definition": "objects whose tests failed in the latest round: the failures a repair can work on",
+         "definition": "objects whose tests failed in the latest round (found by pytest discovery, or by a unittest measurement): the failures a repair can work on",
          "window": f"the latest round, {when(work.get('utc'))}" if work.get("utc") else "no round has run yet",
          "source": "WORK.json", "utc": work.get("utc"),
          "extra": ("failing: " + ", ".join(sorted(failing))) if failing else "none failing in that round"},

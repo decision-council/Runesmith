@@ -381,7 +381,10 @@ def test_the_measuring_round_with_unittest_names_failing_tests_and_stays_a_subse
     assert by["src/shop/checkout.py"]["state"]["band"] == "bad"
     assert by["src/shop/cart.py"]["state"]["band"] == "unknown"
     overlay = living_map.ladder_overlay(ws, obj)
-    assert overlay["tests_pass"]["status"] == "not_achieved" and overlay["tests_collect"]["status"] == "unknown"
+    assert overlay["tests_pass"]["status"] == "not_achieved" and overlay["tests_collect"]["status"] == "achieved"     # unittest found and ran 3 tests
+    assert "as a subset it does not show that every test file collects" in overlay["tests_collect"]["note"]
+    stages = {s["id"]: s for s in living_map.stages_view(ws)}
+    assert stages["discover"]["count"] == 1 and "failing: shop" in stages["discover"]["extra"]          # a measuring round found work too
 
 
 # ------------------------------------------------------------------------------------------------ badges --
