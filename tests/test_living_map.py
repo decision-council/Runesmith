@@ -695,14 +695,13 @@ def test_a_module_is_stale_when_anything_it_imports_changed_after_the_run(tmp_pa
     assert by["tests/test_cart.py"]["test"]["result"] == "unknown" and "src/shop/prices.py changed since the last test run" in words
 
 
-SHARED = [("tests/test_extra.py", "def test_extra():\n    pass\n", False), ("tests/conftest.py", "import pytest\n", True),
-          ("pytest.ini", "[pytest]\naddopts = -q\n", True),
-          ("pyproject.toml", '[project]\nname = "shop"\n\n[tool.pytest.ini_options]\naddopts = "-q"\n', True),
-          ("setup.cfg", "[tool:pytest]\naddopts = -q\n", True), ("tox.ini", "[pytest]\naddopts = -q\n", True)]
+SHARED = [("tests/conftest.py", "import pytest\n"), ("pytest.ini", "[pytest]\naddopts = -q\n"),
+          ("pyproject.toml", '[project]\nname = "shop"\n\n[tool.pytest.ini_options]\naddopts = "-q"\n'),
+          ("setup.cfg", "[tool:pytest]\naddopts = -q\n"), ("tox.ini", "[pytest]\naddopts = -q\n")]
 
 
-@pytest.mark.parametrize("rel,text,shared", SHARED, ids=[row[0] for row in SHARED])
-def test_a_changed_test_file_conftest_or_pytest_configuration_makes_every_tested_module_unknown(tmp_path, rel, text, shared):
+@pytest.mark.parametrize("rel,text", SHARED, ids=[row[0] for row in SHARED])
+def test_a_changed_or_new_conftest_or_pytest_configuration_makes_every_tested_module_unknown(tmp_path, rel, text):
     ws, root = shop(tmp_path)
     age(root)
     round_record(ws, "green", when_utc=utc(-3600))
@@ -713,10 +712,29 @@ def test_a_changed_test_file_conftest_or_pytest_configuration_makes_every_tested
         state = by[f"src/shop/{name}.py"]["state"]
         assert state["band"] == "unknown", (rel, name)
         assert f"{rel} changed at" in state["reason"]
-        assert "a test file, conftest or pytest configuration changed after the run" in state["reason"]
+        assert "a conftest or pytest configuration changed after the run" in state["reason"]
     assert by["src/shop/lonely.py"]["state"]["band"] == "minimal"
-    other = by["tests/test_cart.py"]["test"]                                  # a configuration or a conftest touches every test's result
-    assert (other["result"] == "unknown") is shared and (other["result"] == "passed") is (not shared)
+    assert by["tests/test_cart.py"]["test"]["result"] == "unknown"            # a configuration or a conftest touches every test's result
+
+
+@pytest.mark.parametrize("rel,text,reached", [
+    ("tests/test_cart.py", "from shop.cart import Cart\n\n\ndef test_cart():\n    assert Cart is not None\n", {"cart"}),                 # changed
+    ("tests/test_extra.py", "from shop import prices\n\n\ndef test_extra():\n    assert prices.price()\n", {"prices"})],         # new
+    ids=["a changed test file", "a new test file"])
+def test_a_changed_or_new_test_file_makes_unknown_only_the_modules_it_reaches(tmp_path, rel, text, reached):
+    ws, root = shop(tmp_path)
+    age(root)
+    round_record(ws, "green", when_utc=utc(-3600))
+    write(root, rel, text)
+    by = nodes(living_map.structure_view(ws))
+    for name in ("cart", "prices", "checkout"):
+        state = by[f"src/shop/{name}.py"]["state"]
+        if name in reached:
+            assert state["band"] == "unknown" and f"{rel} changed at" in state["reason"], name
+        else:
+            assert state["band"] == "optimal", (rel, name)                    # no test that reaches it changed
+    assert by["tests/test_checkout.py"]["test"]["result"] == "passed"         # another test file's result stands
+    assert by[rel]["test"]["result"] == "unknown"
 
 
 def test_a_change_to_a_file_that_is_neither_a_test_nor_pytest_configuration_keeps_the_results(tmp_path):

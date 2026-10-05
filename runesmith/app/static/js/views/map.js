@@ -130,7 +130,7 @@ async function environmentLens(body, ctx) {
     if (!focusAfter && held) focusAfter = held;
     ++panelToken;
     clear(wrap);
-    wrap.classList.remove('lm-flow', 'with-panel');
+    wrap.classList.remove('lm-flow');
     const env = data.map;
     if (!env) { wrap.append(h('div.empty', icon('map', 'big'), h('h4', 'Mapping…'), h('p', 'The first map takes a few seconds.'))); return; }
     if (structure && !structure.empty) return drawStructure(env);
@@ -236,16 +236,13 @@ async function environmentLens(body, ctx) {
     const expand = async (gid) => { expanded.has(gid) ? expanded.delete(gid) : expanded.add(gid); selected = `group:${gid}`; await loadStructure(); drawMap(); };
     const tools = h('div.map-tools.lm-tools');
     const content = [];
-    const panelOpen = !!selected && !narrow;
     wrap.classList.add('lm-flow');
-    wrap.classList.toggle('with-panel', panelOpen);
     let pz = null;
     if (mode === 'graph') {
       const built = structureSvg(st, { selected, centre });
       const holder = h('div', { html: built.markup });
       const svg = holder.firstChild;
-      const room = availableWidth() - (panelOpen ? 372 : 0);          // an open panel takes its own room: nothing is drawn under it
-      svg.style.height = `${Math.max(420, Math.min(820, Math.round(room * built.height / built.width)))}px`;
+      svg.style.height = `${Math.max(420, Math.min(820, Math.round(availableWidth() * built.height / built.width)))}px`;
       pz = panZoom(svg, svg.querySelector('.pz'));
       wireLinks(svg, selected);
       svg.addEventListener('click', (e) => { const n = e.target.closest('.node'); if (n) pick(n.dataset.name); });

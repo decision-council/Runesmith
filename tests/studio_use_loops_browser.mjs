@@ -3036,10 +3036,8 @@ try{
     await page.getByRole('region',{name:'Details: src/bakery/orders.py',exact:true}).waitFor();
     await page.mouse.move(2,2);
     assert((await page.locator('.lm-edge.hot').count())>=2);
-    drawn=await rects();assert.deepEqual(clashes(drawn),[]);                            // and with the panel open, nothing is drawn under it
-    const room=await page.evaluate(()=>{const svg=document.querySelector('svg.lm-structure').getBoundingClientRect(),side=document.querySelector('.map-side').getBoundingClientRect();return svg.right<=side.left+1;});
-    assert(room);
-    loops.push({id:'B28.14',case:'Hovering or focusing a part brightens its own links and dims the rest; a failing test links to its module in the Bad colour; a selected part keeps its links bright; an open panel takes its own room',result:'passed'});
+    drawn=await rects();assert.deepEqual(clashes(drawn),[]);                            // and with the panel open over the drawing, nothing in it moved or overlaps
+    loops.push({id:'B28.14',case:'Hovering or focusing a part brightens its own links and dims the rest; a failing test links to its module in the Bad colour; a selected part keeps its links bright',result:'passed'});
 
     // phone: the list is the first view, in the drawing's order, a folder inside a folder under its parent; nothing is wider than the screen
     await page.setViewportSize({width:390,height:900});await lens('environment');

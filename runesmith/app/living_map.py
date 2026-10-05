@@ -626,10 +626,10 @@ def _is_pytest_config(root: Path, rel: str, size: int) -> bool:
 class Staleness:
     """What changed on disk after the latest test run, and so what that run no longer says about a file.
 
-    A file is stale when it changed, or when anything it imports (directly or through other files) changed; a test file is
-    also stale when a module it reaches changed. A changed test file, conftest or pytest configuration is wider than that:
-    a conftest or a configuration reaches every test without being imported, and a changed test file means the suite is no
-    longer the one that ran, so none of them leaves the run's word standing for a module a test reaches."""
+    A file is stale when it changed, or when anything it imports (directly or through other files) changed; a module is also
+    stale when a test file that reaches it changed or is new, and a test file when a module it reaches changed. A changed
+    conftest or pytest configuration is wider than that: it reaches every test without being imported, so it leaves the run's
+    word standing for no module a test reaches."""
 
     def __init__(self, root: Path, rels: list[str], info: dict[str, tuple[int, int]], kinds: dict[str, str],
                  nexts: dict[str, list[str]], run_epoch: float | None) -> None:
@@ -650,7 +650,6 @@ class Staleness:
         shared = {r for r in self.changed if r.rsplit("/", 1)[-1].lower() == "conftest.py"}
         shared |= {r for r in self.changed if _is_pytest_config(root, r, info[r][0])}
         self.shared = sorted(shared)                             # a conftest or pytest configuration that changed
-        self.tests = sorted(r for r in self.changed if kinds[r] == "test" and r not in shared)
 
     def at(self, rel: str) -> str:
         return hhmm(stamp(self.info[rel][1] / 1e9))
@@ -668,8 +667,7 @@ class Staleness:
         for test in tests:
             if test in self.cause:
                 return self.cause[test], "through", test
-        wide = self.shared + self.tests
-        return (wide[0], "any", None) if wide else None
+        return (self.shared[0], "any", None) if self.shared else None
 
     def test(self, rel: str) -> tuple[str, str] | None:
         """(the changed file, how it matters) for a test file whose result the run no longer speaks for."""
@@ -922,8 +920,7 @@ def _changed_reason(rel: str, hit: tuple[str, str, str | None], stale: Staleness
     elif how == "through":
         text += f", and {via}, a test that reaches this module, depends on it"
     elif how == "any":
-        text += (", and a test file, conftest or pytest configuration changed after the run, so the earlier result may not hold "
-                 "for any module")
+        text += ", and a conftest or pytest configuration changed after the run, so the earlier result may not hold for any module"
     return text + "."
 
 

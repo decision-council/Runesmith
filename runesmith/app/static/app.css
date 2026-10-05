@@ -697,9 +697,9 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
 .map-wrap.lm-flow .lm-notice, .map-wrap.lm-flow .lm-runline, .map-wrap.lm-flow + .lm-runline { position: static; margin: 6px 14px 0; }
 .map-wrap.lm-flow .map-legend { position: static; margin: 8px 14px 12px; gap: 6px 14px; align-items: center; }
 .map-wrap.lm-flow .lm-listbox { padding: 6px 14px 12px; max-height: 640px; }
-.map-wrap.lm-flow.with-panel svg.map { width: calc(100% - 376px); }
-.map-wrap.lm-flow:is(.with-panel, .panel-over) :is(.lm-notice, .lm-runline, .map-legend, .map-tools, .lm-listbox) { margin-right: 388px; }
-.map-wrap.lm-flow.with-panel .lm-listbox { padding-right: 14px; }
+.map-wrap.lm-flow .lm-notice, .map-wrap.lm-flow .lm-runline { margin-right: 388px; }          /* the panel lies over the drawing's right side: its words stop before it */
+.map-wrap.lm-flow .lm-listbox { padding-right: 388px; }
+.map-wrap.lm-flow.panel-over :is(.map-legend, .map-tools) { margin-right: 388px; }
 .lm-group { margin-top: 8px; background-color: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; }
 .lm-group > summary { cursor: pointer; padding: 8px 12px; list-style-position: inside; }
 .lm-group > summary .badge { margin-left: 8px; }
@@ -721,8 +721,8 @@ body.comment-mode [data-note]:hover, body.comment-mode [data-note]:focus-visible
 .lm-detail { margin-top: 16px; }
 .lm-detail .map-side { position: static; width: auto; animation: none; }
 @media (max-width: 900px) {
-  .map-wrap.lm-flow.with-panel svg.map { width: 100%; }
-  .map-wrap.lm-flow:is(.with-panel, .panel-over) :is(.lm-notice, .lm-runline, .map-legend, .map-tools, .lm-listbox) { margin-right: 14px; }
+  .map-wrap.lm-flow :is(.lm-notice, .lm-runline, .map-legend, .map-tools), .map-wrap.lm-flow.panel-over :is(.map-legend, .map-tools) { margin-right: 14px; }
+  .map-wrap.lm-flow .lm-listbox { padding-right: 12px; }
   .lm-notice, .lm-runline { position: static; margin: 8px 12px; }
   .lm-listbox { padding: 4px 12px 12px; max-height: none; }
   .map-tools.lm-tools { position: static; padding: 12px 12px 0; flex-wrap: wrap; }

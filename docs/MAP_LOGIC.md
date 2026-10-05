@@ -77,11 +77,11 @@ in an object's panel expands it. If the structure cannot be read, the objects ar
     run. What it depends on is the module itself, every file it imports (directly or through other files), every test that
     reaches it, and what such a test imports or reaches. A change in any of them makes it **Unknown**: "Changed since the last
     test run: FILE changed at HH:MMZ, after the latest test run ...", and, when FILE is not the module or a test that reaches
-    it, how it matters ("... and this file imports it, directly or through other files"). A changed test file, a `conftest.py` or
-    pytest's configuration (`pytest.ini`, or a `pyproject.toml`, `tox.ini` or `setup.cfg` that has a pytest section) is wider: it
-    can change every test's outcome without being imported, so any of them changed after the run makes every tested module
-    **Unknown** ("a test file, conftest or pytest configuration changed after the run, so the earlier result may not hold for any
-    module"). A change to another file (a document, another kind of configuration) changes nothing.
+    it, how it matters ("... and this file imports it, directly or through other files"). A changed or new test file makes
+    Unknown only the modules it reaches. A changed or new `conftest.py` or pytest configuration (`pytest.ini`, or a `pyproject.toml`,
+    `tox.ini` or `setup.cfg` that has a pytest section) is wider: it can change every test's outcome without being imported, so it
+    makes every tested module **Unknown** ("a conftest or pytest configuration changed after the run, so the earlier result may
+    not hold for any module"). A change to another file (a document, another kind of configuration) changes nothing.
   - **Bad**: a test file that reaches it is *named as failing* by that run.
   - **Optimal**: at least one test reaches it, and the run was a **whole-suite pytest run that passed** (a green round, or a probe
     with exit code 0).
@@ -297,8 +297,9 @@ A control with no row above is not offered. A change to a row is a change to the
     overrides the round's record at a tie), so the node and the ring cannot show different runs. The first draft let the probe win
     every tie.
 12. **A change reaches what depends on it.** A module is no longer Optimal when a file it imports changed after the run, directly or
-    through other files, or when a test that reaches it depends on a changed file; and a changed test file, `conftest.py` or pytest
-    configuration makes every tested module Unknown, because it can change any test's outcome without being imported. The first
+    through other files, or when a test that reaches it depends on a changed file (a changed or new test file makes Unknown the
+    modules it reaches); and a changed `conftest.py` or pytest configuration makes every tested module Unknown, because it can change
+    any test's outcome without being imported. The first
     draft only looked at the module and the tests that reach it, so a green run stayed Optimal over code that had changed under it.
 13. **Minimal needs every test file read.** Imports are read for test files first; a test file that could not be read (past the cap, a
     syntax error, over 1.5 MB, not opened) leaves a module that no read test reaches Unknown, not Minimal, with the reason. The first
@@ -336,8 +337,6 @@ A control with no row above is not offered. A change to a row is a change to the
     often in an inner ring, which keeps the links long. They are faint until a part is in hand for that reason. An outer band of tests
     over the same angles as the source sector would make every link a short radial line, but it takes the tests out of the sector
     order the brief fixes (source, tests, documents, ...), so it was not done; it is the one change to try if the dashed links read badly.
-22. **An open panel takes room instead of covering the drawing** (the first draft laid it over the right third of the map, so the
-    selected part, or its links, could be hidden by its own panel). The drawing is smaller while a panel is open; zoom is unchanged.
 
 ## 9. Layout: where every part is placed, and why
 
@@ -394,7 +393,7 @@ parts inside a sector.
   the list view shows the same folders in the same order (a sub-folder under its parent), the files of a source folder by how central
   they are.
 - **Around the drawing.** The tool bar, the line naming the test run and the legend are in the page's flow, above and below the
-  drawing, never over it. An open panel takes its own room at the right and the drawing fits in what is left. On a phone the list view
+  drawing, never over it. An open panel lies over the right of the drawing, as before; the line naming the run stops before it. On a phone the list view
   is the first view and nothing is wider than the screen.
 
 **Development: the plan graph.**
