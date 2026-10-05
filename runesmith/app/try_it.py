@@ -65,23 +65,75 @@ def parse(ws, command: str) -> list[str]:
     return [sys.executable, script.relative_to(root).as_posix(), *words[2:]]
 
 
+def _applied_draft_texts(ws, limit=8) -> list[tuple[str, str]]:
+    """What the newest applied drafts say about running what they wrote: their `why` (the author is asked to put the run
+    instructions there) and each file's purpose, newest first. Read straight from the saved drafts, never a diff."""
+    rows = []
+    for path in (ws.home / "drafts").glob("*/DRAFT.json"):
+        draft = _read_json(path, None)
+        if isinstance(draft, dict) and draft.get("state") == "applied":
+            rows.append((str(draft.get("applied_utc") or draft.get("utc") or draft.get("created") or ""), draft))
+    found = []
+    for _, draft in sorted(rows, key=lambda r: r[0], reverse=True)[:limit]:
+        purposes = [str(f.get("purpose") or "") for f in draft.get("files", []) if isinstance(f, dict)]
+        found.append((draft.get("title") or "a draft", "\n".join([str(draft.get("why") or ""), *purposes])))
+    return found
+
+
+def _entry_points(ws) -> list[str]:
+    """The commands the program's own files offer when nothing documents one: ``python -m package`` for a package with a
+    ``__main__``, ``python file.py`` for a top-level file that runs when started (never a test file)."""
+    root, found = ws.root, []
+    for child in sorted(root.iterdir()) if root.is_dir() else []:
+        if child.name.startswith((".", "_", "test")) or child.name == "tests":
+            continue
+        if child.is_dir() and (child / "__main__.py").is_file() and (child / "__init__.py").is_file():
+            found.append(f"python -m {child.name}")
+        elif child.is_file() and child.suffix == ".py":
+            try:
+                source = child.read_text(encoding="utf-8", errors="replace")[:200000]
+            except OSError:
+                continue
+            if re.search(r"""if\s+__name__\s*==\s*['"]__main__['"]""", source):
+                found.append(f"python {child.name}" + (" --help" if re.search(r"argparse|sys\.argv|click|typer", source) else ""))
+    return found[:6]
+
+
 def suggestions(ws) -> list[dict[str, Any]]:
-    """Commands the project documents, README first, marked when they still hold placeholders such as TITLE."""
+    """Commands the project documents, marked when they still hold placeholders such as TITLE. Read, in this order, from
+    the README, the brief, the plan's milestones and the newest applied drafts (journey J0-F5: the program was described
+    in none of the first two, and the card stayed hidden); with none written down, the program's own entry points."""
     texts = []
     readme = next((ws.root / name for name in README_NAMES if (ws.root / name).is_file()), None)
     if readme:
         texts.append(("README", readme.read_text(encoding="utf-8", errors="replace")[:200000]))
+    try:
+        brief = str((ws.brief() or {}).get("text") or "")
+    except Exception:                                                  # a brief that cannot be read is no source
+        brief = ""
+    if brief:
+        texts.append(("Your brief", brief[:200000]))
     for milestone in (ws.plan() or {}).get("milestones", []):
         texts.append((milestone.get("title") or milestone.get("id") or "plan",
                       " ".join(str(milestone.get(k) or "") for k in ("detail", "done_when"))))
+    texts.extend(_applied_draft_texts(ws))
     found, seen = [], set()
-    for source, text in texts:
+
+    def collect(source, text):
         # A command written inside quotes in a sentence ('python -m stockbook list' shows every item) ends at its
         # closing quote; without this the match ran on to the end of the line and was dropped (journey J1-G1).
         quoted = [(m.start(), m.group(2).strip()) for m in QUOTED.finditer(text)]
         rest = QUOTED.sub(lambda m: " " * len(m.group(0)), text)          # same length: positions keep their order
         loose = [(m.start(), m.group(0).strip().strip("'\"`").rstrip(".,;:'\"`")) for m in DOCUMENTED.finditer(rest)]
         for _, command in sorted(quoted + loose):
+            # A sentence ("Run it with: python app.py list. It keeps books.") ends at its full stop.
+            sentence = re.split(r"(?<=\S)\.\s", command)[0].rstrip(".,;:'\"`")
+            if sentence != command:
+                try:
+                    shlex.split(sentence, posix=True)
+                    command = sentence
+                except ValueError:
+                    pass
             if command in seen:
                 continue
             try:
@@ -92,6 +144,11 @@ def suggestions(ws) -> list[dict[str, Any]]:
             arguments = argv[3:] if argv[1] == "-m" else argv[2:]
             found.append({"command": command, "source": source,
                           "placeholders": any(PLACEHOLDER.search(a) for a in arguments)})
+    for source, text in texts:
+        collect(source, text)
+    if not found:
+        for command in _entry_points(ws):
+            collect("the program itself", command)
     return found[:24]
 
 

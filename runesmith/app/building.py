@@ -54,7 +54,30 @@ from pathlib import Path
 sys.path[:0]=[str(Path.cwd()),str(Path.cwd()/"src")]
 ''' + PROGRESS_RUNNER + '''
 if sys.argv[1] == "project":
-    suite=unittest.defaultTestLoader.discover("tests",top_level_dir=".")
+    # The tests are found where the draft put them: in tests/ (a package, or a plain folder: the author is told to add an
+    # __init__.py but a drafted folder often has none), and, when tests/ is absent or holds no test, as test*.py in the
+    # project's top folder. Discovering only "tests" refused every draft whose test sat in the top folder with "Start
+    # directory is not importable". A project that has tests/ keeps running exactly what it ran before: its top folder's
+    # scripts are not imported.
+    import traceback
+    class ImportFailure(unittest.TestCase):
+        def __init__(self,name,text):
+            super().__init__("runTest");self.test_name=name;self.text=text
+        def id(self):return self.test_name
+        def runTest(self):raise ImportError(self.test_name+": "+self.text)
+    suite=unittest.TestSuite();root=Path.cwd();folder=root/"tests"
+    if folder.is_dir():
+        suite.addTests(unittest.defaultTestLoader.discover("tests",top_level_dir="." if (folder/"__init__.py").is_file() else "tests"))
+    for file in (sorted(root.glob("test*.py")) if not suite.countTestCases() else []):
+        name=file.stem
+        if name in sys.modules or (folder/file.name).is_file():name="root_"+name
+        try:
+            spec=importlib.util.spec_from_file_location(name,file)
+            module=importlib.util.module_from_spec(spec);sys.modules[name]=module;spec.loader.exec_module(module)
+            suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(module))
+        except BaseException:suite.addTest(ImportFailure(name,traceback.format_exc()[-700:]))
+    if not suite.countTestCases():
+        print("No tests were found. Put the tests in a tests folder (with an empty __init__.py file if the folder holds Python packages) or as test_*.py files in the project's top folder.")
 else:
     paths=json.loads(sys.argv[1]) if sys.argv[1].startswith("[") else [sys.argv[1]]
     suite=unittest.TestSuite()

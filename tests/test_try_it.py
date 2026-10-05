@@ -107,3 +107,69 @@ def test_the_studio_routes_run_on_the_practice_copy_unless_real_is_exactly_true(
     assert json.loads((tmp_path / "data.json").read_text(encoding="utf-8")) == ["Emma"]
     assert api_try_reset(studio, {}, {})["files"] >= 2
     assert api_try_run(studio, {}, {"command": "python -m shelf add X", "real": True})["real"]
+
+
+# ---- the newcomer path: the card is shown for a program written down anywhere, and never promised when absent ----
+
+def reading_log(tmp_path):
+    """What the drafted app looked like: a program file and its test in the folder, no README, no command in the milestone."""
+    (tmp_path / "readinglog.py").write_text(
+        "import argparse\nparser = argparse.ArgumentParser()\nparser.add_argument('command')\n"
+        "if __name__ == '__main__':\n    print('books:', parser.parse_args().command)\n", encoding="utf-8")
+    (tmp_path / "test_readinglog.py").write_text("import unittest\n", encoding="utf-8")
+    ws = Workspace(tmp_path)
+    ws.save_plan({"summary": "Reading log", "milestones": [{"title": "Add and list books", "detail": "Keep books in a file.",
+                                                            "done_when": "A book can be added and listed."}]})
+    return ws
+
+
+def applied_draft(ws, **fields):
+    folder = ws.home / "drafts" / "d1"
+    folder.mkdir(parents=True)
+    (folder / "DRAFT.json").write_text(json.dumps(dict({"id": "d1", "state": "applied", "milestone": "m1", "title": "First files",
+                                                          "files": []}, **fields)), encoding="utf-8")
+
+
+def test_a_command_in_the_brief_shows_the_card(tmp_path):
+    ws = reading_log(tmp_path)
+    ws.set_brief("A reading log. I run it with 'python readinglog.py list' and add books with python readinglog.py add TITLE.")
+    rows = {s["command"]: s for s in try_it.suggestions(ws)}
+    assert "python readinglog.py list" in rows and rows["python readinglog.py list"]["source"] == "Your brief"
+
+
+def test_the_run_instructions_in_the_applied_drafts_why_show_the_card(tmp_path):
+    ws = reading_log(tmp_path)
+    applied_draft(ws, why="A command line reading log. Run it with: python readinglog.py list. It keeps the books in a file.",
+                  files=[{"path": "readinglog.py", "purpose": "The program: `python readinglog.py add TITLE` adds a book"}])
+    commands = [s["command"] for s in try_it.suggestions(ws)]
+    assert "python readinglog.py list" in commands and "python readinglog.py add TITLE" in commands
+    assert [s["placeholders"] for s in try_it.suggestions(ws) if s["command"].endswith("add TITLE")] == [True]
+
+
+def test_an_unapplied_draft_is_not_a_source(tmp_path):
+    ws = reading_log(tmp_path)
+    applied_draft(ws, state="proposed", why="Run it with: python readinglog.py list")
+    assert [s["command"] for s in try_it.suggestions(ws)] == ["python readinglog.py --help"]      # only the entry point
+
+
+def test_with_nothing_written_down_the_programs_own_entry_point_is_offered(tmp_path):
+    ws = reading_log(tmp_path)
+    rows = try_it.suggestions(ws)
+    assert [s["command"] for s in rows] == ["python readinglog.py --help"] and rows[0]["source"] == "the program itself"
+    assert "usage: readinglog.py" in try_it.run(ws, rows[0]["command"])["stdout"]
+    # A test file is never offered, and neither is a folder with no program in it.
+    (tmp_path / "empty").mkdir()
+    assert try_it.suggestions(Workspace(tmp_path / "empty")) == []
+
+
+def test_the_overview_promises_the_card_only_when_it_is_there(tmp_path):
+    from types import SimpleNamespace
+    from runesmith.app.server import api_state
+    studio = SimpleNamespace(ws=reading_log(tmp_path), worker=SimpleNamespace(snapshot=lambda: {}),
+                             bus=SimpleNamespace(recent=[]))
+    assert api_state(studio, {}, None)["try_ready"] is True
+    (tmp_path / "bare").mkdir()
+    bare = Workspace(tmp_path / "bare")
+    bare.save_plan({"summary": "x", "milestones": [{"title": "Plan only", "done_when": "later"}]})
+    studio.ws = bare
+    assert api_state(studio, {}, None)["try_ready"] is False

@@ -388,11 +388,17 @@ export default async function render(root, ctx) {
           p.assumes?.length ? h('div.small.mt-8', h('b', 'They assume (your milestone does not say this):'), h('ul.small', p.assumes.map((a) => h('li', a)))) : null,
           ...examplesNotes(p),
           trial, revised,
-          p.autopilot?.decision === 'left_for_owner' ? h('div.callout.mt-8', h('div', `Runesmith’s check autopilot left these for you: ${p.autopilot.reason}`)) : null,
+          // With one model the autopilot cannot cross-check (journey J0-F9): say so, and offer the owner's own approval in one click.
+          p.autopilot?.decision === 'left_for_owner' ? (/no second model/i.test(p.autopilot.reason || '')
+            ? h('div.callout.mt-8', h('div', 'The check autopilot needs a second model to cross-check these checks, and only one is set up. Add another (a second free provider works) under Thinking power, or read the checks above and approve them yourself.'),
+                h('div.row.wrap.mt-8',
+                  h('button.btn.sm.primary', { onclick: () => accBlock.querySelector('[data-act="use-checks"]')?.click() }, icon('check'), 'Approve them myself'),
+                  h('button.btn.sm', { onclick: () => ctx.navigate('inference') }, 'Add a second model')))
+            : h('div.callout.mt-8', h('div', `Runesmith’s check autopilot left these for you: ${p.autopilot.reason}`))) : null,
           h('details', h('summary.tiny', p.style === 'examples' ? `Show the code (examples by ${p.drafted_by || 'a model'}, code written by Runesmith)`
             : `Show the code (proposed by ${p.drafted_by || 'a model'})`), h('pre.code', p.code)),
           h('div.row.wrap.mt-8',
-            h('button.btn.sm.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
+            h('button.btn.sm.primary', { 'data-act': 'use-checks', onclick: (e) => withBusy(e.currentTarget, async () => {
               if (replacing) {
                 const reason = await askText({ title: `Replace your checks for “${m.title}”?`, multiline: true, confirm: 'Replace my checks',
                   text: 'Say why, for example “a correct build failed the old checks”. Your current checks are kept in a file, and the new sentences become the milestone’s public expectations.' });

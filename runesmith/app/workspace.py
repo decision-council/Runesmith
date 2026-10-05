@@ -454,8 +454,30 @@ class Workspace:
                 "note": spec.get("note")})
         roles = {role: list(config["roles"].get(role) or []) for role in ROLES}
         return {"instruments": instruments, "roles": roles, "role_labels": ROLE_LABELS, "keys": self.keys.describe(),
+                "pacing": self.pacing_view(),
                 "presets": public_presets(spec.get("kind") for spec in (self.config().get("instruments") or {}).values()),
                 "ready": self.ready(), "stats": self.call_stats()}
+
+    def pacing_view(self) -> dict[str, Any]:
+        """The instruments held back at their free limit until a reset, in the owner's words (runesmith.pacing), and
+        whether the only provider there is is one of them: then the Overview suggests a second free provider (J0-F3)."""
+        from runesmith.app import guide
+        from runesmith.pacing import Pacing, clock, limited_words
+        now = time.time()
+        config = self.config()
+        active = Pacing(self.home / "PACING.json").active()
+        rows = []
+        for name, mark in sorted(active.items()):
+            spec = config["instruments"].get(name)
+            if spec:
+                label = spec.get("label") or (PRESET_BY_ID.get(spec.get("preset") or "") or {}).get("label") or name
+                rows.append({"name": name, "label": label, "until": mark["until"], "until_clock": clock(mark["until"]),
+                             "daily": bool(mark.get("daily")),
+                             "words": limited_words(label, mark["until"], bool(mark.get("daily")), now)})
+        providers = {n for names in self.ready()["usable"].values() for n in names
+                     if (config["instruments"].get(n) or {}).get("kind") != "manual"}
+        return {"limited": rows, "only_provider_limited": bool(rows) and len(providers) == 1 and providers <= set(active),
+                "guide_url": guide.free_inference_url(), "guide_words": guide.FREE_INFERENCE_WORDS}
 
     def _usable(self, name: str, spec: dict[str, Any] | None) -> bool:
         if not spec:
@@ -564,6 +586,9 @@ class Workspace:
                 if role in ROLES and name not in config["roles"].setdefault(role, []):
                     config["roles"][role].append(name)
             self.save_config(config)
+        if key_value:                                  # a new key has a new allowance: nothing is held back for the old one
+            from runesmith.pacing import Pacing
+            Pacing(self.home / "PACING.json").clear(name)
         self.ledger.append("instrument.saved", {"name": name, "kind": kind, "model": clean.get("model"),
                                                 "key_saved": bool(key_value), "roles": roles or []})
         return next(i for i in self.inference()["instruments"] if i["name"] == name)
@@ -650,6 +675,11 @@ class Workspace:
             return {"ok": False, "models": [], "detail": "no endpoint address"}
         if name and not preset:
             preset = (self.config()["instruments"].get(name) or {}).get("preset")
+        if not key and kind != "milliner" and (PRESET_BY_ID.get(preset or "") or {}).get("key") == "required":
+            # Without a key the service answers "refused" or says nothing: not "it is not running" (journey J0-F8).
+            label = (PRESET_BY_ID.get(preset) or {}).get("label") or "The provider"
+            return {"ok": False, "models": [], "needs_key": True,
+                    "detail": f"Add your key first: {label} lists its models only for a key. Paste it in the API key box, then press List models."}
         return list_models(base_url, key, kind=kind, provider=provider, preset=preset or "")
 
     def record_call(self, event: dict[str, Any]) -> None:
@@ -1665,6 +1695,14 @@ class Workspace:
 
     # ----------------------------------------------------------------- the summary --
 
+    def _live_empty(self, mapped) -> bool | None:
+        """Whether the folder holds nothing of the owner's now. The map is made at the start, so after the first files
+        were written it still said "empty" (journey J0-F11); Runesmith's own log and dot folders do not count."""
+        try:
+            return not any(not p.name.startswith(".") and p.name.lower() != "runesmith.md" for p in self.root.iterdir())
+        except OSError:
+            return mapped
+
     def state(self) -> dict[str, Any]:
         """Everything the home screen needs, in one call."""
         from runesmith.kaizen.attention import SHARE_BP, Attention
@@ -1684,7 +1722,8 @@ class Workspace:
         return {
             "version": __version__,
             "workspace": {"name": settings["workspace_name"], "path": str(self.root), "home": str(self.home),
-                          "empty": facts.get("empty"), "files": facts.get("files"), "entries": facts.get("entries_total")},
+                          "empty": self._live_empty(facts.get("empty")), "files": facts.get("files"),
+                          "entries": facts.get("entries_total")},
             "settings": settings, "ready": self.ready(),
             "objects": [{"name": o["name"], "kind": o["kind"], "next_rung": o.get("next_rung"), "root": bool(o.get("root")),
                          "bands": [ob.get("band") for ob in o.get("objectives", [])],

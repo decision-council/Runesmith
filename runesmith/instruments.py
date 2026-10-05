@@ -54,9 +54,10 @@ def classify(message: str) -> str:
 class TransportCensored(RuntimeError):
     """No usable response after the declared retries; the opportunity is censored."""
 
-    def __init__(self, message, *, receipt=None):
+    def __init__(self, message, *, receipt=None, plain=None):
         super().__init__(message)
         self.receipt = receipt or {}
+        self.plain = plain          # the whole message in the owner's words, when it already is (a limit, with its time)
 
 
 @dataclass
@@ -130,7 +131,16 @@ def http_json(method: str, url: str, headers: Mapping[str, str], body: dict | No
             payload = json.loads(raw)
         except json.JSONDecodeError:
             payload = {"error": raw[:500]}
-        return error.code, payload if isinstance(payload, dict) else {"error": str(payload)[:500]}
+        if isinstance(payload, list):                  # Google answers [{"error": {...}}]: its first object is the answer
+            payload = next((row for row in payload if isinstance(row, dict)), None) or {"error": raw[:500]}
+        if not isinstance(payload, dict):
+            payload = {"error": str(payload)[:500]}
+        if error.code in (429, 503):                   # when to ask again, read from the whole answer before it is cut short
+            from runesmith.pacing import limit_hints
+            hints = limit_hints(error.headers, raw)
+            if hints:
+                payload = dict(payload, _pacing=hints)
+        return error.code, payload
 
 
 def secret_from(env_var: str | None = None, env_file: str | None = None, key: str | None = None) -> Callable[[], str]:
@@ -150,6 +160,7 @@ def secret_from(env_var: str | None = None, env_file: str | None = None, key: st
 
 class Instrument:
     kind = "abstract"
+    free_tier = False          # set from the preset: a free key's allowance is spent by every retry (see runesmith/pacing.py)
 
     def __init__(self, name: str, model: str) -> None:
         self.name, self.model = name, model
@@ -369,7 +380,8 @@ class OpenAICompatInstrument(Instrument):
             except (URLError, OSError, TimeoutError) as error:
                 return CallOutcome(False, error_kind="transport", error=_unreachable(self.base_url, error),
                                    latency_s=time.monotonic() - started)
-            message = "" if 200 <= status < 300 else f"http_{status} " + json.dumps(payload.get("error", payload))[:500]
+            message = "" if 200 <= status < 300 else (
+                f"http_{status} " + json.dumps(payload.get("error", {k: v for k, v in payload.items() if k != "_pacing"}))[:500])
             if status == 400 and "response_format" in message.lower() and "response_format" in body and fallback is None:
                 body.pop("response_format")                 # a server that rejects this JSON mode: once, without it
                 fallback = "none"
@@ -381,7 +393,9 @@ class OpenAICompatInstrument(Instrument):
             if plain:
                 return CallOutcome(False, error_kind="config", error=f"{plain} ({message[:300]})", latency_s=latency,
                                    receipt={"refused_before_answer": _refusal(status, message)})
-            return CallOutcome(False, error_kind=classify(message), error=message, latency_s=latency)
+            hints = payload.get("_pacing") if isinstance(payload.get("_pacing"), dict) else {}
+            return CallOutcome(False, error_kind=classify(message), error=message, latency_s=latency,
+                               receipt={"http_status": status, **hints})
         try:
             choice = payload["choices"][0]
             text = choice["message"].get("content") or ""
@@ -512,7 +526,8 @@ class Router:
 
     def __init__(self, instruments: Mapping[str, Instrument], roles: Mapping[str, str | list[str]],
                  *, backoff_s: tuple[float, ...] = DEFAULT_BACKOFF_S, sleep: Callable[[float], None] = time.sleep,
-                 on_call: Callable[[dict], None] | None = None) -> None:
+                 on_call: Callable[[dict], None] | None = None, pacing=None,
+                 clock: Callable[[], float] = time.time) -> None:
         self.instruments = dict(instruments)
         self.roles = {role: ([names] if isinstance(names, str) else list(names)) for role, names in roles.items()}
         for role, names in self.roles.items():
@@ -520,6 +535,7 @@ class Router:
             if missing:
                 raise ValueError(f"role {role!r} names unknown instruments {missing}")
         self.backoff_s, self._sleep, self._on_call = tuple(backoff_s), sleep, on_call
+        self.pacing, self._clock = pacing, clock        # pacing: runesmith.pacing.Pacing, where a "429" is remembered
 
     def call(self, role: str, *, prompt: str, system: str, schema: dict | None, max_tokens: int,
              key: str, reasoning_effort: str | None = None, own_effort_first: bool = False) -> CallOutcome:
@@ -530,13 +546,33 @@ class Router:
         names = self.roles.get(role)
         if not names:
             raise KeyError(f"no instrument serves role {role!r}")
+        from runesmith.pacing import BUSY_WAIT_S, FREE_TIER_TRIES, SHORT_WAIT_S, reset_time
         errors = []
         attempt = 0
         gone: dict[str, CallOutcome] = {}          # refused before answering: not asked again in this call
-        for delay in (0,) + self.backoff_s:
-            if delay:
-                self._sleep(delay)
-            outcome = self._attempt(role, names, attempt, prompt=prompt, system=system, schema=schema,
+        # What this call has learned about its instruments, so that a free key's allowance is not spent on retries:
+        # a service at its limit ("429") is not asked again until its reset, one that is busy ("503") is asked once more
+        # after a longer wait, and a free key gets one retry at most (journey J0: 36 of 38 calls failed on one free key).
+        stopped: dict[str, dict] = {}              # at its limit: {'until', 'daily'}
+        busy: set[str] = set()
+        spent: dict[str, int] = {}
+        waited_short = busy_waited = False
+        asks, wait, last = 0, 0.0, (None, None)
+
+        def askable(n):                                 # not at its limit, not turned away for good, no retry of a free key left unused
+            return (n not in stopped and n not in gone and not self._held(n, stopped)
+                    and not (getattr(self.instruments[n], 'free_tier', False) and spent.get(n, 0) >= FREE_TIER_TRIES))
+        while True:
+            if wait:
+                self._sleep(wait)
+                wait = 0.0
+            live = [n for n in names if n not in stopped and not self._held(n, stopped)
+                    and not (getattr(self.instruments[n], 'free_tier', False) and spent.get(n, 0) >= FREE_TIER_TRIES)]
+            if not live:
+                if stopped:
+                    raise self._limited_error(names, stopped)
+                break
+            outcome = self._attempt(role, live, attempt, prompt=prompt, system=system, schema=schema,
                                     max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort, gone=gone,
                                     own_effort_first=own_effort_first)
             attempt = outcome.attempts
@@ -545,14 +581,73 @@ class Router:
                 # output failure, whatever the refusal says (review of J11-B7: a bad_request from the last model used
                 # up a try).
                 raise TransportCensored(outcome.error or 'every model turned the request away', receipt=outcome.receipt)
-            if outcome.ok or outcome.error_kind in ("output", "config"):
+            name = outcome.receipt.get('instrument')
+            if outcome.ok:
+                if self.pacing is not None and name in self.instruments:
+                    self.pacing.clear(name)
+                return outcome
+            if outcome.error_kind in ("output", "config"):
                 return outcome                          # "config": a refusal that no retry can change (LS1)
             if outcome.receipt.get('no_retry'):
                 raise TransportCensored(outcome.error or 'Saved remote request requires review', receipt=outcome.receipt)
             errors.append(outcome.error)
+            spent[name] = spent.get(name, 0) + 1
+            status = outcome.receipt.get('http_status') if getattr(self.instruments.get(name), 'kind', '') == 'openai' else None
+            last = (status, outcome)
+            if status == 429:
+                now = self._clock()
+                until, daily, guessed = reset_time(getattr(self.instruments[name], 'base_url', ''), outcome.receipt,
+                                                   outcome.error or '', now,
+                                                   self.pacing.recent(name) if self.pacing is not None else None)
+                if not daily and until - now <= SHORT_WAIT_S and not waited_short and self.backoff_s:
+                    waited_short = True                 # the service's own short wait (a per-minute limiter): once
+                    wait = until - now + 1
+                    continue
+                stopped[name] = {'until': until, 'daily': daily}
+                if self.pacing is not None:
+                    self.pacing.mark(name, until, daily=daily, guessed=guessed)
+                continue
+            if status == 503:
+                busy.add(name)
+                if any(n not in busy for n in names if askable(n)):
+                    continue                            # another model has not been asked: it goes first, no wait
+                if busy_waited or not self.backoff_s:
+                    raise self._busy_error(names, outcome)
+                busy_waited, wait = True, BUSY_WAIT_S   # one more try, after a longer wait
+                busy.clear()
+                continue
+            if asks >= len(self.backoff_s):
+                break
+            wait = self.backoff_s[asks]
+            asks += 1
+        if last[0] == 503:                              # the last word was "busy": the owner's words, not a count of attempts
+            raise self._busy_error(names, last[1])
         refusals = '; '.join(f"{name} refused before answering: {(o.error or '')[:200]}" for name, o in gone.items())
         raise TransportCensored(f"role {role!r}: no response after {attempt} attempts; last: {errors[-1] if errors else ''}"
                                 + (f"; {refusals}" if refusals else ''))
+
+    def _held(self, name, stopped):
+        """Whether an earlier call saw this instrument at its limit and its reset has not come (then it is not asked)."""
+        mark = self.pacing.limited(name) if self.pacing is not None else None
+        if mark:
+            stopped[name] = {'until': mark['until'], 'daily': bool(mark.get('daily'))}
+            return True
+        return False
+
+    def _limited_error(self, names, stopped):
+        from runesmith.pacing import limited_words
+        now = self._clock()
+        named = [n for n in names if n in stopped]
+        words = ' '.join(limited_words(n, stopped[n]['until'], stopped[n]['daily'], now, alone=len(names) == 1)
+                         for n in named)
+        return TransportCensored(words, plain=words, receipt={'not_admitted': True, 'paced': 'limited',
+                                                              'limited_until': min(stopped[n]['until'] for n in named)})
+
+    def _busy_error(self, names, outcome):
+        from runesmith.pacing import busy_words
+        words = busy_words(', '.join(names))
+        return TransportCensored(f"{words} ({(outcome.error or '')[:300]})", plain=words,
+                                 receipt={'not_admitted': True, 'paced': 'busy'})
 
     def _attempt(self, role, names, attempt, *, prompt, system, schema, max_tokens, key, reasoning_effort, gone=None,
                  own_effort_first=False):
