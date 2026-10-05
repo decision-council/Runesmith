@@ -25,7 +25,7 @@ Runesmith can also **improve its own system.** It reads its own records, finds w
 
 What Runesmith learns is kept in records it owns (a hash-chained ledger, frozen generations, maps and memories), not inside any one model.
 
-> **Status: v0.1.0, a research release.** Every capability claim here is either implemented and tested, backed by a named experiment, or marked as not shown.
+> **Status: Runesmith 1.0, released 6 October 2026.** Every capability claim here is either implemented and tested, backed by a named experiment, or marked as not shown.
 
 **What to expect.**
 
