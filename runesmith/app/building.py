@@ -55,8 +55,10 @@ sys.path[:0]=[str(Path.cwd()),str(Path.cwd()/"src")]
 ''' + PROGRESS_RUNNER + '''
 if sys.argv[1] == "project":
     # The tests are found where the draft put them: in tests/ (a package, or a plain folder: the author is told to add an
-    # __init__.py but a drafted folder often has none) and as test*.py in the project's top folder. Discovering only
-    # "tests" refused every draft whose test sat in the top folder with "Start directory is not importable".
+    # __init__.py but a drafted folder often has none), and, when tests/ is absent or holds no test, as test*.py in the
+    # project's top folder. Discovering only "tests" refused every draft whose test sat in the top folder with "Start
+    # directory is not importable". A project that has tests/ keeps running exactly what it ran before: its top folder's
+    # scripts are not imported.
     import traceback
     class ImportFailure(unittest.TestCase):
         def __init__(self,name,text):
@@ -66,7 +68,7 @@ if sys.argv[1] == "project":
     suite=unittest.TestSuite();root=Path.cwd();folder=root/"tests"
     if folder.is_dir():
         suite.addTests(unittest.defaultTestLoader.discover("tests",top_level_dir="." if (folder/"__init__.py").is_file() else "tests"))
-    for file in sorted(root.glob("test*.py")):
+    for file in (sorted(root.glob("test*.py")) if not suite.countTestCases() else []):
         name=file.stem
         if name in sys.modules or (folder/file.name).is_file():name="root_"+name
         try:

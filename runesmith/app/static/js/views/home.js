@@ -157,12 +157,12 @@ export default async function render(root, { app, navigate, refreshState }) {
     cta = h('button.btn.primary.lg', { onclick: () => navigate('goals') }, icon('wand'), 'Plan what to build');
   } else if (s.plan?.next) {
     // With a plan under way, the next step is the plan's next milestone (journey J1-F2).
-    line = `Next in your plan: “${s.plan.next.title}” (${s.plan.done || 0} of ${s.plan.milestones} done). Try what was built below, or continue in Goals & plan.`;
+    line = `Next in your plan: “${s.plan.next.title}” (${s.plan.done || 0} of ${s.plan.milestones} done). ${s.try_ready ? 'Try what was built below, or continue' : 'Continue'} in Goals & plan.`;
     // An owner back from "build while I'm away" hears that the last attempt did not work (journey J2-F11).
     const builds = (s.worker?.history || []).filter((j) => ['build', 'escalate', 'correct'].includes(j.kind));
     const last = builds[0], streak = builds.findIndex((j) => j.result !== 'failed');
     const tries = streak < 0 ? builds.length : streak;          // failed tries in a row (J2-F13)
-    if (last?.result === 'failed') line += ` The last attempt did not work (${ago(last.finished)}): ${String(last.outcome?.error || 'see Activity').slice(0, 180)}`
+    if (last?.result === 'failed') line += ` The last attempt did not work (${ago(last.finished)}): ${sentenceEnd(String(last.outcome?.error || 'see Activity'), 180)}`
       + (tries >= 3 ? ` ${tries} tries in a row did not work, so it waits for you: Work & proposals → Drafts shows what you can do.` : s.settings.auto_work ? ' The next round tries again.' : '');
     // Rounds that find every try used up end "done", but building waits all the same (journey J2-F16).
     else if (last?.outcome?.replan_needed) line += ' The tries for this step are used up, so building waits for you: Work & proposals → Drafts shows what you can do, and Goals & plan may offer smaller steps to adopt.'
@@ -357,10 +357,33 @@ export default async function render(root, { app, navigate, refreshState }) {
   caps.append(h('p.tiny.faint.mt-8', 'Bands: bad · minimal · optimal. "Unknown" means there is no evidence yet, not that things are fine.'));
 
   // A plain DOM append prints "null" for an empty card (journey J6-B1), so only real cards are passed.
-  root.append(hero, ...[needsYouCard(s, navigate, () => navigate('home')), automaticCard(s), numbersCard(s, navigate)].filter(Boolean), policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
+  root.append(hero, ...[needsYouCard(s, navigate, () => navigate('home')), pacingCard(s, navigate), automaticCard(s), numbersCard(s, navigate)].filter(Boolean), policy, h('div.mt-24'), checklist ? h('div.grid.two', checklist, kpisWrap(kpis)) : kpis,
     h('div.grid.two.mt-24', objects, next), fixCard, tryCard, h('div.grid.two.mt-24', live, caps));
   function kpisWrap(k) { k.classList.remove('four'); k.classList.add('two'); return k; }
   return () => {closed=true;healthSerial++;offs.forEach((off) => off());};
+}
+
+// A long error cut for the Overview ends at a word and a full stop, so what follows it does not run on (journey J0-F11:
+// "...Spikes i 3 tries in a row did not work").
+function sentenceEnd(text, limit) {
+  let out = text.trim();
+  if (out.length > limit) out = out.slice(0, limit).replace(/\s+\S*$/, '') + '…';
+  return /[.!?…]$/.test(out) ? out : out + '.';
+}
+
+// A free key at its limit (journey J0-F3): when it comes back, and, with one provider only, a way to keep working meanwhile.
+function pacingCard(s, navigate) {
+  const p = s.pacing;
+  if (!p || !p.limited || !p.limited.length) return null;
+  return h('section.card.mt-24', { 'aria-label': 'A free limit was reached', id: 'free-limit' },
+    h('div.card-head', h('h3', icon('clock'), 'Waiting for a free limit'), h('span.badge.warn', 'no calls are made meanwhile')),
+    ...p.limited.map((r) => h('p', r.words)),
+    p.only_provider_limited ? h('div',
+      h('p', 'You have one provider, so work waits for it. A second free provider (Google, NVIDIA or Groq, for example) lets work go on meanwhile.'),
+      p.guide_words ? h('p.small.muted', `${p.guide_words} shows where to get one.`) : null,
+      h('div.row.wrap',
+        h('button.btn.primary', { onclick: () => { navigate('inference'); setTimeout(() => bus.emit('ui:add-model', {}), 250); } }, icon('plus'), 'Add a second free provider'),
+        p.guide_url ? h('a.btn', { href: p.guide_url, target: '_blank', rel: 'noopener' }, 'The guide: free thinking power') : null)) : null);
 }
 
 function drawFix(card, o, navigate) {

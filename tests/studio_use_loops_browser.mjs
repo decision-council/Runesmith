@@ -2325,7 +2325,18 @@ try{
     await page.evaluate(()=>window.mount('goals'));
     const autopilotText=await block().innerText();
     assert(autopilotText.includes('approved by Runesmith’s check autopilot (trial and findings clean; verifier-model worked out the same 4 expected values)'),autopilotText);
-    assert(autopilotText.includes('Runesmith’s check autopilot left these for you: there is no second model to cross-check with'),autopilotText);
+    // With one model the autopilot cannot cross-check: the page says what it needs and offers the owner's own approval in one click (J0-F9).
+    assert(autopilotText.includes('The check autopilot needs a second model to cross-check these checks, and only one is set up'),autopilotText);
+    assert.equal(await page.getByRole('button',{name:'Approve them myself'}).count(),1);
+    await page.getByRole('button',{name:'Approve them myself'}).click();
+    assert(await page.getByRole('dialog').isVisible(),'one click opens the approval of these checks');
+    assert(/(Use these checks|Replace your checks) for/.test(await page.getByRole('dialog').innerText()),'it is the approval of the checks above (here the fixture already has checks, so it replaces them)');
+    await page.keyboard.press('Escape');
+    // Any other reason it left them is still given in its own words.
+    fixtureAcceptance.m1.proposal.autopilot.reason='checks that call a function or read a document are not cross-examined yet';
+    await page.evaluate(()=>window.mount('goals'));
+    assert((await block().innerText()).includes('Runesmith’s check autopilot left these for you: checks that call a function'),await block().innerText());
+    assert.equal(await page.getByRole('button',{name:'Approve them myself'}).count(),0);
     assert(!/null|undefined/.test(autopilotText),autopilotText);
     assert.equal(await page.getByLabel('Let Runesmith approve acceptance checks that pass every test (check autopilot)',{exact:true}).count(),1);
     loops.push({id:'B20.10',case:'Checks the autopilot approved say so, checks it left for the owner say why, and its switch is in the Build card',result:'passed'});

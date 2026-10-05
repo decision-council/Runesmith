@@ -526,13 +526,24 @@ class Worker:
     def _publish_state(self) -> None:
         self.bus.publish("worker", {k: v for k, v in self.snapshot().items() if k != "lines"})
 
+    @staticmethod
+    def _failure_words(event: dict[str, Any]) -> str:
+        """A call that brought no answer, in plain words for the live log (not "failed (transport)": journey J0-F7)."""
+        status = event.get("http_status")
+        if status == 429:
+            return "is at its free limit"
+        if status in (502, 503, 504):
+            return "is busy"
+        return {"config": "refused the request", "output": "gave an answer that could not be used"}.get(
+            event.get("error_kind"), "did not answer")
+
     def _on_call(self, event: dict[str, Any]) -> None:
         self.ws.record_call(event)
         model = event.get("answered_by") or event.get("model") or event.get("instrument")
         if str(model).startswith("(skipped"):              # the owner declined a chat-window request (J1-F4)
             self.say(f"You skipped the chat-window request ({event.get('role')}).", "info", kind="call")
         else:
-            outcome = "answered" if event.get("ok") else f"failed ({event.get('error_kind') or 'error'})"
+            outcome = "answered" if event.get("ok") else self._failure_words(event)
             self.say(f"{model} ({event.get('role')}) {outcome} in {event.get('latency_s', 0):.1f} s",
                      "info" if event.get("ok") else "warn", kind="call")
         self.bus.publish("call", {k: event.get(k) for k in ("role", "instrument", "model", "ok", "error_kind",
@@ -725,6 +736,9 @@ class Worker:
             result = "failed"
             explained = type(error).__name__ in ("PlannerUnavailable", "WorkspaceError")   # already in plain words
             outcome = {"error": (str(error) if explained else f"{type(error).__name__}: {error}")[:500]}
+            from runesmith.app.planner import error_detail
+            if explained and error_detail(error):                       # what the service said: kept for the details panel
+                outcome["detail"] = error_detail(error)
             what = JOB_WORDS.get(job['kind'], job['kind'].replace('_', ' ').capitalize())   # not "propose_acceptance" (J2-F9)
             self.say(f"{what} did not finish: {outcome['error']}", "error")
             (self.ws.home / "logs").mkdir(parents=True, exist_ok=True)

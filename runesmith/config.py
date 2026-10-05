@@ -119,9 +119,25 @@ def default_reasoning(spec: dict[str, Any]) -> str | None:
     return effort if effort in REASONING_EFFORTS else None
 
 
+def is_free_tier(spec: dict[str, Any]) -> bool:
+    """Whether an instrument is a service's free key (its preset says so, or its address is that preset's): every retry
+    spends from a small allowance, so such an instrument is asked less often (runesmith.pacing)."""
+    if spec.get("kind") != "openai":
+        return False
+    from runesmith.app.providers import PRESETS, PRESET_BY_ID
+    if (PRESET_BY_ID.get(spec.get("preset")) or {}).get("free_tier"):
+        return True
+    address = str(spec.get("base_url") or "").rstrip("/")
+    return bool(address) and any(p.get("free_tier") and p["base_url"].rstrip("/") == address for p in PRESETS)
+
+
 def build_router(config: dict[str, Any], *, home: Path | None = None, **kwargs) -> Router:
     instruments = {name: build_instrument(name, spec, home) for name, spec in config["instruments"].items()}
+    if home is not None:                            # a service that said "429" is not asked again until its reset
+        from runesmith.pacing import Pacing
+        kwargs.setdefault("pacing", Pacing(Path(home) / "PACING.json"))
     for name, spec in config["instruments"].items():
+        instruments[name].free_tier = is_free_tier(spec)
         # A model's own reasoning effort, used when a call names none (journey J11-B8: Nemotron 3 Super spent the
         # whole answer budget on hidden reasoning, looping to the 16,384-token cap, and each truncated answer used
         # up a try; "low" is what fixed the same model elsewhere).

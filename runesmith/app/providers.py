@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -39,25 +40,25 @@ PRESETS: list[dict[str, Any]] = [
      "base_url": "http://127.0.0.1:8080/v1", "key": "none", "local": True, "suggested": [],
      "blurb": "The leanest local option: `llama-server -m model.gguf`.",
      "setup": "llama-server -m model.gguf --ctx-size 16384   (a context of 16384 tokens or more)"},
-    {"id": "openrouter", "label": "OpenRouter", "group": "With a key", "kind": "openai",
+    {"id": "openrouter", "free_tier": True, "label": "OpenRouter", "group": "With a key", "kind": "openai",
      "base_url": "https://openrouter.ai/api/v1", "key": "required", "key_url": "https://openrouter.ai/keys",
      "suggested": ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "anthropic/claude-opus-4.5"],
      "blurb": "One key for hundreds of models, several of them free."},
-    {"id": "groq", "label": "Groq", "group": "With a key", "kind": "openai",
+    {"id": "groq", "free_tier": True, "label": "Groq", "group": "With a key", "kind": "openai",
      "base_url": "https://api.groq.com/openai/v1", "key": "required", "key_url": "https://console.groq.com/keys",
      "suggested": ["openai/gpt-oss-20b", "openai/gpt-oss-120b"], "max_request_tokens": 8000,
      "blurb": "Very fast, with a free tier (up to 8,000 tokens a minute per model, so large requests need another model)."},
-    {"id": "gemini", "label": "Google Gemini", "group": "With a key", "kind": "openai",
+    {"id": "gemini", "free_tier": True, "label": "Google Gemini", "group": "With a key", "kind": "openai",
      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "key": "required",
      "key_url": "https://aistudio.google.com/apikey", "suggested": ["gemini-3.8-flash", "gemini-3.6-flash"],
      "blurb": "A free tier through Google AI Studio."},
-    {"id": "mistral", "label": "Mistral", "group": "With a key", "kind": "openai",
+    {"id": "mistral", "free_tier": True, "label": "Mistral", "group": "With a key", "kind": "openai",
      "base_url": "https://api.mistral.ai/v1", "key": "required", "key_url": "https://console.mistral.ai/api-keys",
      "suggested": ["codestral-latest", "mistral-small-latest"],
      "blurb": "Code-strong models; the free plan includes monthly API credits."},
     # Many hosted models with a free endpoint (build.nvidia.com/models, checked 2026-09-28). The journeys' Planner and
     # Checker fell back to NVIDIA's Nemotron when Gemini's free tier ran out, but it had no ready-made tile.
-    {"id": "nvidia", "label": "NVIDIA", "group": "With a key", "kind": "openai",
+    {"id": "nvidia", "free_tier": True, "label": "NVIDIA", "group": "With a key", "kind": "openai",
      "base_url": "https://integrate.api.nvidia.com/v1", "key": "required", "key_url": "https://build.nvidia.com/models",
      "suggested": ["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"],
      "blurb": "Many models with a free endpoint, among them NVIDIA Nemotron and Kimi."},
@@ -330,6 +331,13 @@ def test_instrument(name: str, spec: dict[str, Any], home) -> dict[str, Any]:
         instrument = build_instrument(name, spec, home)
     except (KeyError, ValueError) as error:
         return {"ok": False, "detail": f"incomplete settings: {error}"}
+    from runesmith.pacing import Pacing, limited_words, reset_time
+    paced = Pacing(Path(home) / "PACING.json") if home is not None else None
+    held = paced.limited(name) if paced else None
+    if held:                       # a service that said "429" is not asked again before its reset, not even to test it
+        return {"ok": False, "latency_s": 0, "kind": "transport", "limited": True, "model": spec.get("model"),
+                "detail": limited_words(spec.get("label") or name, held["until"], bool(held.get("daily")), time.time()) +
+                          " Nothing was sent just now."}
     started = time.monotonic()
     out = instrument.complete(prompt='Reply with the JSON object {"ok": true}.', system="Reply with JSON only.",
                               schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
@@ -342,8 +350,18 @@ def test_instrument(name: str, spec: dict[str, Any], home) -> dict[str, Any]:
     else:                                                   # journey J8-F3: say what happened, then the service's words
         from runesmith.app.planner import why_no_answer
         detail = why_no_answer(out.error or "no answer")[:300]
+    if paced and out.ok:
+        paced.clear(name)
+    elif paced and (out.receipt or {}).get("http_status") == 429:       # at its limit: the next click and test wait for the reset
+        now = time.time()
+        until, daily, guessed = reset_time(str(spec.get("base_url") or ""), out.receipt, out.error or "", now,
+                                           paced.recent(name))
+        paced.mark(name, until, daily=daily, guessed=guessed)
+        detail = limited_words(spec.get("label") or name, until, daily, now)
     result = {"ok": bool(out.ok), "latency_s": round(time.monotonic() - started, 2), "kind": out.error_kind,
               "detail": detail, "model": (out.receipt or {}).get("model") or spec.get("model")}
+    if not out.ok and out.error_kind != "config" and "{" in (out.error or ""):
+        result["raw"] = out.error[:1500]               # what the service said, for a details panel; never the line itself
     if not out.ok and spec.get("kind") == "openai":
         hint = model_hint(out.error or "", spec.get("model") or "")      # from the whole answer, before it is cut short
         if hint:

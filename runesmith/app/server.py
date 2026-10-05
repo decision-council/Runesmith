@@ -295,6 +295,15 @@ def api_state(s: Studio, q, body):
         state["needs_you"] = stuck.owner_needed(_ws(s))    # stuck milestones nothing more is tried for by itself (J11-B28)
     except Exception:                                      # the page's state never fails for a note
         state["needs_you"] = []
+    try:                                                   # a free key at its limit: the Overview says so, and suggests a second provider
+        state["pacing"] = _ws(s).pacing_view()
+    except Exception:
+        state["pacing"] = {"limited": [], "only_provider_limited": False, "guide_url": "", "guide_words": ""}
+    try:                                                   # whether the Try card will be there: the Overview says so only then (J0-F5)
+        from runesmith.app import try_it
+        state["try_ready"] = bool(try_it.suggestions(_ws(s)))
+    except Exception:
+        state["try_ready"] = False
     state["recent_events"] = s.bus.recent[-1]["id"] if s.bus.recent else 0
     return state
 

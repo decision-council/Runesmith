@@ -772,9 +772,9 @@ APP = {'path':'app.py','content':'def answer():\n    return 42\n'}
     ([APP, {'path':'test_app.py','content':ROOT_TEST}], 1),
     ([APP, {'path':'tests/test_app.py','content':ROOT_TEST}], 1),
     ([APP, {'path':'tests/__init__.py','content':''}, {'path':'tests/test_app.py','content':ROOT_TEST}], 1),
-    ([APP, {'path':'test_app.py','content':ROOT_TEST}, {'path':'tests/test_more.py','content':ROOT_TEST.replace('Tests','More')}], 2),
-    ([APP, {'path':'test_app.py','content':ROOT_TEST}, {'path':'tests/test_app.py','content':ROOT_TEST.replace('Tests','More')}], 2)],
-    ids=['root', 'tests-without-init', 'tests-with-init', 'both', 'same-name-in-both'])
+    # tests/ is empty of tests: the top folder's test is found
+    ([APP, {'path':'tests/__init__.py','content':''}, {'path':'test_app.py','content':ROOT_TEST}], 1)],
+    ids=['root', 'tests-without-init', 'tests-with-init', 'empty-tests-folder'])
 def test_project_tests_are_found_where_the_draft_put_them(tmp_path, layout, ran):
     ws = draft_with(tmp_path, layout, acceptance=True)
     result = build_step(ws, ws.router())
@@ -784,6 +784,17 @@ def test_project_tests_are_found_where_the_draft_put_them(tmp_path, layout, ran)
     # The owner's acceptance runs behind the project checks, instead of never starting.
     assert result['verification']['status'] == 'acceptance_passed'
     assert result['verification']['acceptance']['ran'] == 1
+
+
+def test_a_project_with_a_tests_folder_runs_what_it_always_ran_not_its_top_folder_scripts(tmp_path):
+    # An existing project's top folder may hold a script named test_something.py that is not a unittest (it raises or
+    # hangs when imported): its checks keep passing, as before the runner also looked in the top folder.
+    ws = draft_with(tmp_path, [APP, {'path':'tests/__init__.py','content':''}, {'path':'tests/test_app.py','content':ROOT_TEST},
+                               {'path':'test_connection.py','content':'raise RuntimeError("a script, not a test")\n'}], acceptance=True)
+    result = build_step(ws, ws.router())
+    checks = result['verification']['project_checks']
+    assert checks['ok'] and checks['ran'] == 1 and 'a script, not a test' not in checks['output']
+    assert result['verification']['status'] == 'acceptance_passed'
 
 
 def test_a_failing_test_in_the_folder_root_is_reported_not_hidden(tmp_path):

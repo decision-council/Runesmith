@@ -579,8 +579,17 @@ def _with_hint(text: str) -> str:
     return with_model_hint(text)
 
 
+BUSY_WORDS = ('capacity', 'rate_limited', 'overloaded', 'daily_request_cap', 'service unavailable', 'temporarily unavailable', 'high demand',
+              'resource_exhausted', 'quota')
+BUSY_STATUS = re.compile(r'(?<![\d.])(429|50[234])(?![\d.])')
+
+
 def why_no_answer(error) -> str:
-    """Why a model call brought no answer, in plain words and with what to try; the gateway's words follow, short (F15)."""
+    """Why a model call brought no answer, in plain words and with what to try; the gateway's words follow, short (F15).
+    A service's own answer is often a JSON block: it is not put on the screen (journey J0-F7), `error_detail` keeps it."""
+    given = getattr(error, 'plain', None)
+    if isinstance(given, str) and given:                  # already in the owner's words, with the time (a limit)
+        return given
     raw = str(error)
     low = raw.lower()
     if 'is not running on this computer' in low or 'nothing answers at' in low:
@@ -590,7 +599,7 @@ def why_no_answer(error) -> str:
     elif 'timeout' in low or 'timed out' in low:
         plain = ('the model did not answer in time (a free service may be busy): try again later, '
                  'or put another model first under Thinking power')
-    elif any(word in low for word in ('capacity', 'rate_limited', 'overloaded', 'daily_request_cap', '429')):
+    elif any(word in low for word in BUSY_WORDS) or BUSY_STATUS.search(low):
         plain = ('the model is busy or at its free limit right now: try again later, '
                  'or put another model first under Thinking power')
     elif any(word in low for word in ('auth_failed', 'token unavailable', '401', '403')):
@@ -600,7 +609,19 @@ def why_no_answer(error) -> str:
                  'press Test on that model and then the button that offers the switch')
     else:
         plain = 'the model did not answer'
-    return f'{plain} ({raw[:160]})'
+    return plain if '{' in raw else f'{plain} ({raw[:160]})'
+
+
+def error_detail(error, limit=1500) -> str:
+    """The full words behind a failure that was explained in plain words: what the service said, for a details panel."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        text = getattr(error, 'detail', None) or (str(error) if isinstance(error, TransportCensored) else None)
+        if isinstance(text, str) and text.strip():
+            return text.strip()[:limit]
+        error = error.__cause__
+    return ''
 
 
 ANSWER_RECEIPT = re.compile(r'draft-answers/[A-Za-z0-9_.-]+\.json')
@@ -693,6 +714,7 @@ def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_toke
     except TransportCensored as error:
         failure=PlannerUnavailable(why_no_answer(error))
         failure.remote_receipt=error.receipt
+        failure.detail=str(error)[:1500]                # what the service said, for the details panel
         raise failure from error
     if isinstance(outcome.data, dict) and outcome.data.get("skipped_by_owner"):
         raise SkippedByOwner("you skipped the request, so nothing changed")

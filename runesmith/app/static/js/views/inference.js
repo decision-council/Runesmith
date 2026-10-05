@@ -118,7 +118,7 @@ export default async function render(root, ctx) {
       const applyList = (r) => {
         if (!r.ok) {
           clear(chipBox);
-          modelNote.textContent = r.status === 401 || r.status === 403 ? `${label} refused the key, so its model list could not be read: check the key.`
+          modelNote.textContent = r.needs_key ? r.detail : r.status === 401 || r.status === 403 ? `${label} refused the key, so its model list could not be read: check the key.`
             : `Could not read ${label}'s model list${model.value.trim() ? `; keeping ${model.value.trim()}` : ''}. Any model id can be typed.`;
           return;
         }
@@ -142,7 +142,7 @@ export default async function render(root, ctx) {
         if (r.ok) {
           toast(`${r.models.length} catalog entries shown. ${r.detail || 'Start typing to pick one.'}`, r.models.length ? 'good' : 'warn', 8000);
           model.focus();
-        } else toast(r.status === 401 ? 'The provider refused the key.' : (r.detail || 'Could not list models (the provider may not support it, or it is not running).'), 'warn', 6000);
+        } else toast(r.needs_key ? r.detail : r.status === 401 ? 'The provider refused the key.' : (r.detail || 'Could not list models (the provider may not support it, or it is not running).'), 'warn', 6000);
       }) }, icon('search'), 'List models');
       // The key goes in: look at once (a paste, or leaving the field), not on every keystroke, so a half-typed key is never sent.
       if (hosted) {
@@ -297,13 +297,14 @@ async function recordedUsage(){
 function instrumentRow(i, data, reload) {
   const st = data.stats[i.name];
   const status = h('div.small', ...testStatus(i, reload));
+  const held = ((data.pacing || {}).limited || []).find((x) => x.name === i.name);     // at its free limit until a reset (J0-F3)
   const row = h('div.instrument', h('div.monogram', { style: { background: MONO_COLORS[i.preset] || '#475569' } }, (i.label || i.name).replace(/[^A-Za-z]/g, '').slice(0, 2)),
     h('div', {style:{paddingRight:'22px'}}, h('div.row.wrap', h('b', i.label), h('span.badge.mono', i.name), i.local ? h('span.badge.good', 'local') : null, i.usable ? null : h('span.badge.warn', 'incomplete'),
       i.key.secret ? h('span', { class: `badge ${i.key.saved ? 'good' : 'bad'}` }, icon('key'), i.key.saved ? 'key saved' : 'key missing') : null),
       h('div.small.muted.mono.ellipsis', `${i.model || ''}${i.base_url ? ' · ' + i.base_url : ''}`),
       i.fallback_models?.length ? h('div.tiny.mono', `Milliner fallbacks: ${i.fallback_models.join(' → ')}`) : null,
       h('div.tiny.faint', i.roles.length ? `roles: ${i.roles.map((r) => data.role_labels[r].split(':')[0]).join(', ')}` : 'no role yet: assign one below',
-        st ? ` · ${st.calls} host callbacks, ${st.errors} errors, ~${(st.latency_s / Math.max(1, st.calls)).toFixed(1)} s each${i.kind==='milliner'?' · see Usage & cost coverage for reconciled gateway receipts':st.costed_calls ? ` · $${st.estimated_usd.toFixed(4)} reported estimate (${st.costed_calls}/${st.calls} callbacks costed)` : ' · spend not reported'}` : ''), status),
+        st ? ` · ${st.calls} host callbacks, ${st.errors} errors, ~${(st.latency_s / Math.max(1, st.calls)).toFixed(1)} s each${i.kind==='milliner'?' · see Usage & cost coverage for reconciled gateway receipts':st.costed_calls ? ` · $${st.estimated_usd.toFixed(4)} reported estimate (${st.costed_calls}/${st.calls} callbacks costed)` : ' · spend not reported'}` : ''), status, held && !String(lastTest.get(i.name)?.detail || '').includes('will not ask it again') ? h('div.small.callout.warn', held.words) : null),
     h('div.row.wrap.instrument-actions', i.kind === 'milliner' ? h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, () => recordedAvailability(i.name))}, icon('clock'), 'Recorded availability') : null,
       i.kind === 'milliner' ? h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, () => editMillinerRoute(i.name, reload))}, icon('layers'), 'Route') : null,
       i.kind !== 'manual' ? h('button.btn.sm', { onclick: () => testInstrument(i.name, reload) }, icon('zap'), 'Test') : null,
@@ -317,7 +318,12 @@ function instrumentRow(i, data, reload) {
 function testStatus(i, reload) {
   const t = lastTest.get(i.name);
   if (!t) return [];
-  const out = [t.ok ? `✓ tested just now (${t.latency_s} s)` : `✗ ${t.detail}`];
+  // "Tested just now" only for a test that worked, and only while it is just now (journey J0-F8: it stayed on the row after
+  // a failed test, hours old); a failed test replaces it with what went wrong.
+  const ageS = Math.max(0, (Date.now() - (t.at || Date.now())) / 1000);
+  const when = ageS < 90 ? 'just now' : ageS < 5400 ? `${Math.round(ageS / 60)} minutes ago` : `${Math.round(ageS / 3600)} hours ago`;
+  const out = [t.ok ? `✓ tested ${when} (${t.latency_s} s)` : `✗ ${t.detail}`];
+  if (!t.ok && t.raw) out.push(h('details', h('summary.tiny', 'What the service said'), h('pre.tiny.mono', { style: { whiteSpace: 'pre-wrap' } }, t.raw)));
   if (!t.ok && t.hint) out.push(h('div.row.wrap.mt-8', h('span', `${t.label || 'The provider'} suggests ${t.hint}:`),
     h('button.btn.sm.primary', { onclick: (e) => withBusy(e.currentTarget, async () => {
       await post(`/api/inference/instruments/${encodeURIComponent(i.name)}/model`, { model: t.hint, expect: i.model });
@@ -332,11 +338,11 @@ async function testInstrument(name, reload) {
   toast(`Testing ${name}: one tiny call…`, 'info', 2500);
   try {
     const r = await post(`/api/inference/test/${name}`, {});
-    lastTest.set(name, { ok: r.ok, detail: r.detail, latency_s: r.latency_s, hint: r.ok ? null : r.suggested_model || null, label: r.label });
+    lastTest.set(name, { ok: r.ok === true, detail: r.detail, latency_s: r.latency_s, at: Date.now(), raw: r.raw || '', hint: r.ok ? null : r.suggested_model || null, label: r.label });
     if (r.ok) toast(`${name} works: ${r.detail}${r.latency_s != null ? ` in ${r.latency_s} s` : ''}.`, 'good', 6000);
     else toast(`${name} did not work: ${r.detail}`, 'bad', 10000);
     if (reload) await reload();
-  } catch (e) { toast(e.message, 'bad'); }
+  } catch (e) { lastTest.set(name, { ok: false, detail: `The test could not run: ${e.message}`, at: Date.now() }); toast(e.message, 'bad'); if (reload) await reload(); }
 }
 
 function roleLane(role, data, reload) {
