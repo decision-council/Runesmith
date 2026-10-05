@@ -1228,10 +1228,10 @@ class Worker:
             # No Improver model, no campaign: said once, plainly, and the repairs go on (a campaign's first author call
             # used to die with a KeyError after minutes of replays, in every round from then on).
             from runesmith.app import self_notices, self_plan
-            said = self_notices.improver_check(ws, kaizen_on=bool(settings["kaizen"]), improver_ready=bool(ready["kaizen"]))
+            said = self_notices.improver_check(ws, kaizen_on=bool(settings["kaizen"]), improver_ready=bool(ready.get("kaizen")))
             if said:
                 self.say(said, "warn")
-            campaigns = bool(settings["kaizen"]) and bool(ready["kaizen"])
+            campaigns = bool(settings["kaizen"]) and bool(ready.get("kaizen"))
             loop_settings = {"min_experience": int(settings["min_experience"]) if campaigns else 10**9,
                              "kaizen_every": int(settings["kaizen_every"]),
                              # The owner's share decides which turns are self-improvement turns (self_plan); attention
