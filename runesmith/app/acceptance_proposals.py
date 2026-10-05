@@ -26,7 +26,8 @@ from runesmith import atomic
 from runesmith.app import acceptance_examples, runesmith_md
 from runesmith.app.acceptance_contracts import expectations, publish_expectations
 from runesmith.app.building import _run_checks
-from runesmith.app.planner import PlannerUnavailable, SkippedByOwner, milestone_contract, source_context, why_no_answer
+from runesmith.app.planner import (PlannerUnavailable, SkippedByOwner, call_short_answer, cut_off_failure, is_cut_off,
+                                   milestone_contract, source_context, why_no_answer)
 from runesmith.app.providers import with_model_hint
 from runesmith.app.snapshots import SnapshotUnsupported, collect_snapshot
 from runesmith.instruments import LenientSchema
@@ -67,6 +68,9 @@ NETWORK_MODULES = {'socket', 'ssl', 'urllib', 'http', 'requests', 'ftplib', 'smt
 MAX_CODE = 20000
 # Room for the answer: a checks file is a few thousand characters. Keeping prompt + answer small lets the request fit
 # free per-minute windows (Groq's free gpt-oss-120b allows 8,000 tokens a minute; 6,000 here made it impossible).
+# A model that thinks first and takes an effort setting (Gemini) is given as much room as a draft does and asked for a
+# low effort instead (planner.call_short_answer), because its hidden reasoning is counted in the answer's tokens: 3,000
+# came back cut off (journey J0), and an answer cut off is a fifth of a free key's day gone.
 ANSWER_TOKENS = 3000
 # Assertion methods and how many leading arguments state the requirement (the rest are messages).
 ASSERT_ARGS = {'assertTrue': 1, 'assertFalse': 1, 'assertIn': 2, 'assertNotIn': 2, 'assertEqual': 2, 'assertNotEqual': 2,
@@ -470,8 +474,14 @@ def _bounded(answer, limit=40000):
 
 
 def _turned_away(error) -> bool:
-    """Whether every model refused the request before generating anything, so asking again spends nothing."""
+    """Whether every model refused the request before generating anything, so that a smaller request may be taken.
+
+    Only a refusal that is about the request: a gateway that turned it away, or "too large". A service that said it is busy
+    (503) or at its limit (429) is no reason to send a shorter request at once: it is the service that is not taking
+    requests, and on a free key every request is spent from a small allowance (journey J0: one click made two)."""
     receipt = getattr(error, 'receipt', None) or getattr(error.__cause__, 'receipt', None) or {}
+    if receipt.get('paced') in ('busy', 'limited'):
+        return False
     return bool(receipt.get('no_route_accepted') or receipt.get('not_admitted')
                 or receipt.get('refused_before_answer') == 'too_large')
 
@@ -479,8 +489,8 @@ def _turned_away(error) -> bool:
 def _ask(router, request, style, key):
     """One acceptance call; a PlannerUnavailable or SkippedByOwner says in plain words why there is no answer."""
     try:
-        out = router.call('acceptance', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False), system=SYSTEM,
-                          schema=SCHEMAS[style], max_tokens=ANSWER_TOKENS, key=key)
+        out = call_short_answer(router, 'acceptance', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False),
+                                system=SYSTEM, schema=SCHEMAS[style], max_tokens=ANSWER_TOKENS, key=key)
     except KeyError as error:
         raise PlannerUnavailable('no model is set up for planning or checking: add one under Thinking power') from error
     except Exception as error:
@@ -491,6 +501,8 @@ def _ask(router, request, style, key):
         failure = PlannerUnavailable(with_model_hint(out.error or "the model service refused this request"))
         failure.receipt = dict(out.receipt or {})          # a model called directly may have refused it as too large
         raise failure
+    if is_cut_off(out):                                  # unfinished, not wrong: asked again with more room, then said plainly
+        raise cut_off_failure(out)
     if not out.ok:
         raise PlannerUnavailable(f"the model's answer was not usable: {(out.error or 'no JSON')[:200]}")
     return out
@@ -764,8 +776,8 @@ def _revise_once(ws, router, data, first, key, drafted_by, checkpoint, *, style=
                        your_first_proposal={k: first[k] for k in ('checks', 'assumes', 'code')})
     checkpoint()
     try:
-        out = router.call('acceptance', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False), system=SYSTEM,
-                          schema=SCHEMAS[style], max_tokens=ANSWER_TOKENS, key='acceptance-' + key + '-revise')
+        out = call_short_answer(router, 'acceptance', prompt=json.dumps(request, sort_keys=True, ensure_ascii=False),
+                                system=SYSTEM, schema=SCHEMAS[style], max_tokens=ANSWER_TOKENS, key='acceptance-' + key + '-revise')
     except Exception as error:
         return dict(first, revision={'after': finding, 'error': str(error)[:300]}), drafted_by
     checkpoint()

@@ -436,10 +436,20 @@ class Workspace:
     def inference(self) -> dict[str, Any]:
         config = self.config()
         instruments = []
+        from runesmith.config import is_free_tier
+        from runesmith.pacing import DayCount, Pacing, used_words
+        counted = DayCount(self.home / "REQUESTS_TODAY.json")
+        held_now = Pacing(self.home / "PACING.json").active()
+        answering = self.answering(held=set(held_now))
         for name, spec in config["instruments"].items():
             secret = spec.get("api_key_secret") or spec.get("token_secret")
             preset = PRESET_BY_ID.get(spec.get("preset") or "")
             base_url = str(spec.get("base_url") or "")
+            today = None
+            if spec.get("kind") == "openai":            # requests sent today, as this Runesmith counted them (a free key's allowance)
+                today = counted.today(name, base_url, free=is_free_tier(spec))
+                today = (dict(today, words=used_words(today, refused=name in held_now and bool(held_now[name].get("daily"))))
+                         if (today["count"] or today["cap"]) else None)
             instruments.append({
                 "name": name, "kind": spec.get("kind"), "model": spec.get("model"), "base_url": spec.get("base_url"),
                 "fallback_models": list(spec.get('fallback_models') or []),
@@ -449,35 +459,96 @@ class Workspace:
                 "key": {"secret": secret, "saved": bool(secret and self.keys.has(secret)),
                         "env": spec.get("api_key_env") or spec.get("token_env") or _key_file_ref(spec),
                         "needed": (preset or {}).get("key", "optional")},
+                "shares_key_with": [other for other, row in config["instruments"].items() if other != name and secret
+                                    and (row.get("api_key_secret") or row.get("token_secret")) == secret],
                 "usable": self._usable(name, spec),
                 "roles": [role for role in ROLES if name in (config["roles"].get(role) or [])],
+                "answering": [role for role in ROLES if answering.get(role) == name],
+                "used_today": today,
+                "free_chain": bool((preset or {}).get("free_chain")),
                 "note": spec.get("note")})
         roles = {role: list(config["roles"].get(role) or []) for role in ROLES}
         return {"instruments": instruments, "roles": roles, "role_labels": ROLE_LABELS, "keys": self.keys.describe(),
-                "pacing": self.pacing_view(),
+                "answering": answering, "pacing": self.pacing_view(),
                 "presets": public_presets(spec.get("kind") for spec in (self.config().get("instruments") or {}).values()),
                 "ready": self.ready(), "stats": self.call_stats()}
 
+    def answering(self, held: set[str] | None = None) -> dict[str, str]:
+        """Which instrument answers each role right now: the first of the role's usable ones that is not held back at its
+        free limit (the Planner and the Checker borrow as the router does). A role no instrument can answer is left out."""
+        if held is None:
+            from runesmith.pacing import Pacing
+            held = set(Pacing(self.home / "PACING.json").active())
+        roles = {role: list(names) for role, names in self.ready()["usable"].items() if names}
+        if not roles.get("plan"):
+            source = next((r for r in PLAN_FALLBACK if roles.get(r)), None)
+            if source:
+                roles["plan"] = list(roles[source])
+        if not roles.get("acceptance") and roles.get("plan"):
+            roles["acceptance"] = list(roles["plan"])
+        out = {}
+        for role, names in roles.items():
+            who = next((n for n in names if n not in held), None)
+            if who:
+                out[role] = who
+        return out
+
     def pacing_view(self) -> dict[str, Any]:
-        """The instruments held back at their free limit until a reset, in the owner's words (runesmith.pacing), and
-        whether the only provider there is is one of them: then the Overview suggests a second free provider (J0-F3)."""
+        """The instruments held back at their free limit until a reset, in the owner's words (runesmith.pacing), who answers
+        meanwhile, how much of today's free allowance each free model has used, and whether every model there is belongs to
+        one provider that is held back: then the Overview suggests a second free provider (J0-F3)."""
         from runesmith.app import guide
-        from runesmith.pacing import Pacing, clock, limited_words
+        from runesmith.app.providers import FREE_GEMINI_WORDS
+        from runesmith.config import is_free_tier
+        from runesmith.pacing import DayCount, Pacing, clock, limited_summary, limited_words, used_words
         now = time.time()
         config = self.config()
         active = Pacing(self.home / "PACING.json").active()
-        rows = []
+        counted = DayCount(self.home / "REQUESTS_TODAY.json")
+        usable = self.ready()["usable"]
+
+        def shown(name, spec):
+            label = spec.get("label") or (PRESET_BY_ID.get(spec.get("preset") or "") or {}).get("label") or name
+            return f"{label} ({spec['model']})" if spec.get("model") and spec.get("kind") == "openai" else label
+
+        def used(name, spec):
+            return used_words(counted.today(name, str(spec.get("base_url") or ""), free=is_free_tier(spec)),
+                              refused=name in active and bool(active[name].get("daily")))
+        rows, told = [], []
         for name, mark in sorted(active.items()):
             spec = config["instruments"].get(name)
             if spec:
-                label = spec.get("label") or (PRESET_BY_ID.get(spec.get("preset") or "") or {}).get("label") or name
+                label = shown(name, spec)
                 rows.append({"name": name, "label": label, "until": mark["until"], "until_clock": clock(mark["until"]),
-                             "daily": bool(mark.get("daily")),
-                             "words": limited_words(label, mark["until"], bool(mark.get("daily")), now)})
-        providers = {n for names in self.ready()["usable"].values() for n in names
+                             "daily": bool(mark.get("daily")), "said": mark.get("said"), "used": used(name, spec),
+                             "words": limited_words(label, mark["until"], bool(mark.get("daily")), now, used=used(name, spec))})
+                told.append({"name": name, "label": spec.get("label") or (PRESET_BY_ID.get(spec.get("preset") or "") or {}).get("label") or name,
+                             "model": spec.get("model") if spec.get("kind") == "openai" else None, "until": mark["until"],
+                             "daily": bool(mark.get("daily")), "used": used(name, spec)})
+        providers = {n for names in usable.values() for n in names
                      if (config["instruments"].get(n) or {}).get("kind") != "manual"}
-        return {"limited": rows, "only_provider_limited": bool(rows) and len(providers) == 1 and providers <= set(active),
-                "guide_url": guide.free_inference_url(), "guide_words": guide.FREE_INFERENCE_WORDS}
+        answering = self.answering(held=set(active))
+        who = {role: {"name": n, "label": shown(n, config["instruments"][n]), "model": config["instruments"][n].get("model")}
+               for role, n in answering.items()}
+        # The free keys at a glance, in the order their models are asked: which one answers, which wait, how much is used.
+        order = [n for role in ROLES for n in (usable.get(role) or [])]
+        free = []
+        for name in dict.fromkeys(order + list(config["instruments"])):
+            spec = config["instruments"].get(name) or {}
+            if spec.get("kind") == "openai" and is_free_tier(spec) and self._usable(name, spec):
+                today = counted.today(name, str(spec.get("base_url") or ""), free=True)
+                free.append({"name": name, "label": shown(name, spec), "model": spec.get("model"),
+                             "answering": [r for r in ROLES if answering.get(r) == name],
+                             "held": name in active, "until_clock": clock(active[name]["until"]) if name in active else None,
+                             "used": dict(today, words=used_words(today, refused=name in active and bool(active[name].get("daily"))))})
+        held_all = bool(providers) and providers <= set(active)
+        one_provider = len({str((config["instruments"].get(n) or {}).get("base_url") or n) for n in providers}) == 1
+        alone = bool(rows) and held_all and one_provider
+        return {"limited": rows, "limited_summary": limited_summary(told, now, alone=False) if told else "",
+                "waiting": bool(rows) and held_all, "answering": who, "free_keys": free,
+                "only_provider_limited": alone,
+                "guide_url": guide.free_inference_url(), "guide_words": guide.FREE_INFERENCE_WORDS,
+                "free_key_words": FREE_GEMINI_WORDS}
 
     def _usable(self, name: str, spec: dict[str, Any] | None) -> bool:
         if not spec:
@@ -529,7 +600,10 @@ class Workspace:
         return build_router({"instruments": instruments, "roles": roles}, home=self.home, **kwargs)
 
     def save_instrument(self, name: str, spec: dict[str, Any], key_value: str | None = None,
-                        roles: list[str] | None = None) -> dict[str, Any]:
+                        roles: list[str] | None = None, chain: bool = False) -> dict[str, Any]:
+        """Save one instrument (and its key, once). With ``chain``, a Google Gemini key also sets up the other free Gemini
+        models on the same saved key (``add_gemini_chain``); if Google's list cannot be read just now, the first model is
+        saved all the same and the answer says how to add the others."""
         name = (name or "").strip()
         if not name or len(name) > 40 or not all(c.isalnum() or c in "-_." for c in name):
             raise WorkspaceError("a name uses letters, digits, '-', '_' or '.' (at most 40)")
@@ -575,8 +649,12 @@ class Workspace:
             except ValueError as error:
                 raise WorkspaceError(str(error)) from error
         existing = self.config()["instruments"].get(name, {})
-        if key_value or existing.get("api_key_secret") or existing.get("token_secret"):
+        if key_value:
             clean["token_secret" if kind == "milliner" else "api_key_secret"] = name
+        elif existing.get("api_key_secret") or existing.get("token_secret"):
+            # The key it already uses stays: a model of a chain uses the key saved under its first model's name.
+            clean["token_secret" if kind == "milliner" else "api_key_secret"] = (
+                existing.get("token_secret") if kind == "milliner" else existing.get("api_key_secret")) or name
         if kind == "milliner":
             clean.setdefault("caller_tag", "runesmith/studio")
         with self._lock:
@@ -587,22 +665,96 @@ class Workspace:
                     config["roles"][role].append(name)
             self.save_config(config)
         if key_value:                                  # a new key has a new allowance: nothing is held back for the old one
-            from runesmith.pacing import Pacing
-            Pacing(self.home / "PACING.json").clear(name)
+            from runesmith.pacing import DayCount, Pacing
+            held, counted = Pacing(self.home / "PACING.json"), DayCount(self.home / "REQUESTS_TODAY.json")
+            for sharing in [name] + [n for n, row in self.config()["instruments"].items()
+                                     if n != name and row.get("api_key_secret") == name]:     # the models that use this key too
+                held.clear(sharing)
+                counted.clear(sharing)
         self.ledger.append("instrument.saved", {"name": name, "kind": kind, "model": clean.get("model"),
                                                 "key_saved": bool(key_value), "roles": roles or []})
-        return next(i for i in self.inference()["instruments"] if i["name"] == name)
+        chained = None
+        if chain and clean.get("preset") == "gemini" and kind == "openai":
+            chained = self.add_gemini_chain(name)
+        row = next(i for i in self.inference()["instruments"] if i["name"] == name)
+        if chained is not None:
+            row = dict(row, chain=chained)
+        return row
+
+    def add_gemini_chain(self, primary: str) -> dict[str, Any]:
+        """Set up the other free Gemini models on the key ``primary`` already uses, as separate instruments for the same
+        roles, asked in turn: Google's free allowance is counted per model, so one key then lasts several times as long.
+        The models come from Google's own list for this key (the newest flash, the next stable flash, the newest
+        flash-lite: ``providers.gemini_free_chain``) and are placed right after ``primary`` in each of its roles. Nothing
+        is added twice. The owner can remove any of them; the key stays while one of them uses it. The list is a read:
+        it spends none of the allowance. Returns ``{ok, added: [names], models: [...], detail}``."""
+        from runesmith.app.providers import gemini_free_chain
+        import re
+        config = self.config()
+        spec = config["instruments"].get(primary)
+        if not spec:
+            raise KeyError(primary)
+        if spec.get("kind") != "openai" or spec.get("preset") != "gemini":
+            raise WorkspaceError("only a Google Gemini model has a chain of free models to add")
+        listed = self.list_models(name=primary)
+        if not listed.get("ok"):
+            return {"ok": False, "added": [], "models": [],
+                    "detail": "Google's model list could not be read just now, so only this model was set up. "
+                              "Press \u201cAdd the other free Gemini models\u201d on its row in a moment."}
+        wanted = gemini_free_chain(listed.get("models") or [], str(spec.get("model") or ""))
+        key_fields = {k: spec[k] for k in ("api_key_secret", "api_key_env", "api_key_env_file", "api_key_key") if spec.get(k)}
+        added: list[str] = []
+        with self._lock:
+            config = self.config()
+            have = {(row.get("base_url"), row.get("model"), row.get("api_key_secret") or row.get("api_key_env") or "")
+                    for row in config["instruments"].values()}
+            for model in wanted:
+                if model == spec.get("model"):
+                    continue
+                if (spec.get("base_url"), model, key_fields.get("api_key_secret") or key_fields.get("api_key_env") or "") in have:
+                    continue
+                base = re.sub(r"[^A-Za-z0-9_.-]", "-", model)[:36] or "gemini"
+                name, n = base, 2
+                while name in config["instruments"]:
+                    name, n = f"{base}-{n}", n + 1
+                config["instruments"][name] = dict(
+                    {k: spec[k] for k in ("kind", "base_url", "label", "json_mode", "timeout_s", "reasoning_effort") if spec.get(k)},
+                    preset="gemini", model=model,
+                    note=f"The same key as {primary}: Google counts each model's free allowance on its own.", **key_fields)
+                added.append(name)
+            for role in ROLES:
+                names = config["roles"].get(role) or []
+                if primary in names:
+                    at = names.index(primary) + 1
+                    config["roles"][role] = names[:at] + [n for n in added if n not in names] + names[at:]
+            if added:
+                self.save_config(config)
+        if added:
+            self.ledger.append("instrument.chain_added", {"primary": primary, "added": added,
+                                                          "models": [config["instruments"][n]["model"] for n in added]})
+        models = ", ".join(config["instruments"][n]["model"] for n in added)
+        return {"ok": True, "added": added, "models": wanted,
+                "detail": (f"Also set up {models} on the same key, asked in turn when one has used up its free allowance "
+                           "for the day.") if added else
+                "No other free Gemini model is left to add: the models Google lists for this key are already set up."}
 
     def remove_instrument(self, name: str) -> None:
         with self._lock:
             config = self.config()
             if name not in config["instruments"]:
                 raise KeyError(name)
-            config["instruments"].pop(name)
+            gone = config["instruments"].pop(name)
             for role in list(config["roles"]):
                 config["roles"][role] = [n for n in config["roles"][role] if n != name]
             self.save_config(config)
-        self.keys.delete(name)
+        # A saved key goes with its model, unless another model still uses it (the models of a chain share one key).
+        used_by_others = {row.get("api_key_secret") or row.get("token_secret") for row in config["instruments"].values()}
+        for secret in {name, gone.get("api_key_secret"), gone.get("token_secret")} - {None, ""}:
+            if secret not in used_by_others:
+                self.keys.delete(secret)
+        from runesmith.pacing import DayCount, Pacing
+        Pacing(self.home / "PACING.json").clear(name)
+        DayCount(self.home / "REQUESTS_TODAY.json").clear(name)
         self.ledger.append("instrument.removed", {"name": name})
 
     def set_roles(self, roles: dict[str, list[str]]) -> dict[str, list[str]]:

@@ -54,10 +54,11 @@ def classify(message: str) -> str:
 class TransportCensored(RuntimeError):
     """No usable response after the declared retries; the opportunity is censored."""
 
-    def __init__(self, message, *, receipt=None, plain=None):
+    def __init__(self, message, *, receipt=None, plain=None, detail=None):
         super().__init__(message)
         self.receipt = receipt or {}
         self.plain = plain          # the whole message in the owner's words, when it already is (a limit, with its time)
+        self.detail = detail        # what the service itself said, kept for the details panel and the job receipt
 
 
 @dataclass
@@ -161,6 +162,9 @@ def secret_from(env_var: str | None = None, env_file: str | None = None, key: st
 class Instrument:
     kind = "abstract"
     free_tier = False          # set from the preset: a free key's allowance is spent by every retry (see runesmith/pacing.py)
+    takes_reasoning_effort = False   # a model that thinks and takes an effort setting (Gemini): asked for a low effort and more room
+    label = None               # the provider's name for the owner's words ("Google Gemini"); the instrument's name when None
+    counter = None             # called with the HTTP status of every request sent (runesmith.pacing.DayCount.bump)
 
     def __init__(self, name: str, model: str) -> None:
         self.name, self.model = name, model
@@ -380,6 +384,11 @@ class OpenAICompatInstrument(Instrument):
             except (URLError, OSError, TimeoutError) as error:
                 return CallOutcome(False, error_kind="transport", error=_unreachable(self.base_url, error),
                                    latency_s=time.monotonic() - started)
+            if self.counter is not None:                # a request was sent and answered: it spent from today's allowance
+                try:
+                    self.counter(status)
+                except Exception:                       # a counter is a courtesy: never stop a call because of it
+                    pass
             message = "" if 200 <= status < 300 else (
                 f"http_{status} " + json.dumps(payload.get("error", {k: v for k, v in payload.items() if k != "_pacing"}))[:500])
             if status == 400 and "response_format" in message.lower() and "response_format" in body and fallback is None:
@@ -527,7 +536,7 @@ class Router:
     def __init__(self, instruments: Mapping[str, Instrument], roles: Mapping[str, str | list[str]],
                  *, backoff_s: tuple[float, ...] = DEFAULT_BACKOFF_S, sleep: Callable[[float], None] = time.sleep,
                  on_call: Callable[[dict], None] | None = None, pacing=None,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time, counts=None) -> None:
         self.instruments = dict(instruments)
         self.roles = {role: ([names] if isinstance(names, str) else list(names)) for role, names in roles.items()}
         for role, names in self.roles.items():
@@ -536,13 +545,21 @@ class Router:
                 raise ValueError(f"role {role!r} names unknown instruments {missing}")
         self.backoff_s, self._sleep, self._on_call = tuple(backoff_s), sleep, on_call
         self.pacing, self._clock = pacing, clock        # pacing: runesmith.pacing.Pacing, where a "429" is remembered
+        self.counts = counts                            # runesmith.pacing.DayCount: requests sent today, per instrument
 
     def call(self, role: str, *, prompt: str, system: str, schema: dict | None, max_tokens: int,
-             key: str, reasoning_effort: str | None = None, own_effort_first: bool = False) -> CallOutcome:
+             key: str, reasoning_effort: str | None = None, own_effort_first: bool = False,
+             soft_effort: str | None = None, room: int | None = None, room_retry: bool = False) -> CallOutcome:
         """``reasoning_effort`` is what the caller asks for; an instrument's own setting (its model's needs, journey
         J11-B8) is used when the call names none. With ``own_effort_first`` the order is the other way round: the
         call's effort is only the fallback for an instrument that has no setting of its own (a Kaizen campaign asks
-        for high effort, but must not override a model the owner set to low)."""
+        for high effort, but must not override a model the owner set to low).
+
+        ``soft_effort`` and ``room`` are for a call whose answer is short but whose model may think first (acceptance
+        checks, a plan): an instrument that thinks and takes an effort setting (``takes_reasoning_effort``: Gemini on
+        its OpenAI-compatible address) is asked for ``soft_effort`` when nothing else names one, and its answer gets at
+        least ``room`` tokens, since hidden reasoning is counted in them (journey J0: a 3,000-token answer was cut off).
+        Every other instrument is asked exactly as before. ``room_retry`` marks the second ask after an answer was cut."""
         names = self.roles.get(role)
         if not names:
             raise KeyError(f"no instrument serves role {role!r}")
@@ -574,7 +591,8 @@ class Router:
                 break
             outcome = self._attempt(role, live, attempt, prompt=prompt, system=system, schema=schema,
                                     max_tokens=max_tokens, key=key, reasoning_effort=reasoning_effort, gone=gone,
-                                    own_effort_first=own_effort_first)
+                                    own_effort_first=own_effort_first, order=names, soft_effort=soft_effort, room=room,
+                                    room_retry=room_retry)
             attempt = outcome.attempts
             if not outcome.ok and (outcome.receipt.get('not_admitted') or outcome.receipt.get('no_route_accepted')):
                 # Every model turned the request away before generating: nothing ran, so this is no answer, never an
@@ -603,9 +621,11 @@ class Router:
                     waited_short = True                 # the service's own short wait (a per-minute limiter): once
                     wait = until - now + 1
                     continue
-                stopped[name] = {'until': until, 'daily': daily}
+                stopped[name] = {'until': until, 'daily': daily, 'said': outcome.error}
                 if self.pacing is not None:
-                    self.pacing.mark(name, until, daily=daily, guessed=guessed)
+                    self.pacing.mark(name, until, daily=daily, guessed=guessed, said=outcome.error)
+                if self.counts is not None:             # a day's refusal that names its limit teaches the cap
+                    self.counts.learn_cap(name, getattr(self.instruments[name], 'base_url', ''), outcome.error, daily)
                 continue
             if status == 503:
                 busy.add(name)
@@ -630,40 +650,73 @@ class Router:
         """Whether an earlier call saw this instrument at its limit and its reset has not come (then it is not asked)."""
         mark = self.pacing.limited(name) if self.pacing is not None else None
         if mark:
-            stopped[name] = {'until': mark['until'], 'daily': bool(mark.get('daily'))}
+            stopped[name] = {'until': mark['until'], 'daily': bool(mark.get('daily')), 'said': mark.get('said')}
             return True
         return False
 
+    def _name(self, name):
+        """How an instrument is called in the owner's words: its provider and model ("Google Gemini (gemini-3.8-flash)"),
+        or its own name when it has no provider's name. Several models of one provider are told apart by their model."""
+        instrument = self.instruments.get(name)
+        label, model = getattr(instrument, 'label', None), getattr(instrument, 'model', None)
+        return f"{label} ({model})" if label and model else name
+
+    def _provider(self, name):
+        return getattr(self.instruments.get(name), 'base_url', None) or name
+
     def _limited_error(self, names, stopped):
-        from runesmith.pacing import limited_words
+        from runesmith.pacing import limited_summary, used_words
         now = self._clock()
         named = [n for n in names if n in stopped]
-        words = ' '.join(limited_words(n, stopped[n]['until'], stopped[n]['daily'], now, alone=len(names) == 1)
-                         for n in named)
-        return TransportCensored(words, plain=words, receipt={'not_admitted': True, 'paced': 'limited',
-                                                              'limited_until': min(stopped[n]['until'] for n in named)})
+        # "Add a second free provider" is the way out when every model there is belongs to one provider, however many
+        # models of it are set up: they all stop with the same key.
+        alone = len({self._provider(n) for n in names}) == 1
+
+        def used(n):
+            if self.counts is None:
+                return None
+            instrument = self.instruments[n]
+            return used_words(self.counts.today(n, getattr(instrument, 'base_url', ''), free=bool(getattr(instrument, 'free_tier', False))),
+                              refused=bool(stopped[n]['daily']))
+        rows = [{'name': n, 'label': getattr(self.instruments.get(n), 'label', None) or n,
+                 'model': getattr(self.instruments.get(n), 'model', None) if getattr(self.instruments.get(n), 'label', None) else None,
+                 'until': stopped[n]['until'], 'daily': stopped[n]['daily'], 'used': used(n)} for n in named]
+        words = limited_summary(rows, now, alone=alone)
+        said = {n: stopped[n].get('said') for n in named if stopped[n].get('said')}
+        detail = '; '.join(f"{self._name(n)}: {text}" for n, text in said.items()) or None
+        return TransportCensored(words, plain=words, detail=detail,
+                                 receipt={'not_admitted': True, 'paced': 'limited', 'said': said,
+                                          'limited_until': min(stopped[n]['until'] for n in named)})
 
     def _busy_error(self, names, outcome):
         from runesmith.pacing import busy_words
-        words = busy_words(', '.join(names))
+        providers = list(dict.fromkeys(getattr(self.instruments.get(n), 'label', None) or n for n in names))
+        words = busy_words(', '.join(providers))
         return TransportCensored(f"{words} ({(outcome.error or '')[:300]})", plain=words,
-                                 receipt={'not_admitted': True, 'paced': 'busy'})
+                                 detail=(outcome.error or '')[:1500] or None, receipt={'not_admitted': True, 'paced': 'busy'})
 
     def _attempt(self, role, names, attempt, *, prompt, system, schema, max_tokens, key, reasoning_effort, gone=None,
-                 own_effort_first=False):
+                 own_effort_first=False, order=None, soft_effort=None, room=None, room_retry=False):
         refused = set()
         gone = {} if gone is None else gone
+        order = list(order or names)
         while True:
             live = [n for n in names if n not in gone]
             if not live:                                # every model refused for good: its own plain words
                 return next(iter(gone.values()))
-            name = live[attempt % len(live)]            # rotate over declared fallbacks
+            # Rotate over the declared fallbacks: from this attempt's place in the role's whole order, the next model that
+            # may still be asked. A model held back at its limit keeps its place, so the one after it is next, not the one after that.
+            start = attempt % len(order)
+            name = next(n for n in (order[(start + k) % len(order)] for k in range(len(order))) if n in live)
             instrument = self.instruments[name]
             own = getattr(instrument, 'default_reasoning', None)
-            outcome = instrument.complete(prompt=prompt, system=system, schema=schema, max_tokens=max_tokens,
-                                          key=f"{key}-a{attempt}",
-                                          reasoning_effort=(own or reasoning_effort) if own_effort_first
-                                          else (reasoning_effort or own))
+            effort = (own or reasoning_effort) if own_effort_first else (reasoning_effort or own)
+            takes_effort = bool(getattr(instrument, 'takes_reasoning_effort', False))
+            if effort is None and soft_effort and takes_effort:
+                effort = soft_effort
+            asked_tokens = max(max_tokens, room) if room and takes_effort else max_tokens
+            outcome = instrument.complete(prompt=prompt, system=system, schema=schema, max_tokens=asked_tokens,
+                                          key=f"{key}-a{attempt}", reasoning_effort=effort)
             attempt += 1
             outcome.attempts = attempt
             identity = instrument.identity()
@@ -672,7 +725,9 @@ class Router:
             if answered_model and provider and not answered_model.startswith(provider + ':'):
                 answered_model = provider + ':' + answered_model
             outcome.receipt = dict(outcome.receipt, **identity, role=role,
-                                   prompt_bytes=len(prompt.encode("utf-8")))
+                                   prompt_bytes=len(prompt.encode("utf-8")), max_tokens_asked=asked_tokens)
+            if room_retry:
+                outcome.receipt['asked_again_with_room'] = True
             if answered_model:
                 outcome.receipt.update(requested_model=identity['model'], model=answered_model)
             if self._on_call:

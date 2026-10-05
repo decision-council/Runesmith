@@ -23,6 +23,9 @@ ESCALATED_LIMIT_S = (900, 3600)   # refused again right after such a guess ran o
 ESCALATE_WINDOW_S = 600      # "right after": within this long of the guess ending
 MAX_LIMIT_S = 36 * 3600      # nothing is held back longer than a day and a half
 FREE_TIER_TRIES = 2          # at most one retry per call for an instrument with a free tier (retries spend its allowance)
+GOOGLE_DAY_HINT_S = 3600     # Google's free tier names a wait this long only for its day's limit (a minute's limit is seconds)
+GOOGLE_FREE_DAILY_REQUESTS = 20   # what Google's free key allowed a model per day in the journeys; a refusal's own number replaces it
+SAID_CHARS = 600             # how much of the service's own refusal is kept beside the hold
 _LOCK = threading.Lock()
 
 _DURATION = (r"(?:\d+(?:\.\d+)?\s*(?:hours?|hrs?|h|minutes?|mins?|ms|m|seconds?|secs?|s)\s*)+")
@@ -119,6 +122,10 @@ def reset_time(base_url: str, hints: dict | None, message: str, now: float,
     google = 'generativelanguage.googleapis.com' in (base_url or '')
     if seconds is None:
         seconds = _stated_wait(message)
+    if google and (daily or (seconds is not None and seconds >= GOOGLE_DAY_HINT_S)):
+        # Google's day ends at midnight on the US Pacific coast, whatever its "retry in" words say (journey J0: "retry
+        # in 17h25m25s" at 06:34Z, and the key answered again at 07:02Z). The service's own words are kept beside the hold.
+        return min(next_pacific_midnight(now), now + MAX_LIMIT_S), True, False
     if seconds is not None and not (daily and seconds < 60):
         return now + min(MAX_LIMIT_S, max(1.0, seconds)), daily, False
     if daily:                                           # the day's limit, named as such
@@ -150,13 +157,53 @@ def how_long(seconds: float) -> str:
     return f'about {hours} hours'
 
 
-def limited_words(name: str, until: float, daily: bool, now: float, *, alone: bool = False) -> str:
+def limited_words(name: str, until: float, daily: bool, now: float, *, alone: bool = False, used: str | None = None) -> str:
     what = "has used up its free allowance for today" if daily else "has reached its free limit for now"
-    words = (f"{name} {what}. Runesmith will not ask it again before about {clock(until)} "
+    counted = f" ({used})" if used and daily else ""
+    words = (f"{name} {what}{counted}. Runesmith will not ask it again before about {clock(until)} "
              f"({how_long(until - now)} from now), so no more of the allowance is spent.")
     if alone:
         words += " Add a second free provider under Thinking power so work can go on meanwhile."
     return words
+
+
+def limited_summary(rows: list[dict], now: float, *, alone: bool = False) -> str:
+    """One plain sentence for every model that is held back. Models of one provider that stop together (the models of one
+    free key do) are told as one ("Google Gemini: gemini-3.8-flash, gemini-3.7-flash and gemini-3.5-flash-lite have all
+    used up their free allowance for today ..."), not once each. A row is {label, model, until, daily, used}; ``alone``
+    adds the way out (a second provider) after the last sentence."""
+    groups: dict[tuple, list[dict]] = {}
+    for row in rows:
+        groups.setdefault((row.get('label') or row.get('model') or '', bool(row.get('daily')), int(float(row['until']) // 60)), []).append(row)
+    sentences = []
+    for number, ((label, daily, _), members) in enumerate(groups.items()):
+        last = number == len(groups) - 1
+        first = members[0]
+        if len(members) == 1:
+            name = f"{label} ({first['model']})" if first.get('label') and first.get('model') else label
+            sentences.append(limited_words(name, first['until'], daily, now, alone=alone and last, used=first.get('used')))
+            continue
+        models = [m.get('model') or m.get('name') or label for m in members]
+        named = ', '.join(models[:-1]) + ' and ' + models[-1]
+        what = "have all used up their free allowance for today" if daily else "have all reached their free limit for now"
+        words = (f"{label}: {named} {what}. Runesmith will not ask them again before about {clock(first['until'])} "
+                 f"({how_long(first['until'] - now)} from now), so no more of the allowance is spent.")
+        if alone and last:
+            words += " Add a second free provider under Thinking power so work can go on meanwhile."
+        sentences.append(words)
+    return ' '.join(sentences)
+
+
+def truncated_words(retried: bool = False) -> str:
+    """An answer that ran out of room before it was finished (a model that thinks spends the room on its reasoning)."""
+    if retried:
+        return ("the model ran out of room before finishing its answer, and again when Runesmith asked with more room: "
+                "try again, or put a model that answers directly first under Thinking power")
+    return ("the model ran out of room before finishing its answer: try again, or put a model that answers directly "
+            "first under Thinking power")
+
+
+ROOM_RETRY_WORDS = "the model ran out of room before finishing: Runesmith asked again with more room"
 
 
 def busy_words(name: str) -> str:
@@ -205,7 +252,9 @@ class Pacing:
         mark = self._read().get(name)
         return mark if isinstance(mark, dict) and isinstance(mark.get('until'), (int, float)) else None
 
-    def mark(self, name: str, until: float, *, daily: bool = False, guessed: bool = False) -> dict:
+    def mark(self, name: str, until: float, *, daily: bool = False, guessed: bool = False, said: str | None = None) -> dict:
+        """Hold ``name`` back until ``until``. ``said`` is the service's own refusal, kept as it was told (the hold may
+        follow Runesmith's reading of the service's day, not its "retry in" words: the two can then be told apart)."""
         now = self.now()
         with _LOCK:
             stored = self._read()
@@ -215,11 +264,125 @@ class Pacing:
                 again = before.get('guessed') and now <= float(before.get('until') or 0) + ESCALATE_WINDOW_S
                 strikes = int(before.get('strikes') or 1) + 1 if again else 1
             row = {'until': float(until), 'daily': bool(daily), 'since': now, 'guessed': bool(guessed), 'strikes': strikes}
+            if said:
+                row['said'] = str(said)[:SAID_CHARS]
             data = {n: m for n, m in stored.items()
                     if isinstance(m, dict) and isinstance(m.get('until'), (int, float)) and m['until'] + ESCALATE_WINDOW_S > now}
             data[name] = row
             self._write(data)
         return row
+
+    def clear(self, name: str) -> None:
+        with _LOCK:
+            data = self._read()
+            if name in data:
+                del data[name]
+                self._write(data)
+
+
+# ------------------------------------------------------------------------------------- requests sent today --
+
+GOOGLE_HOST = 'generativelanguage.googleapis.com'
+_STATED_LIMIT = re.compile(r'\blimit:\s*(\d{1,6})\b', re.I)
+
+
+def is_google(base_url: str | None) -> bool:
+    return GOOGLE_HOST in (base_url or '')
+
+
+def service_day(base_url: str | None, now: float) -> str:
+    """The day a service counts its daily allowance in: Google's ends at midnight on the US Pacific coast (the journeys'
+    allowance came back at 07:00Z), any other service's is taken as the UTC day."""
+    moment = datetime.fromtimestamp(now, timezone.utc)
+    if is_google(base_url):
+        moment = moment + timedelta(hours=_pacific_offset_h(moment))
+    return moment.strftime('%Y-%m-%d')
+
+
+def stated_limit(message: str | None) -> int | None:
+    """The number a day's refusal names ("... free_tier_requests, limit: 20, model: gemini-3.8-flash"), or None."""
+    found = _STATED_LIMIT.search(message or '')
+    return int(found.group(1)) if found else None
+
+
+def used_words(info: dict | None, *, refused: bool = False) -> str | None:
+    """How much of today's allowance has gone, in the owner's words ("about 3 of 20 used today"), or None when there is
+    nothing to say. The count is what this Runesmith sent: another program on the same key spends from it too. For a model
+    the service has just refused for the day (``refused``), a count below its cap is told as it is: the service said so
+    after that many requests from here, so the key is used somewhere else too."""
+    if not info:
+        return None
+    count, cap = int(info.get('count') or 0), info.get('cap')
+    if refused and cap and count < cap:
+        return (f"the service said so after about {count} of {cap} sent from here, so this key is used elsewhere too"
+                if count else "the service said so, though none were sent from here today: this key is used elsewhere too")
+    if not cap:
+        return f"about {count} sent today" if count else None
+    if count > cap:
+        return f"more than {cap} sent today (this key may allow more)" if not info.get('learned') else f"more than {cap} sent today"
+    return f"about {count} of {cap} used today"
+
+
+class DayCount:
+    """Requests sent per instrument today, counted where they are sent (so a Test, a retry and an answer that was cut off
+    all count): ``{name: {day, count, cap}}`` in one small JSON file. A day is the service's own day (``service_day``).
+    A request a limit turned away ("429") is not counted: it did not spend the allowance. ``cap`` is learned from the
+    first day's refusal that names a limit; Google's free key is taken to allow GOOGLE_FREE_DAILY_REQUESTS until then."""
+
+    def __init__(self, path: str | Path, *, clock=time.time) -> None:
+        self.path, self.now = Path(path), clock
+
+    def _read(self) -> dict:
+        try:
+            data = json.loads(self.path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _write(self, data: dict) -> None:
+        from runesmith.atomic import replace
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(data, sort_keys=True), encoding='utf-8', newline='\n')
+            replace(temporary, self.path)
+        except OSError:                                  # a counter is a courtesy: never stop a call because it cannot be saved
+            pass
+
+    def bump(self, name: str, base_url: str | None, status: int | None = None) -> None:
+        if status == 429:
+            return
+        day = service_day(base_url, self.now())
+        with _LOCK:
+            data = self._read()
+            row = data.get(name) if isinstance(data.get(name), dict) else {}
+            count = int(row.get('count') or 0) + 1 if row.get('day') == day else 1
+            data[name] = dict(row, day=day, count=count)
+            self._write(data)
+
+    def learn_cap(self, name: str, base_url: str | None, message: str | None, daily: bool) -> int | None:
+        """Keep the limit a day's refusal names. Only a daily refusal: a per-minute one names a different (smaller) number."""
+        limit = stated_limit(message) if daily else None
+        if not limit:
+            return None
+        with _LOCK:
+            data = self._read()
+            row = data.get(name) if isinstance(data.get(name), dict) else {}
+            data[name] = dict(row, cap=limit, day=row.get('day') or service_day(base_url, self.now()),
+                              count=int(row.get('count') or 0))
+            self._write(data)
+        return limit
+
+    def today(self, name: str, base_url: str | None, *, free: bool = True) -> dict:
+        row = self._read().get(name)
+        row = row if isinstance(row, dict) else {}
+        day = service_day(base_url, self.now())
+        count = int(row.get('count') or 0) if row.get('day') == day else 0
+        cap = row.get('cap') if isinstance(row.get('cap'), int) and row.get('cap') > 0 else None
+        learned = cap is not None
+        if cap is None and free and is_google(base_url):
+            cap = GOOGLE_FREE_DAILY_REQUESTS
+        return {'count': count, 'cap': cap, 'learned': learned, 'day': day}
 
     def clear(self, name: str) -> None:
         with _LOCK:

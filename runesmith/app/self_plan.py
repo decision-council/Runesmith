@@ -104,7 +104,7 @@ JOB_PATTERNS = (
     ("no_author_allowance", re.compile(r"No unambiguous ordinary author allowance|No new budget granted|"
                                        r"Ordinary author allowance exhausted|author allowance receipt", re.I)),
     ("exact_edit_refused", re.compile(r"Exact edit refused|did not match exactly once", re.I)),
-    ("answer_truncated", re.compile(r"\btruncated\b", re.I)),
+    ("answer_truncated", re.compile(r"\btruncated\b|ran out of room before finishing", re.I)),
     ("checks_time_out", re.compile(r"checks? (?:timed out|did not finish)|time limit", re.I)),
     ("late_answer", re.compile(r"answer has not arrived|late answer|Remote outcome unresolved", re.I)),
     ("split_refused", re.compile(r"candidate failures are not current-source failures|prerequisite names an absent file", re.I)),

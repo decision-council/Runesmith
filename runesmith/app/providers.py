@@ -48,10 +48,11 @@ PRESETS: list[dict[str, Any]] = [
      "base_url": "https://api.groq.com/openai/v1", "key": "required", "key_url": "https://console.groq.com/keys",
      "suggested": ["openai/gpt-oss-20b", "openai/gpt-oss-120b"], "max_request_tokens": 8000,
      "blurb": "Very fast, with a free tier (up to 8,000 tokens a minute per model, so large requests need another model)."},
-    {"id": "gemini", "free_tier": True, "label": "Google Gemini", "group": "With a key", "kind": "openai",
-     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "key": "required",
+    {"id": "gemini", "free_tier": True, "takes_reasoning_effort": True, "label": "Google Gemini", "group": "With a key",
+     "kind": "openai", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "key": "required",
      "key_url": "https://aistudio.google.com/apikey", "suggested": ["gemini-3.8-flash", "gemini-3.6-flash"],
-     "blurb": "A free tier through Google AI Studio."},
+     "free_chain": True, "free_note": None,       # free_note is filled below, from FREE_GEMINI_WORDS
+     "blurb": "A free tier through Google AI Studio: about 20 requests a day for each model, so Runesmith uses several free Gemini models in turn."},
     {"id": "mistral", "free_tier": True, "label": "Mistral", "group": "With a key", "kind": "openai",
      "base_url": "https://api.mistral.ai/v1", "key": "required", "key_url": "https://console.mistral.ai/api-keys",
      "suggested": ["codestral-latest", "mistral-small-latest"],
@@ -88,6 +89,16 @@ PRESETS: list[dict[str, Any]] = [
               "right here. Best for the author role: a few calls per improvement."},
 ]
 PRESET_BY_ID = {p["id"]: p for p in PRESETS}
+
+# What a newcomer is told before building with one free Google key (the first-run screens, the Add thinking power dialog,
+# the guide's chapters 1 and 4 say the same). The 20 is what Google's own refusal named for gemini-3.8-flash in the
+# acceptance journeys; Google publishes no fixed free-tier numbers, so the words say "about" and where to read the real one.
+FREE_GEMINI_WORDS = (
+    "A free Gemini key allows about 20 requests a day for each model (Google shows the exact figure for your key in AI Studio), "
+    "and a busy answer still counts. Runesmith sets up several free Gemini models on this one key and uses them in turn, so "
+    "you do not type the key again. To build comfortably, also add a second free provider: Groq is the one we suggest. "
+    "With no key at all, a chat window works too.")
+PRESET_BY_ID["gemini"]["free_note"] = FREE_GEMINI_WORDS
 
 
 def public_presets(kinds_in_use=()) -> list[dict[str, Any]]:
@@ -151,6 +162,28 @@ def _recommend_gemini(ids: list[str]) -> tuple[str | None, list[str]]:
     if pro:
         choices.append(pro[0]["id"])
     return best["id"], choices
+
+
+def gemini_free_chain(ids: list[str], primary: str = "") -> list[str]:
+    """The free Gemini models to use in turn on one key, from the provider's own list: the newest generally available flash,
+    then the next stable flash (the next older generation), then the newest stable flash-lite. Quotas are per model, so each
+    has its own allowance. ``primary`` (the model the owner saved) comes first wherever it stands; the others follow in the
+    rule's order, and nothing is named twice. Never a "pro" model (a free key's allowance for those is smaller or none)."""
+    best, _ = _recommend_gemini(list(dict.fromkeys(i for i in ids if isinstance(i, str))))
+    rows = [row for row in map(_gemini_model, ids) if row and row["tier"] == "flash"]
+    stable = sorted((r for r in rows if not r["lite"] and not r["preview"]), key=_gemini_order)
+    lite = sorted((r for r in rows if r["lite"] and not r["preview"]), key=_gemini_order)
+    chain: list[str] = [best] if best else []
+    top = next((r for r in stable if r["id"] == best), None) or (stable[0] if stable else None)
+    older = next((r for r in stable if top and r["version"] != top["version"] and r["id"] != best), None)
+    if older:
+        chain.append(older["id"])
+    if lite:
+        chain.append(lite[0]["id"])
+    chain = [m for m in dict.fromkeys(chain) if m]
+    if primary:
+        chain = [primary] + [m for m in chain if m != primary]
+    return chain
 
 
 # Families used when none of a preset's suggestions is served any more: the newest name of each, best first.
@@ -331,12 +364,15 @@ def test_instrument(name: str, spec: dict[str, Any], home) -> dict[str, Any]:
         instrument = build_instrument(name, spec, home)
     except (KeyError, ValueError) as error:
         return {"ok": False, "detail": f"incomplete settings: {error}"}
-    from runesmith.pacing import Pacing, limited_words, reset_time
+    from runesmith.pacing import DayCount, Pacing, limited_words, reset_time, used_words
     paced = Pacing(Path(home) / "PACING.json") if home is not None else None
+    counted = DayCount(Path(home) / "REQUESTS_TODAY.json") if home is not None else None
+    shown = f"{spec.get('label') or name} ({spec.get('model')})" if spec.get("label") and spec.get("model") else name
     held = paced.limited(name) if paced else None
     if held:                       # a service that said "429" is not asked again before its reset, not even to test it
+        used = used_words(counted.today(name, spec.get("base_url")), refused=bool(held.get("daily"))) if counted else None
         return {"ok": False, "latency_s": 0, "kind": "transport", "limited": True, "model": spec.get("model"),
-                "detail": limited_words(spec.get("label") or name, held["until"], bool(held.get("daily")), time.time()) +
+                "detail": limited_words(shown, held["until"], bool(held.get("daily")), time.time(), used=used) +
                           " Nothing was sent just now."}
     started = time.monotonic()
     out = instrument.complete(prompt='Reply with the JSON object {"ok": true}.', system="Reply with JSON only.",
@@ -356,8 +392,11 @@ def test_instrument(name: str, spec: dict[str, Any], home) -> dict[str, Any]:
         now = time.time()
         until, daily, guessed = reset_time(str(spec.get("base_url") or ""), out.receipt, out.error or "", now,
                                            paced.recent(name))
-        paced.mark(name, until, daily=daily, guessed=guessed)
-        detail = limited_words(spec.get("label") or name, until, daily, now)
+        paced.mark(name, until, daily=daily, guessed=guessed, said=out.error)
+        if counted:
+            counted.learn_cap(name, spec.get("base_url"), out.error, daily)
+        detail = limited_words(shown, until, daily, now,
+                               used=used_words(counted.today(name, spec.get("base_url")), refused=daily) if counted else None)
     result = {"ok": bool(out.ok), "latency_s": round(time.monotonic() - started, 2), "kind": out.error_kind,
               "detail": detail, "model": (out.receipt or {}).get("model") or spec.get("model")}
     if not out.ok and out.error_kind != "config" and "{" in (out.error or ""):

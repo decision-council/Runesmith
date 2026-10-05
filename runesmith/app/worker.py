@@ -507,12 +507,26 @@ class Worker:
                     "stop_requested": bool(self.current and self._stop_after_step),
                     "queue": json.loads(json.dumps(list(self._jobs))),
                     "recovery": json.loads(json.dumps(recovery)),
-                    "history": list(self.history)[::-1][:12],
+                    "history": [self._plain_row(row) for row in list(self.history)[::-1][:12]],
                     "next_round_utc": self._next_round_utc(settings), "lines": list(self.lines)[-80:],
                     "autonomy": settings["autonomy"], "auto_work": settings["auto_work"],
                     "interval_minutes": settings["interval_minutes"]}
 
     # ------------------------------------------------------------------ helpers --
+
+    @staticmethod
+    def _plain_row(row: dict[str, Any]) -> dict[str, Any]:
+        """A failed job as the owner reads it: a failure saved with the service's raw reply is shown in plain words, and the
+        raw words move to the job's details (the stored history is not rewritten)."""
+        outcome = row.get("outcome") if isinstance(row.get("outcome"), dict) else {}
+        error = outcome.get("error")
+        if row.get("result") != "failed" or not isinstance(error, str):
+            return row
+        from runesmith.app.planner import plain_stored_error
+        plain = plain_stored_error(error)
+        if plain == error:
+            return row
+        return dict(row, outcome=dict(outcome, error=plain, detail=outcome.get("detail") or error[:1500]))
 
     def say(self, text: str, level: str = "info", **extra: Any) -> None:
         line = {"utc": _now(), "text": text, "level": level, **extra}
@@ -534,6 +548,8 @@ class Worker:
             return "is at its free limit"
         if status in (502, 503, 504):
             return "is busy"
+        if event.get("error_kind") == "output" and "truncated" in str(event.get("error") or "").lower():
+            return "ran out of room before finishing its answer"
         return {"config": "refused the request", "output": "gave an answer that could not be used"}.get(
             event.get("error_kind"), "did not answer")
 
@@ -544,6 +560,9 @@ class Worker:
             self.say(f"You skipped the chat-window request ({event.get('role')}).", "info", kind="call")
         else:
             outcome = "answered" if event.get("ok") else self._failure_words(event)
+            if event.get("asked_again_with_room"):          # the first answer was cut off: said before the second one's result
+                from runesmith.pacing import ROOM_RETRY_WORDS
+                self.say(f"{model} ({event.get('role')}): {ROOM_RETRY_WORDS}.", "info", kind="call")
             self.say(f"{model} ({event.get('role')}) {outcome} in {event.get('latency_s', 0):.1f} s",
                      "info" if event.get("ok") else "warn", kind="call")
         self.bus.publish("call", {k: event.get(k) for k in ("role", "instrument", "model", "ok", "error_kind",

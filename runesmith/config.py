@@ -86,11 +86,17 @@ def build_instrument(name: str, spec: dict[str, Any], home: Path | None = None) 
                               key=spec.get("api_key_key"))
         else:
             key = None
-        return OpenAICompatInstrument(name, spec["model"], base_url=spec["base_url"], api_key=key,
+        made = OpenAICompatInstrument(name, spec["model"], base_url=spec["base_url"], api_key=key,
                                       timeout_s=float(spec.get("timeout_s", 600)),
                                       json_mode=spec.get("json_mode", "json_object"),
                                       tolerant_json=bool(spec.get("tolerant_json", True)),
                                       max_request_tokens=spec.get("max_request_tokens"))
+        made.label = provider_label(spec)
+        if home is not None:                        # every request sent is counted, in the day the service counts in
+            from runesmith.pacing import DayCount
+            counts, address = DayCount(home_dir(home) / "REQUESTS_TODAY.json"), str(spec["base_url"])
+            made.counter = lambda status, _name=name: counts.bump(_name, address, status)
+        return made
     if kind == "milliner":
         if spec.get("token_secret"):
             from runesmith.keystore import KeyStore
@@ -119,25 +125,44 @@ def default_reasoning(spec: dict[str, Any]) -> str | None:
     return effort if effort in REASONING_EFFORTS else None
 
 
-def is_free_tier(spec: dict[str, Any]) -> bool:
-    """Whether an instrument is a service's free key (its preset says so, or its address is that preset's): every retry
-    spends from a small allowance, so such an instrument is asked less often (runesmith.pacing)."""
+def _preset_says(spec: dict[str, Any], flag: str) -> bool:
+    """Whether the preset an instrument was made from (or whose address it has) carries ``flag``."""
     if spec.get("kind") != "openai":
         return False
     from runesmith.app.providers import PRESETS, PRESET_BY_ID
-    if (PRESET_BY_ID.get(spec.get("preset")) or {}).get("free_tier"):
+    if (PRESET_BY_ID.get(spec.get("preset")) or {}).get(flag):
         return True
     address = str(spec.get("base_url") or "").rstrip("/")
-    return bool(address) and any(p.get("free_tier") and p["base_url"].rstrip("/") == address for p in PRESETS)
+    return bool(address) and any(p.get(flag) and p["base_url"].rstrip("/") == address for p in PRESETS)
+
+
+def is_free_tier(spec: dict[str, Any]) -> bool:
+    """Whether an instrument is a service's free key (its preset says so, or its address is that preset's): every retry
+    spends from a small allowance, so such an instrument is asked less often (runesmith.pacing)."""
+    return _preset_says(spec, "free_tier")
+
+
+def takes_reasoning_effort(spec: dict[str, Any]) -> bool:
+    """Whether the service takes a reasoning effort for the model's hidden thinking (Gemini's OpenAI-compatible address
+    does): a call that wants a short answer asks such a model for a low effort and leaves it room to think."""
+    return _preset_says(spec, "takes_reasoning_effort")
+
+
+def provider_label(spec: dict[str, Any]) -> str | None:
+    """The provider's name in the owner's words ("Google Gemini"): what the owner called it, else its preset's label."""
+    from runesmith.app.providers import PRESET_BY_ID
+    return spec.get("label") or (PRESET_BY_ID.get(spec.get("preset") or "") or {}).get("label") or None
 
 
 def build_router(config: dict[str, Any], *, home: Path | None = None, **kwargs) -> Router:
     instruments = {name: build_instrument(name, spec, home) for name, spec in config["instruments"].items()}
     if home is not None:                            # a service that said "429" is not asked again until its reset
-        from runesmith.pacing import Pacing
+        from runesmith.pacing import DayCount, Pacing
         kwargs.setdefault("pacing", Pacing(Path(home) / "PACING.json"))
+        kwargs.setdefault("counts", DayCount(Path(home) / "REQUESTS_TODAY.json"))
     for name, spec in config["instruments"].items():
         instruments[name].free_tier = is_free_tier(spec)
+        instruments[name].takes_reasoning_effort = takes_reasoning_effort(spec)
         # A model's own reasoning effort, used when a call names none (journey J11-B8: Nemotron 3 Super spent the
         # whole answer budget on hidden reasoning, looping to the 16,384-token cap, and each truncated answer used
         # up a try; "low" is what fixed the same model elsewhere).

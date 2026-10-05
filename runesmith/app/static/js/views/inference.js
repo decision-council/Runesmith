@@ -159,6 +159,10 @@ export default async function render(root, ctx) {
       if (p.id === 'custom' || p.id === 'milliner' || p.local) fields.push(h('div.field', h('label', 'Address'), base));
       if (p.kind === 'milliner') fields.push(h('div.field', h('label', 'Milliner fallback models'), fallbacks,
         h('span.hint', 'Milliner tries this explicit chain after the primary fails. Only add free models here if this is a free-only fallback. Their quotas still apply.')));
+      // A free key's allowance is small: said before anything is built, in the words the guide uses (one place: the preset).
+      const chain = p.free_chain ? h('input', { type: 'checkbox', checked: true, 'aria-label': 'Also set up the other free models on this key' }) : null;
+      if (p.free_note) fields.push(h('div.callout', { 'data-free-note': p.id }, icon('info'), h('div', p.free_note,
+        chain ? h('label.row.mt-8', chain, 'Also set up the other free models on this key, to be used in turn (recommended)') : null)));
       if (p.key !== 'none') fields.push(h('div.field', h('label', p.kind === 'milliner' ? 'Agent token' : 'API key'), h('div.row', key, showKey),
         h('span.hint', 'Saved only in this folder’s .runesmith/secrets.json (not encrypted: keep that folder private), never shown again.', p.key_url ? [' ', h('a', { href: p.key_url, target: '_blank', rel: 'noopener' }, 'Get a key')] : null)));
       fields.push(h('div.field', h('label', 'Roles'), h('div.pillbox', roleBoxes.map((x) => x.el)), h('span.hint', 'Worker repairs code · Improver improves Runesmith itself · Planner drafts plans and first files · Checker proposes acceptance checks (a few calls that decide what “done” means: your best model pays off here).')));
@@ -178,10 +182,11 @@ export default async function render(root, ctx) {
         if (p.max_request_tokens) spec.max_request_tokens = p.max_request_tokens;      // a free tier's per-minute window
         if (p.kind === 'milliner') spec.fallback_models = fallbacks.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
         const roles = roleBoxes.filter((x) => x.cb.checked).map((x) => x.r);
-        const saved = await post('/api/inference/instruments', { name: name.value.trim(), spec, key: key.value.trim() || undefined, roles });
+        const saved = await post('/api/inference/instruments', { name: name.value.trim(), spec, key: key.value.trim() || undefined, roles,
+          chain: chain ? chain.checked : undefined });
         key.value = '';
         m.close();
-        toast(`${saved.label} saved.`, 'good');
+        toast(`${saved.label} saved.${saved.chain?.detail ? ' ' + saved.chain.detail : ''}`, saved.chain && !saved.chain.ok ? 'warn' : 'good', saved.chain?.detail ? 9000 : undefined);
         await load();
         if (p.kind !== 'manual') testInstrument(saved.name, load);
       }));
@@ -199,7 +204,7 @@ export default async function render(root, ctx) {
     const way = (ic, title, text, go) => h('div.choice', { onclick: go }, icon(ic), h('b', title), h('span', text));
     return h('div.card', h('h3', icon('zap'), 'Three ways to give Runesmith a mind'), h('p.sub', 'Pick one now; add more any time.'),
       h('div.grid.three', way('laptop', 'On this computer', 'Free and private: Ollama, LM Studio or llama.cpp. Runesmith finds them for you.', () => addModel('ollama')),
-        way('key', 'With an API key', 'OpenRouter, Groq, Gemini, Mistral, DeepSeek, OpenAI, Anthropic… several have free tiers.', () => addModel()),
+        way('key', 'With an API key', 'OpenRouter, Groq, Gemini, Mistral, DeepSeek, OpenAI, Anthropic… several have free tiers. A free Gemini key allows about 20 requests a day for each model, so add a second free provider (Groq) to build comfortably.', () => addModel()),
         way('chat', 'Copy and paste', 'No key, no install: relay requests to any chat window you already use.', () => addModel('manual'))));
   }
 }
@@ -300,18 +305,32 @@ function instrumentRow(i, data, reload) {
   const held = ((data.pacing || {}).limited || []).find((x) => x.name === i.name);     // at its free limit until a reset (J0-F3)
   const row = h('div.instrument', h('div.monogram', { style: { background: MONO_COLORS[i.preset] || '#475569' } }, (i.label || i.name).replace(/[^A-Za-z]/g, '').slice(0, 2)),
     h('div', {style:{paddingRight:'22px'}}, h('div.row.wrap', h('b', i.label), h('span.badge.mono', i.name), i.local ? h('span.badge.good', 'local') : null, i.usable ? null : h('span.badge.warn', 'incomplete'),
-      i.key.secret ? h('span', { class: `badge ${i.key.saved ? 'good' : 'bad'}` }, icon('key'), i.key.saved ? 'key saved' : 'key missing') : null),
+      i.key.secret ? h('span', { class: `badge ${i.key.saved ? 'good' : 'bad'}` }, icon('key'), i.key.saved ? 'key saved' : 'key missing') : null,
+      // Who answers now (the first model of a role that is not waiting for its free limit), and who shares this key.
+      i.answering?.length ? h('span.badge.accent', { 'data-answering': i.name, title: `Answers for: ${i.answering.map((r) => data.role_labels[r].split(':')[0]).join(', ')}` }, icon('zap'), 'answering now') : null,
+      i.shares_key_with?.length ? h('span.badge', { title: `The same saved key as ${i.shares_key_with.join(', ')}; each model has its own free allowance` }, icon('key'), `same key as ${i.shares_key_with[0]}${i.shares_key_with.length > 1 ? ` +${i.shares_key_with.length - 1}` : ''}`) : null),
       h('div.small.muted.mono.ellipsis', `${i.model || ''}${i.base_url ? ' · ' + i.base_url : ''}`),
+      i.used_today?.words ? h('div.small', { 'data-used-today': i.name }, i.used_today.words) : null,
       i.fallback_models?.length ? h('div.tiny.mono', `Milliner fallbacks: ${i.fallback_models.join(' → ')}`) : null,
       h('div.tiny.faint', i.roles.length ? `roles: ${i.roles.map((r) => data.role_labels[r].split(':')[0]).join(', ')}` : 'no role yet: assign one below',
         st ? ` · ${st.calls} host callbacks, ${st.errors} errors, ~${(st.latency_s / Math.max(1, st.calls)).toFixed(1)} s each${i.kind==='milliner'?' · see Usage & cost coverage for reconciled gateway receipts':st.costed_calls ? ` · $${st.estimated_usd.toFixed(4)} reported estimate (${st.costed_calls}/${st.calls} callbacks costed)` : ' · spend not reported'}` : ''), status, held && !String(lastTest.get(i.name)?.detail || '').includes('will not ask it again') ? h('div.small.callout.warn', held.words) : null),
     h('div.row.wrap.instrument-actions', i.kind === 'milliner' ? h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, () => recordedAvailability(i.name))}, icon('clock'), 'Recorded availability') : null,
       i.kind === 'milliner' ? h('button.btn.sm', {onclick: e => withBusy(e.currentTarget, () => editMillinerRoute(i.name, reload))}, icon('layers'), 'Route') : null,
+      i.free_chain && i.kind === 'openai' && i.usable && !i.shares_key_with?.length ? h('button.btn.sm', { 'data-add-chain': i.name, title: 'Uses the key already saved: nothing is typed again, and nothing is spent', onclick: (e) => withBusy(e.currentTarget, async () => {
+        const r = await post(`/api/inference/instruments/${encodeURIComponent(i.name)}/chain`, {});
+        toast(r.detail, r.ok ? 'good' : 'warn', 9000);
+        reload();
+      }) }, icon('plus'), 'Add the other free Gemini models') : null,
       i.kind !== 'manual' ? h('button.btn.sm', { onclick: () => testInstrument(i.name, reload) }, icon('zap'), 'Test') : null,
-      h('button.btn.sm.icon.ghost', { title: 'Remove', onclick: async () => { if (await confirmDialog({ title: `Remove ${i.label}?`, text: 'Its saved key is deleted too.', confirm: 'Remove', danger: true })) { await del(`/api/inference/instruments/${i.name}`); lastTest.delete(i.name); reload(); } } }, icon('trash'))));
+      h('button.btn.sm.icon.ghost', { title: 'Remove', onclick: async () => { if (await confirmDialog({ title: `Remove ${i.label}${i.model ? ` (${i.model})` : ''}?`, text: removeWords(i), confirm: 'Remove', danger: true })) { await del(`/api/inference/instruments/${i.name}`); lastTest.delete(i.name); reload(); } } }, icon('trash'))));
   commentable(row, 'instrument', i.name, i.label);
   row.querySelector('.note-btn').style.right = '8px';
   return row;
+}
+// Several models of one provider share one saved key: removing one keeps the key for the others.
+function removeWords(i) {
+  if (i.shares_key_with?.length) return `The saved key stays: ${i.shares_key_with.join(', ')} still use${i.shares_key_with.length === 1 ? 's' : ''} it. Only this model is removed.`;
+  return 'Its saved key is deleted too.';
 }
 // What the last test said, kept on the model's row. When the provider named a replacement ("no longer available to new
 // users, use X"), it is offered as a button: one click changes only the model name, and nothing switches without it.

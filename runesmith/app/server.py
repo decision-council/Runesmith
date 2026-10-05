@@ -602,9 +602,19 @@ def api_inference_accounting(s: Studio, q, body):
 
 @route("POST", r"/api/inference/instruments")
 def api_instrument_save(s: Studio, q, body):
-    saved = _ws(s).save_instrument(body.get("name", ""), body.get("spec") or {}, body.get("key"), body.get("roles"))
+    # A Google Gemini key also sets up the other free Gemini models on the same key (one key, several allowances).
+    saved = _ws(s).save_instrument(body.get("name", ""), body.get("spec") or {}, body.get("key"), body.get("roles"),
+                                   chain=bool(body.get("key")) and body.get("chain", True) is not False)
     s.bus.publish("inference", {})
     return saved
+
+
+@route("POST", r"/api/inference/instruments/([A-Za-z0-9_.-]+)/chain")
+def api_instrument_chain(s: Studio, q, body, name):
+    # An owner's click: set up the other free Gemini models on a Gemini key that is already saved (nothing is typed again).
+    result = _ws(s).add_gemini_chain(name)
+    s.bus.publish("inference", {})
+    return result
 
 
 @route("POST", r"/api/inference/instruments/([A-Za-z0-9_.-]+)/model")

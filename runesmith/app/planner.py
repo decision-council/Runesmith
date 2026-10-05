@@ -584,7 +584,7 @@ BUSY_WORDS = ('capacity', 'rate_limited', 'overloaded', 'daily_request_cap', 'se
 BUSY_STATUS = re.compile(r'(?<![\d.])(429|50[234])(?![\d.])')
 
 
-def why_no_answer(error) -> str:
+def why_no_answer(error, brief: bool = False) -> str:
     """Why a model call brought no answer, in plain words and with what to try; the gateway's words follow, short (F15).
     A service's own answer is often a JSON block: it is not put on the screen (journey J0-F7), `error_detail` keeps it."""
     given = getattr(error, 'plain', None)
@@ -609,7 +609,23 @@ def why_no_answer(error) -> str:
                  'press Test on that model and then the button that offers the switch')
     else:
         plain = 'the model did not answer'
-    return plain if '{' in raw else f'{plain} ({raw[:160]})'
+    return plain if brief or '{' in raw else f'{plain} ({raw[:160]})'
+
+
+_RAW_FAILURE = re.compile(r"http_\d{3}|no response after \d+ attempts|finish_reason=length", re.I)
+
+
+def plain_stored_error(text) -> str:
+    """A failure's words as the owner reads them. A failure saved by an older Studio may hold the service's raw reply or a
+    count of attempts ("role 'plan': no response after 3 attempts; last: http_503 [{'error': ..."): it is told plainly
+    now, and the raw words stay in the job's details (journey J0-F16: the Overview kept showing one for hours)."""
+    raw = str(text or '')
+    if not _RAW_FAILURE.search(raw):
+        return raw
+    if 'finish_reason=length' in raw.lower():
+        from runesmith.pacing import truncated_words
+        return truncated_words()
+    return why_no_answer(RuntimeError(raw), brief=True)
 
 
 def error_detail(error, limit=1500) -> str:
@@ -706,15 +722,55 @@ def draft_answer_tokens(context, explicit_revision=False) -> int:
     return min(MAX_DRAFT_TOKENS, max(base, int(largest * 0.4) + 3000))
 
 
-def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_tokens: int, receipt_out: dict | None = None):
+THINKING_ROOM, THINKING_EFFORT = DRAFT_TOKENS, 'low'
+
+
+def is_cut_off(outcome) -> bool:
+    """Whether a model's answer ended because it ran out of room (``finish_reason=length``): not wrong, only unfinished."""
+    return not outcome.ok and outcome.error_kind == 'output' and 'truncated' in (outcome.error or '').lower()
+
+
+def call_short_answer(router, role: str, *, prompt: str, system: str, schema, max_tokens: int, key: str):
+    """One call whose answer is short (a plan, acceptance checks), to a role whose model may think first.
+
+    A model that thinks and takes an effort setting (Gemini's OpenAI-compatible address) is asked for a low effort and its
+    answer gets as much room as a draft does, because its hidden reasoning is counted in the answer's tokens (journey J0: a
+    3,000-token request came back cut off, and on a free key that is a fifth of the day's allowance gone). Every other
+    model is asked exactly as before. An answer that is cut off is asked for once more with double the room: it was not
+    wrong, only unfinished. The second call is marked, so the log says so (``ROOM_RETRY_WORDS``)."""
+    out = router.call(role, prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key,
+                      soft_effort=THINKING_EFFORT, room=THINKING_ROOM)
+    if not is_cut_off(out):
+        return out
+    asked = int((out.receipt or {}).get('max_tokens_asked') or max_tokens)
+    again = router.call(role, prompt=prompt, system=system, schema=schema, max_tokens=min(MAX_DRAFT_TOKENS, asked * 2),
+                        key=key + '-more-room', soft_effort=THINKING_EFFORT, room_retry=True)
+    if not again.ok and again.error_kind == 'config':   # the second ask was turned away (too large for the window): the first answer stands
+        return out
+    return again
+
+
+def cut_off_failure(outcome) -> 'PlannerUnavailable':
+    """The plain words for an answer that was cut off, after the second ask when there was one."""
+    from runesmith.pacing import truncated_words
+    failure = PlannerUnavailable(truncated_words(retried=bool((outcome.receipt or {}).get('asked_again_with_room'))))
+    failure.detail = (outcome.error or '')[:300]
+    return failure
+
+
+def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_tokens: int, receipt_out: dict | None = None,
+          *, short_answer: bool = False):
     try:
-        outcome = router.call("plan", prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
+        if short_answer:                                # a plan: its answer is short, its model may think first
+            outcome = call_short_answer(router, "plan", prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
+        else:
+            outcome = router.call("plan", prompt=prompt, system=system, schema=schema, max_tokens=max_tokens, key=key)
     except KeyError as error:
         raise PlannerUnavailable("no model is set up for planning: add one under Thinking power") from error
     except TransportCensored as error:
         failure=PlannerUnavailable(why_no_answer(error))
         failure.remote_receipt=error.receipt
-        failure.detail=str(error)[:1500]                # what the service said, for the details panel
+        failure.detail=(getattr(error, 'detail', None) or str(error))[:1500]       # what the service said, for the details panel
         raise failure from error
     if isinstance(outcome.data, dict) and outcome.data.get("skipped_by_owner"):
         raise SkippedByOwner("you skipped the request, so nothing changed")
@@ -723,6 +779,8 @@ def _call(ws, router, prompt: str, system: str, schema: dict, key: str, max_toke
         if (outcome.receipt or {}).get("refused_before_answer"):
             failure.remote_receipt = dict(outcome.receipt)    # refused before answering: no try is used (J2-B9)
         raise failure
+    if is_cut_off(outcome):
+        raise cut_off_failure(outcome)
     if not outcome.ok or not isinstance(outcome.data, dict):
         raise PlannerUnavailable(f"the model's answer was not usable: {(outcome.error or 'no JSON')[:200]}")
     missing = [k for k in schema.get("required", []) if k not in outcome.data]
@@ -742,7 +800,7 @@ def draft_plan(ws, router, *, checkpoint=lambda: None, automatic=False) -> dict[
     binding = require_planning(ws, automatic=automatic)
     explicit = planning_direction(ws)['explicit']
     data, by = _call(ws, router, plan_prompt(ws), PLAN_SYSTEM, PLAN_SCHEMA,
-                     f"plan-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}", 6000)
+                     f"plan-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}", 6000, short_answer=True)
     data["drafted_by"] = by
     data['purpose_origin'] = {'kind': 'owner-directed' if explicit else 'inferred',
                               'policy_revision': binding['policy_revision'],

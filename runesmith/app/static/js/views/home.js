@@ -137,7 +137,7 @@ export default async function render(root, { app, navigate, refreshState }) {
     }) }, icon('wand'), 'Let it help');
   } else if (!s.ready.any) {
     // Plain words for a first-time owner (journey J1-F1): what this folder is, and the one thing Runesmith needs.
-    line = `${s.workspace.empty ? `An empty folder: a clean start for ${s.workspace.name}.` : s.mapped_utc ? 'Runesmith has mapped your folder.' : 'Runesmith can map your folder.'} To plan and build, it needs thinking power: a model on this computer, an API key, or simply a chat window you already use.`;
+    line = `${s.workspace.empty ? `An empty folder: a clean start for ${s.workspace.name}.` : s.mapped_utc ? 'Runesmith has mapped your folder.' : 'Runesmith can map your folder.'} To plan and build, it needs thinking power: a model on this computer, an API key, or simply a chat window you already use. ${s.pacing?.free_key_words || 'A free Gemini key allows about 20 requests a day for each model, so for building add a second free provider (Groq).'}`;
     cta = h('button.btn.primary.lg', { onclick: () => { navigate('inference'); setTimeout(() => bus.emit('ui:add-model', {}), 250); } }, icon('cpu'), 'Add thinking power');
     offerLocal = true;
     extra = h('button.btn.lg', { title: 'No key and no install: you relay each request to a chat you already use', onclick: (e) => withBusy(e.currentTarget, async () => {
@@ -158,15 +158,17 @@ export default async function render(root, { app, navigate, refreshState }) {
   } else if (s.plan?.next) {
     // With a plan under way, the next step is the plan's next milestone (journey J1-F2).
     line = `Next in your plan: “${s.plan.next.title}” (${s.plan.done || 0} of ${s.plan.milestones} done). ${s.try_ready ? 'Try what was built below, or continue' : 'Continue'} in Goals & plan.`;
-    // An owner back from "build while I'm away" hears that the last attempt did not work (journey J2-F11).
+    // An owner back from "build while I'm away" hears that the last attempt did not work (journey J2-F11). The latest
+    // job that asked a model counts, whatever it was (a plan, checks, a build): an older build's raw failure must not
+    // outlive four newer ones (journey J0-F16). Its words are the plain ones the worker keeps beside the raw reply.
     const builds = (s.worker?.history || []).filter((j) => ['build', 'escalate', 'correct'].includes(j.kind));
-    const last = builds[0], streak = builds.findIndex((j) => j.result !== 'failed');
+    const last = latestModelJob(s.worker?.history), streak = builds.findIndex((j) => j.result !== 'failed');
     const tries = streak < 0 ? builds.length : streak;          // failed tries in a row (J2-F13)
-    if (last?.result === 'failed') line += ` The last attempt did not work (${ago(last.finished)}): ${sentenceEnd(String(last.outcome?.error || 'see Activity'), 180)}`
-      + (tries >= 3 ? ` ${tries} tries in a row did not work, so it waits for you: Work & proposals → Drafts shows what you can do.` : s.settings.auto_work ? ' The next round tries again.' : '');
+    if (last?.result === 'failed') line += ` The last attempt did not work (${ago(last.finished)}): ${sentenceEnd(plainFailure(last.outcome?.error), 180)}`
+      + (tries >= 3 && builds[0] === last ? ` ${tries} tries in a row did not work, so it waits for you: Work & proposals → Drafts shows what you can do.` : s.settings.auto_work ? ' The next round tries again.' : '');
     // Rounds that find every try used up end "done", but building waits all the same (journey J2-F16).
-    else if (last?.outcome?.replan_needed) line += ' The tries for this step are used up, so building waits for you: Work & proposals → Drafts shows what you can do, and Goals & plan may offer smaller steps to adopt.'
-      + (last.outcome.cause ? ` The cause: ${last.outcome.cause}` : '');
+    else if (builds[0]?.outcome?.replan_needed) line += ' The tries for this step are used up, so building waits for you: Work & proposals → Drafts shows what you can do, and Goals & plan may offer smaller steps to adopt.'
+      + (builds[0].outcome.cause ? ` The cause: ${builds[0].outcome.cause}` : '');
     if (s.needs_you?.length) line += ` Runesmith has nothing more to try by itself for ${s.needs_you.length === 1 ? `“${s.needs_you[0].title}”` : plural(s.needs_you.length, 'milestone')}: see Needs you below.`;
     cta = h('button.btn.primary.lg', { onclick: () => navigate('goals') }, icon('target'), 'Continue the plan');
   } else {
@@ -363,6 +365,22 @@ export default async function render(root, { app, navigate, refreshState }) {
   return () => {closed=true;healthSerial++;offs.forEach((off) => off());};
 }
 
+// The jobs that ask a model, newest first in the worker's history: the latest of them says how the last attempt went.
+const MODEL_JOBS = ['plan', 'goalposts', 'draft', 'build', 'escalate', 'correct', 'supplement', 'revise', 'breakdown', 'split', 'propose_acceptance'];
+function latestModelJob(history) {
+  return (history || []).find((j) => MODEL_JOBS.includes(j.kind) && j.result !== 'skipped' && j.result !== 'stopped');
+}
+// What a failure says, without the service's raw reply or a count of attempts. The worker already says it plainly; a failure
+// stored by an older Studio may still hold the raw text, so it is also caught here.
+function plainFailure(text) {
+  const raw = String(text || 'see Activity');
+  if (/http_\d{3}|no response after \d+ attempts/.test(raw)) {
+    if (/http_429|quota|free limit/i.test(raw)) return 'the model is at its free limit right now: try again later, or put another model first under Thinking power.';
+    return 'the model is busy or did not answer: try again later, or put another model first under Thinking power.';
+  }
+  return raw;
+}
+
 // A long error cut for the Overview ends at a word and a full stop, so what follows it does not run on (journey J0-F11:
 // "...Spikes i 3 tries in a row did not work").
 function sentenceEnd(text, limit) {
@@ -371,15 +389,26 @@ function sentenceEnd(text, limit) {
   return /[.!?…]$/.test(out) ? out : out + '.';
 }
 
-// A free key at its limit (journey J0-F3): when it comes back, and, with one provider only, a way to keep working meanwhile.
+// A free key (journey J0-F3, F12): which model answers, how much of each free model's day is used, and, when one has used its
+// allowance up, when it is asked again and who answers meanwhile. With every model held back and one provider only, a way to
+// keep working: a second free provider.
 function pacingCard(s, navigate) {
   const p = s.pacing;
-  if (!p || !p.limited || !p.limited.length) return null;
-  return h('section.card.mt-24', { 'aria-label': 'A free limit was reached', id: 'free-limit' },
-    h('div.card-head', h('h3', icon('clock'), 'Waiting for a free limit'), h('span.badge.warn', 'no calls are made meanwhile')),
-    ...p.limited.map((r) => h('p', r.words)),
+  if (!p) return null;
+  const free = (p.free_keys || []).filter((k) => k.held || k.used?.count || (p.limited || []).length);
+  if (!(p.limited || []).length && !free.length) return null;
+  const waiting = p.waiting ?? ((p.limited || []).length > 0 && p.only_provider_limited);
+  const answering = Object.values(p.answering || {})[0];
+  const state = (k) => k.held ? `used up for today: asked again after about ${k.until_clock}` : k.answering?.length ? 'answering now' : 'next in line';
+  return h('section.card.mt-24', { 'aria-label': waiting ? 'A free limit was reached' : 'Free thinking power today', id: 'free-limit' },
+    h('div.card-head', h('h3', icon('clock'), waiting ? 'Waiting for a free limit' : 'Free thinking power today'),
+      waiting ? h('span.badge.warn', 'no calls are made meanwhile') : answering ? h('span.badge.good', `answering now: ${answering.model || answering.label}`) : null),
+    ...(p.limited_summary ? [h('p', p.limited_summary)] : (p.limited || []).map((r) => h('p', r.words))),
+    !waiting && (p.limited || []).length && answering ? h('p', `Work goes on with ${answering.label}.`) : null,
+    free.length ? h('div.list', { 'data-free-keys': '' }, free.map((k) => h('div.item', { 'data-free-key': k.name },
+      h('div.body', h('div.title', k.label), h('div.meta', [state(k), k.used?.words].filter(Boolean).join(' · ')))))) : null,
     p.only_provider_limited ? h('div',
-      h('p', 'You have one provider, so work waits for it. A second free provider (Google, NVIDIA or Groq, for example) lets work go on meanwhile.'),
+      h('p', 'You have one provider, so work waits for it. A second free provider (Groq, for example) lets work go on meanwhile.'),
       p.guide_words ? h('p.small.muted', `${p.guide_words} shows where to get one.`) : null,
       h('div.row.wrap',
         h('button.btn.primary', { onclick: () => { navigate('inference'); setTimeout(() => bus.emit('ui:add-model', {}), 250); } }, icon('plus'), 'Add a second free provider'),

@@ -202,7 +202,7 @@ def test_a_second_provider_answers_while_the_first_is_held_back(tmp_path):
 def test_when_every_provider_is_limited_both_are_named(tmp_path):
     a, b = Service(google(429, GOOGLE_429)), Service((429, {'error': {'message': 'quota per day exhausted'}}))
     with pytest.raises(TransportCensored) as error:
-        ask(router(tmp_path, instrument(a, 'gemini'), instrument(b, 'groq')))
+        ask(router(tmp_path, instrument(a, 'gemini'), instrument(b, 'groq', base='https://api.groq.com/openai/v1')))
     assert 'gemini' in error.value.plain and 'groq' in error.value.plain and 'Add a second' not in error.value.plain
 
 
@@ -322,8 +322,9 @@ def test_with_one_provider_at_its_limit_the_overview_suggests_a_second_free_one(
     ws = saved(tmp_path, 'g')
     studio = SimpleNamespace(ws=ws, worker=SimpleNamespace(snapshot=lambda: {}), bus=SimpleNamespace(recent=[]))
     from runesmith.app import guide
-    assert api_state(studio, {}, None)['pacing'] == {'limited': [], 'only_provider_limited': False, 'guide_url': '',
-                                                     'guide_words': guide.FREE_INFERENCE_WORDS}
+    calm = api_state(studio, {}, None)['pacing']
+    assert (calm['limited'], calm['only_provider_limited'], calm['waiting'], calm['guide_url'], calm['guide_words']) == (
+        [], False, False, '', guide.FREE_INFERENCE_WORDS)
     hold(ws, 'g')
     pacing = api_state(studio, {}, None)['pacing']
     assert pacing['only_provider_limited'] and len(pacing['limited']) == 1
