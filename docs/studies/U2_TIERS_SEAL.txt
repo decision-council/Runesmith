@@ -1,0 +1,3 @@
+U2_PROTOCOL.md sha256 98b1cf59c530ac5de186f9ed7b7f8f0c3e9c3faa24d5699bf5205cfbec9493ed
+sealed_utc 2026-10-05T15:56:03Z
+no U2 session exists; no U1 outcome has been read
