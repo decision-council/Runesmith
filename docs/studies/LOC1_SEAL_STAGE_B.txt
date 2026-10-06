@@ -1,0 +1,15 @@
+PROTOCOL.json sha256 acf4342788083bca5f802430cb392dc2b03a57ddacf89c1e952c785ecee37a3f
+loc1_run.py sha256:6f91b484661ab9f8e02ad4965de049c1b9ff1f627077f6d52d74860c80c5bc4d
+loc1_chain.py sha256:d49cc3f713048da51ad96b9be31cba316a03fe61684f970ade3ac3de88dd2637
+loc1_generate_pool_tasks.py sha256:a799cee6d978eb90bdfbb09c8e9d779a3f65297a3be607db335647eae410dfa6
+loc1_power.py sha256:1f8783d82b8d59da3d52d7be01c910cbbe678f20bbb372544890af88990b22b7
+loc1_probe.py sha256:3daaee921c192c93fac1eb1ef0f7ce814390423771000f70e19114dbe85a218a
+u1_run.py sha256:b4233d9008fbfcea8d1f971d1010ab1f7326783b8c17191b0bf7b2bfd7e670b5
+u2_run.py sha256:8935bc8221b5e52e1b2b5a299d3bac13e4bd2e606b7d944469c45b50cb3b9c15
+pool MANIFEST.json sha256:6718b5f0d0391caa56f6ff79eb016aab36e51742c7ab1a21d7bb8e4e712aedd4
+POOL_DECISION.json sha256:0d13490be3d5d3065944d3fa72dad1c026d821d1e916037c26dd290d7db6a670
+tasks 59
+sessions planned {"gptoss20b": 531, "gemini35flash": 354}
+stop_utc 2026-10-06T16:20:00Z
+sealed_utc 2026-10-06T12:05:27Z
+no LOC1 session exists at this time; no task or issue has been read by a person or model
