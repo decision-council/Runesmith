@@ -1,0 +1,6 @@
+AMENDMENT_1.md sha256 dff4b1b691141700acba255fac08ff4c703aafea6009adb7b250a22a42ea4a69
+loc1_generate_pool_tasks.py sha256:a799cee6d978eb90bdfbb09c8e9d779a3f65297a3be607db335647eae410dfa6
+REPOSITORY_RULE_CHECK_ORIGINAL.json sha256 9fd350f89a999c81c540c13cc8857fb70aaff2b336e02b5b228d11ac3eab77ae
+REPOSITORIES_ORIGINAL.json sha256 cd0086c050b855f36ff084cc8888bd257c4c88072dd85c0896e92ad89ec073d3
+sealed_utc 2026-10-06T10:46:18Z
+no LOC1 pool, task, PROTOCOL.json or session exists at this time
