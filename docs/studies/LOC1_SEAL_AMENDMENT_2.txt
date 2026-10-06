@@ -1,0 +1,3 @@
+AMENDMENT_2.md sha256 61f1b953a0d534e5a865983d6992198af18fbd6050c77a8b8bf519570071ccac
+sealed_utc 2026-10-06T11:42:04Z
+no LOC1 PROTOCOL.json or session exists at this time; the pool is still being generated (no task read by a person or model)
