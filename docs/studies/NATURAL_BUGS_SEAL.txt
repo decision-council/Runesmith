@@ -1,0 +1,4 @@
+PROTOCOL.md sha256 2e39b636bee97843f70dbcd29b135d345e4321a5b484fcd916f4670ba68c9f12
+sealed_utc 2026-10-06T10:34:52Z
+no natural task, mining, snapshot or model call exists at this time; LOC1 has no session (its STATUS.txt, 10:30Z: phase DESIGN + THROUGHPUT PILOT, no LOC1 session yet)
+seed = the SHA-256 above
