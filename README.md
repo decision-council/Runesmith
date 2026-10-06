@@ -138,7 +138,7 @@ Honest note: in our longest journey, the operator still had to step in. At one p
 
 ## The paper
 
-*Beyond the Model: The Instrument–Substrate Hypothesis and a Falsifiable Runtime for Persistent Adaptive Intelligence*, by Lars O. Horpestad, is the scientific paper behind Runesmith. It argues that a model is an instrument and that some of what a system learns can live outside it, in state the system owns. It describes the runtime built to test that, and it reports the experiments, the ones that did not work with the same weight as the ones that did.
+*Beyond the Model: Runesmith, an Open Runtime That Improves Software and Itself, and the Instrument–Substrate Hypothesis*, by Lars O. Horpestad, is the scientific paper behind Runesmith. It argues that a model is an instrument and that some of what a system learns can live outside it, in state the system owns. It describes the runtime built to test that, and it reports the experiments, the ones that did not work with the same weight as the ones that did.
 
 **[Read the paper](PAPER_URL)**
 
